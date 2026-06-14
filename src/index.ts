@@ -123,7 +123,7 @@ app.post('/v1/chat', async (c) => {
   // ── 6. Call Claude ────────────────────────────────────────────
   let reply: string;
   try {
-    reply = await chat(c.env.ANTHROPIC_API_KEY, systemPrompt, history, message.trim());
+    reply = await chat(c.env.GEMINI_API_KEY, systemPrompt, history, message.trim());
   } catch (err) {
     console.error('Claude API error:', err);
     return c.json({ error: 'AI service error' }, 502);
@@ -156,3 +156,4 @@ app.onError((err, c) => {
 });
 
 export default app;
+

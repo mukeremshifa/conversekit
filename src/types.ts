@@ -2,7 +2,7 @@
 // Cloudflare Worker environment bindings (secrets from .dev.vars)
 // ----------------------------------------------------------------
 export interface Env {
-  ANTHROPIC_API_KEY: string;
+  GEMINI_API_KEY: string;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
 }

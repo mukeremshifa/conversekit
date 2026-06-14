@@ -1,8 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // ----------------------------------------------------------------
-// Call Claude and return the full text response (non-streaming).
-// Streaming can be added later by returning a ReadableStream instead.
+// Call Gemini and return the full text response.
+// The system prompt is passed as systemInstruction (Gemini's equivalent).
+// History is converted from {role, content} to Gemini's {role, parts} shape.
 // ----------------------------------------------------------------
 export async function chat(
   apiKey: string,
@@ -10,25 +11,23 @@ export async function chat(
   history: Array<{ role: 'user' | 'assistant'; content: string }>,
   userMessage: string
 ): Promise<string> {
-  const client = new Anthropic({ apiKey });
+  const genAI = new GoogleGenerativeAI(apiKey);
 
-  const messages: Anthropic.MessageParam[] = [
-    ...history,
-    { role: 'user', content: userMessage },
-  ];
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
-    system: systemPrompt,
-    messages,
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-1.5-flash',
+    systemInstruction: systemPrompt,
   });
 
-  // Extract the text from the first content block
-  const block = response.content[0];
-  if (!block || block.type !== 'text') {
-    throw new Error('Unexpected response shape from Claude API');
-  }
+  // Gemini uses 'model' instead of 'assistant' for the AI role
+  const geminiHistory = history.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
 
-  return block.text;
+  const chatSession = model.startChat({ history: geminiHistory });
+  const result = await chatSession.sendMessage(userMessage);
+  const text = result.response.text();
+
+  if (!text) throw new Error('Empty response from Gemini API');
+  return text;
 }
