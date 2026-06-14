@@ -1,5 +1,5 @@
 {
-  "name": "clinica-bot",
+  "name": "conversekit",
   "version": "1.0.0",
   "description": "AI website chatbot backend – Cloudflare Workers + Hono + Supabase + Claude",
   "private": true,
