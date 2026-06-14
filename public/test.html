@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ConverseKit Widget — Local Test</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f8fafc;
+      color: #1e293b;
+      min-height: 100vh;
+    }
+
+    /* ── Fake website chrome so you can see the widget in context ── */
+    .fake-nav {
+      background: #fff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 0 32px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .fake-nav .logo {
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: -.02em;
+    }
+    .fake-nav .logo span { color: #2563eb; }
+    .fake-nav nav { display: flex; gap: 24px; }
+    .fake-nav nav a { font-size: 14px; color: #64748b; text-decoration: none; }
+    .fake-nav nav a:hover { color: #0f172a; }
+
+    .hero {
+      max-width: 760px;
+      margin: 72px auto 0;
+      padding: 0 24px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(28px, 5vw, 48px);
+      font-weight: 800;
+      letter-spacing: -.03em;
+      line-height: 1.15;
+      color: #0f172a;
+    }
+    .hero h1 span { color: #2563eb; }
+    .hero p {
+      margin-top: 16px;
+      font-size: 17px;
+      color: #64748b;
+      line-height: 1.65;
+    }
+
+    /* ── Test control panel ── */
+    .test-panel {
+      margin: 56px auto;
+      max-width: 680px;
+      padding: 0 24px;
+    }
+    .test-panel h2 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 16px;
+    }
+    .test-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .test-card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .test-card label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+    .test-card .val {
+      font-size: 13px;
+      color: #0f172a;
+      word-break: break-all;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .test-card .val.ok  { color: #16a34a; }
+    .test-card .val.err { color: #dc2626; }
+    .test-card .val.loading { color: #94a3b8; font-style: italic; }
+
+    .instructions {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 20px 24px;
+    }
+    .instructions h3 {
+      font-size: 14px;
+      font-weight: 600;
+      color: #0f172a;
+      margin-bottom: 12px;
+    }
+    .instructions ol {
+      padding-left: 20px;
+      font-size: 14px;
+      color: #475569;
+      line-height: 2;
+    }
+    code {
+      background: #f1f5f9;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12.5px;
+      color: #0f172a;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Fake website chrome -->
+  <nav class="fake-nav">
+    <div class="logo">Demo<span>Clinic</span></div>
+    <nav>
+      <a href="#">Services</a>
+      <a href="#">About</a>
+      <a href="#">Contact</a>
+    </nav>
+  </nav>
+
+  <div class="hero">
+    <h1>Your patients deserve<br><span>instant answers.</span></h1>
+    <p>
+      This page simulates a real client website.<br>
+      The chat bubble in the bottom-right corner is your ConverseKit widget.
+    </p>
+  </div>
+
+  <div class="test-panel">
+    <h2>Widget diagnostics</h2>
+
+    <div class="test-grid">
+      <div class="test-card">
+        <label>Bot ID</label>
+        <div class="val" id="diag-botid">reading…</div>
+      </div>
+      <div class="test-card">
+        <label>Session ID</label>
+        <div class="val" id="diag-session">reading…</div>
+      </div>
+      <div class="test-card">
+        <label>API Base</label>
+        <div class="val" id="diag-api">localhost:8787</div>
+      </div>
+      <div class="test-card">
+        <label>Health check</label>
+        <div class="val loading" id="diag-health">checking…</div>
+      </div>
+      <div class="test-card">
+        <label>Bot name</label>
+        <div class="val loading" id="diag-name">–</div>
+      </div>
+      <div class="test-card">
+        <label>Primary color</label>
+        <div class="val loading" id="diag-color">–</div>
+      </div>
+    </div>
+
+    <div class="instructions">
+      <h3>How to test</h3>
+      <ol>
+        <li>Run <code>npm run dev</code> inside <code>D:\conversekit</code></li>
+        <li>Replace <code>YOUR_BOT_ID</code> in the script tag below with your real UUID</li>
+        <li>Open this file in your browser — the diagnostics above update automatically</li>
+        <li>Click the chat bubble → type a message → verify a reply comes back</li>
+        <li>Refresh the page → the conversation continues (same <code>sessionId</code> in sessionStorage)</li>
+        <li>Open DevTools → Network tab to watch the <code>/v1/chat</code> request/response</li>
+      </ol>
+    </div>
+  </div>
+
+  <!--
+    ════════════════════════════════════════════════════
+    THE WIDGET — this is the only tag your clients need
+    Replace YOUR_BOT_ID with the UUID from your bots table
+    ════════════════════════════════════════════════════
+  -->
+  <script src="./widget.js" data-bot-id="YOUR_BOT_ID" defer></script>
+
+  <!-- Diagnostic panel updater (not part of the widget) -->
+  <script>
+    (function () {
+      var BOT_ID = 'YOUR_BOT_ID';
+      var SESSION_KEY = 'ck_session_' + BOT_ID;
+
+      document.getElementById('diag-botid').textContent = BOT_ID;
+      document.getElementById('diag-session').textContent =
+        sessionStorage.getItem(SESSION_KEY) || '(loads with widget)';
+
+      // Poll session key briefly in case widget hasn't set it yet
+      var tries = 0;
+      var poll = setInterval(function () {
+        var s = sessionStorage.getItem(SESSION_KEY);
+        if (s) {
+          document.getElementById('diag-session').textContent = s;
+          clearInterval(poll);
+        }
+        if (++tries > 20) clearInterval(poll);
+      }, 150);
+
+      // Health check
+      fetch('http://localhost:8787/v1/bots/' + BOT_ID + '/health')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.status === 'ok') {
+            setDiag('diag-health', '✓ 200 OK', 'ok');
+            setDiag('diag-name', d.name, 'ok');
+            setDiag('diag-color', d.primaryColor, 'ok');
+            var swatch = document.getElementById('diag-color');
+            swatch.style.display = 'flex';
+            swatch.style.alignItems = 'center';
+            swatch.style.gap = '6px';
+            var dot = document.createElement('span');
+            dot.style.cssText = 'width:12px;height:12px;border-radius:50%;background:' + d.primaryColor + ';display:inline-block;flex-shrink:0;';
+            swatch.prepend(dot);
+          } else {
+            setDiag('diag-health', '✗ ' + (d.error || 'unknown'), 'err');
+          }
+        })
+        .catch(function () {
+          setDiag('diag-health', '✗ connection refused', 'err');
+          setDiag('diag-name', 'N/A', 'err');
+          setDiag('diag-color', 'N/A', 'err');
+        });
+
+      function setDiag(id, text, state) {
+        var el = document.getElementById(id);
+        el.textContent = text;
+        el.className = 'val ' + (state || '');
+      }
+    })();
+  </script>
+
+</body>
+</html>

@@ -26,12 +26,13 @@ app.use(
 // GET /
 // Simple liveness probe.
 // ----------------------------------------------------------------
-app.get('/', (c) => c.json({ status: 'ok', service: 'clinica-bot api' }));
+app.get('/', (c) => c.json({ status: 'ok', service: 'conversekit api' }));
 
 // ----------------------------------------------------------------
 // GET /v1/bots/:id/health
-// Returns the bot name so you can verify the bot exists and the
-// Supabase connection is working, without exposing sensitive data.
+// Called by the widget on load to fetch display config.
+// Returns name, contact, primaryColor so the widget can theme
+// itself and show a fallback phone number on API errors.
 // ----------------------------------------------------------------
 app.get('/v1/bots/:id/health', async (c) => {
   const botId = c.req.param('id');
@@ -47,6 +48,8 @@ app.get('/v1/bots/:id/health', async (c) => {
     botId: bot.id,
     name: bot.name,
     businessName: bot.business_name,
+    contact: bot.contact ?? null,
+    primaryColor: bot.primary_color,
   });
 });
 
