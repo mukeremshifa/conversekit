@@ -1,8 +1,9 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { Env, Bot, ConversationRow } from './types';
+import type { Env, Bot, ConversationRow, Lead, BotUpdatePayload } from './types';
+import type { ExtractedLead } from './leads';
 
 // ----------------------------------------------------------------
-// Factory – call once per request (Workers are stateless per invocation)
+// Factory – one client per request (Workers are stateless)
 // ----------------------------------------------------------------
 export function makeSupabase(env: Env): SupabaseClient {
   return createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
@@ -11,8 +12,7 @@ export function makeSupabase(env: Env): SupabaseClient {
 }
 
 // ----------------------------------------------------------------
-// Fetch a bot by primary key.
-// Returns null when not found so callers can 404 cleanly.
+// Bots
 // ----------------------------------------------------------------
 export async function getBotById(
   client: SupabaseClient,
@@ -25,17 +25,30 @@ export async function getBotById(
     .single();
 
   if (error) {
-    // PostgREST returns PGRST116 ("0 rows") when .single() finds nothing
     if (error.code === 'PGRST116') return null;
     throw new Error(`Supabase getBotById: ${error.message}`);
   }
+  return data as Bot;
+}
 
+export async function updateBot(
+  client: SupabaseClient,
+  botId: string,
+  payload: BotUpdatePayload
+): Promise<Bot> {
+  const { data, error } = await client
+    .from('bots')
+    .update(payload)
+    .eq('id', botId)
+    .select('*')
+    .single();
+
+  if (error) throw new Error(`Supabase updateBot: ${error.message}`);
   return data as Bot;
 }
 
 // ----------------------------------------------------------------
-// Retrieve recent conversation history for context (last 20 turns).
-// We pass this to Claude so it has memory of the session.
+// Conversations
 // ----------------------------------------------------------------
 export async function getSessionHistory(
   client: SupabaseClient,
@@ -54,13 +67,62 @@ export async function getSessionHistory(
   return (data ?? []) as Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
-// ----------------------------------------------------------------
-// Append a single message to the log.
-// ----------------------------------------------------------------
 export async function logMessage(
   client: SupabaseClient,
   row: Omit<ConversationRow, 'id' | 'created_at'>
 ): Promise<void> {
   const { error } = await client.from('conversations').insert(row);
   if (error) throw new Error(`Supabase logMessage: ${error.message}`);
+}
+
+export async function getConversations(
+  client: SupabaseClient,
+  botId: string,
+  limit = 100
+): Promise<ConversationRow[]> {
+  const { data, error } = await client
+    .from('conversations')
+    .select('*')
+    .eq('bot_id', botId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(`Supabase getConversations: ${error.message}`);
+  return (data ?? []) as ConversationRow[];
+}
+
+// ----------------------------------------------------------------
+// Leads
+// ----------------------------------------------------------------
+export async function saveLead(
+  client: SupabaseClient,
+  botId: string,
+  sessionId: string,
+  lead: ExtractedLead
+): Promise<void> {
+  const { error } = await client.from('leads').insert({
+    bot_id:     botId,
+    session_id: sessionId,
+    name:       lead.name,
+    email:      lead.email,
+    phone:      lead.phone,
+    inquiry:    lead.inquiry,
+  });
+  if (error) throw new Error(`Supabase saveLead: ${error.message}`);
+}
+
+export async function getLeads(
+  client: SupabaseClient,
+  botId: string,
+  limit = 100
+): Promise<Lead[]> {
+  const { data, error } = await client
+    .from('leads')
+    .select('*')
+    .eq('bot_id', botId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (error) throw new Error(`Supabase getLeads: ${error.message}`);
+  return (data ?? []) as Lead[];
 }

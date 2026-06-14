@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ConverseKit Admin</title>
+<link rel="stylesheet" href="admin.css"/>
+</head>
+<body>
+
+<!-- ── Login screen ─────────────────────────────────────────── -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">⚡ ConverseKit</div>
+    <p class="login-sub">Admin Dashboard</p>
+    <div class="field">
+      <label>Bot ID</label>
+      <input id="inp-bot-id" type="text" placeholder="paste your bot UUID"/>
+    </div>
+    <div class="field">
+      <label>Admin Secret</label>
+      <input id="inp-secret" type="password" placeholder="from .dev.vars / Worker secret"/>
+    </div>
+    <button id="btn-login" class="btn-primary btn-full">Sign in</button>
+    <p id="login-error" class="error-msg" style="display:none"></p>
+  </div>
+</div>
+
+<!-- ── Dashboard ────────────────────────────────────────────── -->
+<div id="dashboard" style="display:none">
+  <aside class="sidebar">
+    <div class="sidebar-logo">⚡ ConverseKit</div>
+    <nav class="sidebar-nav">
+      <button class="nav-btn active" data-tab="settings">⚙️ Bot Settings</button>
+      <button class="nav-btn" data-tab="knowledge">📚 Knowledge Base</button>
+      <button class="nav-btn" data-tab="leads">🎯 Leads</button>
+      <button class="nav-btn" data-tab="conversations">💬 Conversations</button>
+      <button class="nav-btn" data-tab="install">🔌 Install</button>
+    </nav>
+    <button id="btn-logout" class="btn-logout">Sign out</button>
+  </aside>
+
+  <main class="main">
+    <div id="toast" class="toast" style="display:none"></div>
+
+    <!-- Settings tab -->
+    <div class="tab active" id="tab-settings">
+      <div class="tab-header">
+        <h1>Bot Settings</h1>
+        <button class="btn-primary" id="save-settings">Save changes</button>
+      </div>
+      <div class="card-grid">
+        <div class="card">
+          <h2>Identity</h2>
+          <div class="field"><label>Bot name</label><input type="text" id="s-name"/></div>
+          <div class="field"><label>Business name</label><input type="text" id="s-biz-name"/></div>
+          <div class="field"><label>Allowed origin <span class="hint">(CORS — e.g. https://yourclient.com)</span></label><input type="text" id="s-origin"/></div>
+        </div>
+        <div class="card">
+          <h2>Appearance</h2>
+          <div class="field">
+            <label>Primary color</label>
+            <div class="color-row">
+              <input type="color" id="s-color-picker"/>
+              <input type="text" id="s-color-hex" placeholder="#2563eb" maxlength="7"/>
+            </div>
+          </div>
+          <div class="color-preview-row" id="color-preview">
+            <span class="preview-bubble" id="preview-bubble">●</span>
+            <span class="preview-label">Chat bubble preview</span>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Contact information</h2>
+          <div class="field"><label>Phone</label><input type="text" id="s-phone"/></div>
+          <div class="field"><label>Email</label><input type="text" id="s-email"/></div>
+          <div class="field"><label>Address</label><input type="text" id="s-address"/></div>
+          <div class="field"><label>Business hours</label><input type="text" id="s-hours" placeholder="Mon-Fri 9am-5pm"/></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Knowledge Base tab -->
+    <div class="tab" id="tab-knowledge">
+      <div class="tab-header">
+        <h1>Knowledge Base</h1>
+        <button class="btn-primary" id="save-knowledge">Save changes</button>
+      </div>
+      <div class="card full-width">
+        <h2>Business description</h2>
+        <p class="field-hint">2-3 sentences about what the business does. The bot uses this to introduce itself.</p>
+        <textarea id="k-description" rows="4"></textarea>
+      </div>
+      <div class="card full-width">
+        <h2>Services</h2>
+        <p class="field-hint">List your services, one per line. Bullet points optional.</p>
+        <textarea id="k-services" rows="6"></textarea>
+      </div>
+      <div class="card full-width">
+        <h2>FAQ</h2>
+        <p class="field-hint">Format: <code>Q: question\nA: answer</code> — one pair per blank line.</p>
+        <textarea id="k-faq" rows="10"></textarea>
+      </div>
+      <div class="card full-width">
+        <h2>Custom instructions</h2>
+        <p class="field-hint">Extra rules for the bot — tone, topics to avoid, special handling.</p>
+        <textarea id="k-custom" rows="4"></textarea>
+      </div>
+    </div>
+
+    <!-- Leads tab -->
+    <div class="tab" id="tab-leads">
+      <div class="tab-header">
+        <h1>Leads</h1>
+        <button class="btn-secondary" id="refresh-leads">↻ Refresh</button>
+      </div>
+      <div class="card full-width">
+        <div id="leads-empty" class="empty-state" style="display:none">
+          <p>No leads yet. Once a visitor requests a quote or consultation, they'll appear here.</p>
+        </div>
+        <div class="table-wrap" id="leads-table-wrap" style="display:none">
+          <table id="leads-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Inquiry</th>
+              </tr>
+            </thead>
+            <tbody id="leads-tbody"></tbody>
+          </table>
+        </div>
+        <div class="loading" id="leads-loading">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Conversations tab -->
+    <div class="tab" id="tab-conversations">
+      <div class="tab-header">
+        <h1>Conversations</h1>
+        <button class="btn-secondary" id="refresh-convos">↻ Refresh</button>
+      </div>
+      <div class="card full-width">
+        <div id="convos-empty" class="empty-state" style="display:none">
+          <p>No conversations yet.</p>
+        </div>
+        <div class="convo-list" id="convo-list"></div>
+        <div class="loading" id="convos-loading">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Install tab -->
+    <div class="tab" id="tab-install">
+      <div class="tab-header"><h1>Install Widget</h1></div>
+
+      <div class="card full-width install-hero">
+        <div class="install-step">
+          <div class="step-num">1</div>
+          <div>
+            <h3>Copy this script tag</h3>
+            <p>Paste it before the closing <code>&lt;/body&gt;</code> tag on any page.</p>
+          </div>
+        </div>
+        <div class="code-block">
+          <pre id="install-code"></pre>
+          <button class="btn-copy" id="btn-copy">Copy</button>
+        </div>
+      </div>
+
+      <div class="card full-width">
+        <div class="install-step">
+          <div class="step-num">2</div>
+          <div>
+            <h3>Set your allowed origin</h3>
+            <p>In <strong>Bot Settings</strong>, set the <em>Allowed origin</em> to the exact URL of the site where you paste the tag — e.g. <code>https://yourclient.com</code>. No trailing slash.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card full-width">
+        <div class="install-step">
+          <div class="step-num">3</div>
+          <div>
+            <h3>Test it</h3>
+            <p>Open <a href="../test.html" target="_blank">test.html</a> locally, or open the live site after deploying. The chat bubble should appear bottom-right.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="admin.js"></script>
+</body>
+</html>

@@ -1,159 +1,199 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { makeSupabase, getBotById, getSessionHistory, logMessage } from './supabase';
+import {
+  makeSupabase,
+  getBotById,
+  updateBot,
+  getSessionHistory,
+  logMessage,
+  getConversations,
+  saveLead,
+  getLeads,
+} from './supabase';
 import { buildSystemPrompt } from './prompt';
 import { chat } from './claude';
-import type { Env, ChatRequest } from './types';
+import { extractLead } from './leads';
+import type { Env, ChatRequest, BotUpdatePayload } from './types';
 
 const app = new Hono<{ Bindings: Env }>();
 
-// ----------------------------------------------------------------
-// Global CORS middleware
-// The per-bot origin check happens inside POST /v1/chat.
-// This middleware lets browsers send the preflight OPTIONS request.
-// ----------------------------------------------------------------
+// ================================================================
+// CORS — reflect origin; per-bot enforcement happens in /v1/chat
+// ================================================================
 app.use(
   '*',
   cors({
-    origin: (origin) => origin,   // reflect origin; actual enforcement is below
-    allowMethods: ['GET', 'POST', 'OPTIONS'],
-    allowHeaders: ['Content-Type'],
+    origin: (origin) => origin,
+    allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'x-admin-secret'],
     maxAge: 86400,
   })
 );
 
-// ----------------------------------------------------------------
+// ================================================================
+// Admin auth middleware — applied only to /admin/* routes
+// ================================================================
+function requireAdmin(env: Env, secret: string | undefined): boolean {
+  return !!env.ADMIN_SECRET && secret === env.ADMIN_SECRET;
+}
+
+// ================================================================
 // GET /
-// Simple liveness probe.
-// ----------------------------------------------------------------
+// ================================================================
 app.get('/', (c) => c.json({ status: 'ok', service: 'conversekit api' }));
 
-// ----------------------------------------------------------------
+// ================================================================
 // GET /v1/bots/:id/health
-// Called by the widget on load to fetch display config.
-// Returns name, contact, primaryColor so the widget can theme
-// itself and show a fallback phone number on API errors.
-// ----------------------------------------------------------------
+// Widget calls this on load to get theming + contact info.
+// ================================================================
 app.get('/v1/bots/:id/health', async (c) => {
-  const botId = c.req.param('id');
   const supabase = makeSupabase(c.env);
-
-  const bot = await getBotById(supabase, botId);
-  if (!bot) {
-    return c.json({ error: 'Bot not found' }, 404);
-  }
+  const bot = await getBotById(supabase, c.req.param('id'));
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
 
   return c.json({
-    status: 'ok',
-    botId: bot.id,
-    name: bot.name,
+    status:       'ok',
+    botId:        bot.id,
+    name:         bot.name,
     businessName: bot.business_name,
-    contact: bot.contact ?? null,
+    contact:      bot.contact_phone ?? bot.contact ?? null,
     primaryColor: bot.primary_color,
   });
 });
 
-// ----------------------------------------------------------------
+// ================================================================
 // POST /v1/chat
-// Main endpoint. Validates origin, calls Claude, logs messages.
-// ----------------------------------------------------------------
+// ================================================================
 app.post('/v1/chat', async (c) => {
-  // ── 1. Parse & validate request body ──────────────────────────
+  // ── Validate body ────────────────────────────────────────────
   let body: ChatRequest;
-  try {
-    body = await c.req.json<ChatRequest>();
-  } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400);
-  }
+  try { body = await c.req.json<ChatRequest>(); }
+  catch { return c.json({ error: 'Invalid JSON body' }, 400); }
 
   const { botId, message, sessionId } = body;
-
-  if (!botId || typeof botId !== 'string') {
+  if (!botId || typeof botId !== 'string')
     return c.json({ error: '`botId` is required' }, 400);
-  }
-  if (!message || typeof message !== 'string' || message.trim() === '') {
-    return c.json({ error: '`message` is required and must be a non-empty string' }, 400);
-  }
-  if (!sessionId || typeof sessionId !== 'string') {
+  if (!message || typeof message !== 'string' || !message.trim())
+    return c.json({ error: '`message` must be a non-empty string' }, 400);
+  if (!sessionId || typeof sessionId !== 'string')
     return c.json({ error: '`sessionId` is required' }, 400);
-  }
 
-  // ── 2. Fetch bot config ────────────────────────────────────────
   const supabase = makeSupabase(c.env);
+
+  // ── Fetch bot ────────────────────────────────────────────────
   let bot;
-  try {
-    bot = await getBotById(supabase, botId);
-  } catch (err) {
-    console.error('Supabase getBotById failed:', err);
-    return c.json({ error: 'Database error' }, 502);
-  }
+  try { bot = await getBotById(supabase, botId); }
+  catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
 
-  if (!bot) {
-    return c.json({ error: 'Bot not found' }, 404);
-  }
-
-  // ── 3. CORS / origin enforcement ──────────────────────────────
-  // We enforce the allowed_origin registered per-bot.
-  // Requests without an Origin header (e.g. direct curl/server calls)
-  // are allowed through — restrict this if you need stricter control.
+  // ── CORS enforcement ─────────────────────────────────────────
   const requestOrigin = c.req.header('origin');
   if (requestOrigin) {
-    const normalised = requestOrigin.replace(/\/$/, '');
-    const allowed   = bot.allowed_origin.replace(/\/$/, '');
-    if (normalised !== allowed) {
-      return c.json(
-        { error: `Origin '${requestOrigin}' is not allowed for this bot` },
-        403
-      );
-    }
+    const norm    = requestOrigin.replace(/\/$/, '');
+    const allowed = bot.allowed_origin.replace(/\/$/, '');
+    if (norm !== allowed)
+      return c.json({ error: `Origin '${requestOrigin}' is not allowed` }, 403);
   }
 
-  // ── 4. Build system prompt ────────────────────────────────────
+  // ── Build prompt + history ───────────────────────────────────
   const systemPrompt = buildSystemPrompt(bot);
-
-  // ── 5. Retrieve session history ───────────────────────────────
   let history: Array<{ role: 'user' | 'assistant'; content: string }>;
-  try {
-    history = await getSessionHistory(supabase, botId, sessionId);
-  } catch (err) {
-    console.error('Supabase getSessionHistory failed:', err);
-    return c.json({ error: 'Database error' }, 502);
+  try { history = await getSessionHistory(supabase, botId, sessionId); }
+  catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+
+  // ── Call Gemini ──────────────────────────────────────────────
+  let rawReply: string;
+  try { rawReply = await chat(c.env.GEMINI_API_KEY, systemPrompt, history, message.trim()); }
+  catch (err) { console.error(err); return c.json({ error: 'AI service error' }, 502); }
+
+  // ── Extract lead if present ──────────────────────────────────
+  const { cleanReply, lead } = extractLead(rawReply);
+
+  if (lead) {
+    try { await saveLead(supabase, botId, sessionId, lead); }
+    catch (err) { console.error('saveLead failed (non-fatal):', err); }
   }
 
-  // ── 6. Call Claude ────────────────────────────────────────────
-  let reply: string;
-  try {
-    reply = await chat(c.env.GEMINI_API_KEY, systemPrompt, history, message.trim());
-  } catch (err) {
-    console.error('Claude API error:', err);
-    return c.json({ error: 'AI service error' }, 502);
-  }
-
-  // ── 7. Log both turns to Supabase (fire-and-forget is fine) ──
+  // ── Log conversation ─────────────────────────────────────────
   try {
     await logMessage(supabase, { bot_id: botId, session_id: sessionId, role: 'user',      content: message.trim() });
-    await logMessage(supabase, { bot_id: botId, session_id: sessionId, role: 'assistant', content: reply });
-  } catch (err) {
-    // Logging failure should NOT fail the user request
-    console.error('Supabase logMessage failed (non-fatal):', err);
-  }
+    await logMessage(supabase, { bot_id: botId, session_id: sessionId, role: 'assistant', content: cleanReply });
+  } catch (err) { console.error('logMessage failed (non-fatal):', err); }
 
-  // ── 8. Return response ────────────────────────────────────────
-  return c.json({ reply, sessionId });
+  return c.json({ reply: cleanReply, sessionId });
 });
 
-// ----------------------------------------------------------------
-// 404 catch-all
-// ----------------------------------------------------------------
-app.notFound((c) => c.json({ error: 'Not found' }, 404));
+// ================================================================
+// ADMIN ROUTES  —  protected by x-admin-secret header
+// ================================================================
 
-// ----------------------------------------------------------------
-// Global error handler
-// ----------------------------------------------------------------
+// GET /admin/bots/:id  — full bot config for dashboard
+app.get('/admin/bots/:id', async (c) => {
+  if (!requireAdmin(c.env, c.req.header('x-admin-secret')))
+    return c.json({ error: 'Unauthorized' }, 401);
+
+  const supabase = makeSupabase(c.env);
+  const bot = await getBotById(supabase, c.req.param('id'));
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+  return c.json(bot);
+});
+
+// PUT /admin/bots/:id  — save bot config from dashboard
+app.put('/admin/bots/:id', async (c) => {
+  if (!requireAdmin(c.env, c.req.header('x-admin-secret')))
+    return c.json({ error: 'Unauthorized' }, 401);
+
+  let payload: BotUpdatePayload;
+  try { payload = await c.req.json<BotUpdatePayload>(); }
+  catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const supabase = makeSupabase(c.env);
+  try {
+    const updated = await updateBot(supabase, c.req.param('id'), payload);
+    return c.json(updated);
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: 'Database error' }, 502);
+  }
+});
+
+// GET /admin/bots/:id/leads
+app.get('/admin/bots/:id/leads', async (c) => {
+  if (!requireAdmin(c.env, c.req.header('x-admin-secret')))
+    return c.json({ error: 'Unauthorized' }, 401);
+
+  const supabase = makeSupabase(c.env);
+  try {
+    const leads = await getLeads(supabase, c.req.param('id'));
+    return c.json({ leads });
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: 'Database error' }, 502);
+  }
+});
+
+// GET /admin/bots/:id/conversations
+app.get('/admin/bots/:id/conversations', async (c) => {
+  if (!requireAdmin(c.env, c.req.header('x-admin-secret')))
+    return c.json({ error: 'Unauthorized' }, 401);
+
+  const supabase = makeSupabase(c.env);
+  try {
+    const convos = await getConversations(supabase, c.req.param('id'));
+    return c.json({ conversations: convos });
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: 'Database error' }, 502);
+  }
+});
+
+// ================================================================
+// Fallbacks
+// ================================================================
+app.notFound((c) => c.json({ error: 'Not found' }, 404));
 app.onError((err, c) => {
   console.error('Unhandled error:', err);
   return c.json({ error: 'Internal server error' }, 500);
 });
 
 export default app;
-
