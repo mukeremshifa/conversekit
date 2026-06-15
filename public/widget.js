@@ -9,7 +9,7 @@
   // ──────────────────────────────────────────────────────────────
   // 0. CONFIG  — change API_BASE to your deployed Worker URL
   // ──────────────────────────────────────────────────────────────
-  var API_BASE = 'http://localhost:8787';
+  var API_BASE = 'https://conversekit.mukeremshifa.workers.dev';
 
   // ──────────────────────────────────────────────────────────────
   // 1. BOOTSTRAP — read botId, generate / restore sessionId
@@ -353,3 +353,5 @@
   }
 
 })();
+
+

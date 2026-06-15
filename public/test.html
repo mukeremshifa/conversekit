@@ -163,7 +163,7 @@
       </div>
       <div class="test-card">
         <label>API Base</label>
-        <div class="val" id="diag-api">localhost:8787</div>
+        <div class="val" id="diag-api">conversekit.mukeremshifa.workers.dev</div>
       </div>
       <div class="test-card">
         <label>Health check</label>
@@ -183,7 +183,7 @@
       <h3>How to test</h3>
       <ol>
         <li>Run <code>npm run dev</code> inside <code>D:\conversekit</code></li>
-        <li>Replace <code>YOUR_BOT_ID</code> in the script tag below with your real UUID</li>
+        <li>Replace <code>c6f02df5-e81c-447f-9055-981bfb64d31a</code> in the script tag below with your real UUID</li>
         <li>Open this file in your browser — the diagnostics above update automatically</li>
         <li>Click the chat bubble → type a message → verify a reply comes back</li>
         <li>Refresh the page → the conversation continues (same <code>sessionId</code> in sessionStorage)</li>
@@ -195,15 +195,15 @@
   <!--
     ════════════════════════════════════════════════════
     THE WIDGET — this is the only tag your clients need
-    Replace YOUR_BOT_ID with the UUID from your bots table
+    Replace c6f02df5-e81c-447f-9055-981bfb64d31a with the UUID from your bots table
     ════════════════════════════════════════════════════
   -->
-  <script src="./widget.js" data-bot-id="YOUR_BOT_ID" defer></script>
+  <script src="./widget.js" data-bot-id="c6f02df5-e81c-447f-9055-981bfb64d31a" defer></script>
 
   <!-- Diagnostic panel updater (not part of the widget) -->
   <script>
     (function () {
-      var BOT_ID = 'YOUR_BOT_ID';
+      var BOT_ID = 'c6f02df5-e81c-447f-9055-981bfb64d31a';
       var SESSION_KEY = 'ck_session_' + BOT_ID;
 
       document.getElementById('diag-botid').textContent = BOT_ID;
@@ -222,7 +222,7 @@
       }, 150);
 
       // Health check
-      fetch('http://localhost:8787/v1/bots/' + BOT_ID + '/health')
+      fetch('https://conversekit.mukeremshifa.workers.dev/v1/bots/' + BOT_ID + '/health')
         .then(function (r) { return r.json(); })
         .then(function (d) {
           if (d.status === 'ok') {
@@ -256,3 +256,5 @@
 
 </body>
 </html>
+
+

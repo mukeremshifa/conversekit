@@ -1,128 +1,118 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+// ----------------------------------------------------------------
+// Supabase helpers using raw fetch — no SDK dependency.
+// The @supabase/supabase-js client pulls in Node.js streams which
+// can cause issues in the Cloudflare Workers runtime.
+// PostgREST's REST API is simple enough to call directly.
+// ----------------------------------------------------------------
 import type { Env, Bot, ConversationRow, Lead, BotUpdatePayload } from './types';
 import type { ExtractedLead } from './leads';
 
-// ----------------------------------------------------------------
-// Factory – one client per request (Workers are stateless)
-// ----------------------------------------------------------------
-export function makeSupabase(env: Env): SupabaseClient {
-  return createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
-    auth: { persistSession: false },
+function headers(env: Env): Record<string, string> {
+  return {
+    'apikey':        env.SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${env.SUPABASE_ANON_KEY}`,
+    'Content-Type':  'application/json',
+    'Prefer':        'return=representation',
+  };
+}
+
+function url(env: Env, path: string): string {
+  return `${env.SUPABASE_URL}/rest/v1${path}`;
+}
+
+async function pgFetch<T>(env: Env, path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(url(env, path), {
+    ...init,
+    headers: { ...headers(env), ...(init.headers as Record<string, string> ?? {}) },
   });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Supabase ${init.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
+  }
+  // 204 No Content
+  if (res.status === 204) return [] as unknown as T;
+  return res.json() as Promise<T>;
 }
 
 // ----------------------------------------------------------------
 // Bots
 // ----------------------------------------------------------------
-export async function getBotById(
-  client: SupabaseClient,
-  botId: string
-): Promise<Bot | null> {
-  const { data, error } = await client
-    .from('bots')
-    .select('*')
-    .eq('id', botId)
-    .single();
-
-  if (error) {
-    if (error.code === 'PGRST116') return null;
-    throw new Error(`Supabase getBotById: ${error.message}`);
-  }
-  return data as Bot;
+export async function getBotById(env: Env, botId: string): Promise<Bot | null> {
+  const rows = await pgFetch<Bot[]>(env,
+    `/bots?select=*&id=eq.${encodeURIComponent(botId)}&limit=1`
+  );
+  return rows[0] ?? null;
 }
 
-export async function updateBot(
-  client: SupabaseClient,
-  botId: string,
-  payload: BotUpdatePayload
-): Promise<Bot> {
-  const { data, error } = await client
-    .from('bots')
-    .update(payload)
-    .eq('id', botId)
-    .select('*')
-    .single();
-
-  if (error) throw new Error(`Supabase updateBot: ${error.message}`);
-  return data as Bot;
+export async function updateBot(env: Env, botId: string, payload: BotUpdatePayload): Promise<Bot> {
+  const rows = await pgFetch<Bot[]>(env,
+    `/bots?id=eq.${encodeURIComponent(botId)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) }
+  );
+  if (!rows[0]) throw new Error('Bot not found after update');
+  return rows[0];
 }
 
 // ----------------------------------------------------------------
 // Conversations
 // ----------------------------------------------------------------
 export async function getSessionHistory(
-  client: SupabaseClient,
+  env: Env,
   botId: string,
   sessionId: string
 ): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
-  const { data, error } = await client
-    .from('conversations')
-    .select('role, content')
-    .eq('bot_id', botId)
-    .eq('session_id', sessionId)
-    .order('created_at', { ascending: true })
-    .limit(20);
-
-  if (error) throw new Error(`Supabase getSessionHistory: ${error.message}`);
-  return (data ?? []) as Array<{ role: 'user' | 'assistant'; content: string }>;
+  const rows = await pgFetch<ConversationRow[]>(env,
+    `/conversations?select=role,content&bot_id=eq.${encodeURIComponent(botId)}&session_id=eq.${encodeURIComponent(sessionId)}&order=created_at.asc&limit=20`
+  );
+  return rows;
 }
 
 export async function logMessage(
-  client: SupabaseClient,
+  env: Env,
   row: Omit<ConversationRow, 'id' | 'created_at'>
 ): Promise<void> {
-  const { error } = await client.from('conversations').insert(row);
-  if (error) throw new Error(`Supabase logMessage: ${error.message}`);
+  await pgFetch<unknown>(env, '/conversations',
+    { method: 'POST', body: JSON.stringify(row),
+      headers: { 'Prefer': 'return=minimal' } }
+  );
 }
 
 export async function getConversations(
-  client: SupabaseClient,
+  env: Env,
   botId: string,
   limit = 100
 ): Promise<ConversationRow[]> {
-  const { data, error } = await client
-    .from('conversations')
-    .select('*')
-    .eq('bot_id', botId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  if (error) throw new Error(`Supabase getConversations: ${error.message}`);
-  return (data ?? []) as ConversationRow[];
+  return pgFetch<ConversationRow[]>(env,
+    `/conversations?select=*&bot_id=eq.${encodeURIComponent(botId)}&order=created_at.desc&limit=${limit}`
+  );
 }
 
 // ----------------------------------------------------------------
 // Leads
 // ----------------------------------------------------------------
 export async function saveLead(
-  client: SupabaseClient,
+  env: Env,
   botId: string,
   sessionId: string,
   lead: ExtractedLead
 ): Promise<void> {
-  const { error } = await client.from('leads').insert({
-    bot_id:     botId,
-    session_id: sessionId,
-    name:       lead.name,
-    email:      lead.email,
-    phone:      lead.phone,
-    inquiry:    lead.inquiry,
-  });
-  if (error) throw new Error(`Supabase saveLead: ${error.message}`);
+  await pgFetch<unknown>(env, '/leads',
+    { method: 'POST',
+      body: JSON.stringify({
+        bot_id:     botId,
+        session_id: sessionId,
+        name:       lead.name,
+        email:      lead.email,
+        phone:      lead.phone,
+        inquiry:    lead.inquiry,
+      }),
+      headers: { 'Prefer': 'return=minimal' },
+    }
+  );
 }
 
-export async function getLeads(
-  client: SupabaseClient,
-  botId: string,
-  limit = 100
-): Promise<Lead[]> {
-  const { data, error } = await client
-    .from('leads')
-    .select('*')
-    .eq('bot_id', botId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  if (error) throw new Error(`Supabase getLeads: ${error.message}`);
-  return (data ?? []) as Lead[];
+export async function getLeads(env: Env, botId: string, limit = 100): Promise<Lead[]> {
+  return pgFetch<Lead[]>(env,
+    `/leads?select=*&bot_id=eq.${encodeURIComponent(botId)}&order=created_at.desc&limit=${limit}`
+  );
 }

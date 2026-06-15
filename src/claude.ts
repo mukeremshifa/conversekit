@@ -2,7 +2,8 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 
 // ----------------------------------------------------------------
 // Call Gemini and return the full text response.
-// The system prompt is passed as systemInstruction (Gemini's equivalent).
+// Uses gemini-3.5-flash (1.5-flash no longer available on v2 API keys).
+// The system prompt is passed as systemInstruction.
 // History is converted from {role, content} to Gemini's {role, parts} shape.
 // ----------------------------------------------------------------
 export async function chat(
@@ -14,7 +15,7 @@ export async function chat(
   const genAI = new GoogleGenerativeAI(apiKey);
 
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-3.5-flash',
     systemInstruction: systemPrompt,
   });
 
@@ -31,3 +32,5 @@ export async function chat(
   if (!text) throw new Error('Empty response from Gemini API');
   return text;
 }
+
+

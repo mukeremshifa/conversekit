@@ -6,7 +6,7 @@
   'use strict';
 
   // ── Config ────────────────────────────────────────────────────
-  var API = 'http://localhost:8787';
+  var API = 'https://conversekit.mukeremshifa.workers.dev';
 
   // ── State ─────────────────────────────────────────────────────
   var BOT_ID = '';
@@ -297,3 +297,5 @@
   });
 
 })();
+
+
