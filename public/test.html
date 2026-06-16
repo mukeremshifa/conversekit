@@ -1,260 +1,368 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ConverseKit Widget — Local Test</title>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Pearl Dental Clinic — Dubai Marina</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #f8fafc;
-      color: #1e293b;
-      min-height: 100vh;
+    :root {
+      --teal:      #0891b2;
+      --teal-dark: #0e7490;
+      --teal-soft: #ecfeff;
+      --text:      #0f172a;
+      --muted:     #64748b;
+      --border:    #e2e8f0;
+      --bg:        #f8fafc;
     }
 
-    /* ── Fake website chrome so you can see the widget in context ── */
-    .fake-nav {
-      background: #fff;
-      border-bottom: 1px solid #e2e8f0;
-      padding: 0 32px;
-      height: 60px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-    }
-    .fake-nav .logo {
-      font-size: 18px;
-      font-weight: 700;
-      color: #0f172a;
-      letter-spacing: -.02em;
-    }
-    .fake-nav .logo span { color: #2563eb; }
-    .fake-nav nav { display: flex; gap: 24px; }
-    .fake-nav nav a { font-size: 14px; color: #64748b; text-decoration: none; }
-    .fake-nav nav a:hover { color: #0f172a; }
+    html { scroll-behavior: smooth; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           color: var(--text); background: #fff; }
 
+    /* ── Nav ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(255,255,255,.92); backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 40px; height: 64px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-logo {
+      font-size: 20px; font-weight: 800; letter-spacing: -.03em; color: var(--text);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .nav-logo span { color: var(--teal); }
+    .nav-logo svg { width: 28px; height: 28px; }
+    .nav-links { display: flex; gap: 32px; }
+    .nav-links a { font-size: 14px; color: var(--muted); text-decoration: none; font-weight: 500; transition: color .15s; }
+    .nav-links a:hover { color: var(--teal); }
+    .nav-cta {
+      background: var(--teal); color: #fff; border: none; cursor: pointer;
+      padding: 9px 20px; border-radius: 8px; font-size: 14px; font-weight: 600;
+      text-decoration: none; transition: background .15s;
+    }
+    .nav-cta:hover { background: var(--teal-dark); }
+
+    /* ── Hero ── */
     .hero {
-      max-width: 760px;
-      margin: 72px auto 0;
-      padding: 0 24px;
-      text-align: center;
+      background: linear-gradient(135deg, #f0fdff 0%, #ecfeff 50%, #f8fafc 100%);
+      padding: 100px 40px 80px;
+      display: flex; align-items: center; justify-content: center;
+      gap: 64px; flex-wrap: wrap;
     }
-    .hero h1 {
-      font-size: clamp(28px, 5vw, 48px);
-      font-weight: 800;
-      letter-spacing: -.03em;
-      line-height: 1.15;
-      color: #0f172a;
+    .hero-text { max-width: 520px; }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: var(--teal-soft); color: var(--teal);
+      border: 1px solid #a5f3fc; border-radius: 20px;
+      padding: 5px 12px; font-size: 12px; font-weight: 600;
+      letter-spacing: .04em; text-transform: uppercase; margin-bottom: 20px;
     }
-    .hero h1 span { color: #2563eb; }
-    .hero p {
-      margin-top: 16px;
-      font-size: 17px;
-      color: #64748b;
-      line-height: 1.65;
+    .hero-badge::before { content: '●'; font-size: 8px; }
+    .hero-text h1 {
+      font-size: clamp(32px, 5vw, 52px); font-weight: 800;
+      letter-spacing: -.03em; line-height: 1.12; color: var(--text);
+      margin-bottom: 20px;
     }
+    .hero-text h1 em { color: var(--teal); font-style: normal; }
+    .hero-text p { font-size: 17px; color: var(--muted); line-height: 1.7; margin-bottom: 32px; }
+    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+    .btn-primary {
+      background: var(--teal); color: #fff; text-decoration: none;
+      padding: 13px 26px; border-radius: 10px; font-size: 15px; font-weight: 600;
+      transition: background .15s, transform .15s; display: inline-block;
+    }
+    .btn-primary:hover { background: var(--teal-dark); transform: translateY(-1px); }
+    .btn-outline {
+      background: #fff; color: var(--teal); border: 2px solid var(--teal);
+      text-decoration: none; padding: 12px 24px; border-radius: 10px;
+      font-size: 15px; font-weight: 600; transition: background .15s; display: inline-block;
+    }
+    .btn-outline:hover { background: var(--teal-soft); }
+    .hero-card {
+      background: #fff; border-radius: 20px; padding: 28px;
+      box-shadow: 0 8px 40px rgba(8,145,178,.12);
+      min-width: 280px; max-width: 320px;
+    }
+    .hero-card-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                       letter-spacing: .08em; color: var(--teal); margin-bottom: 16px; }
+    .hero-stat { display: flex; align-items: center; gap: 12px; padding: 10px 0;
+                 border-bottom: 1px solid var(--border); }
+    .hero-stat:last-child { border-bottom: none; padding-bottom: 0; }
+    .hero-stat-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--teal-soft);
+                      display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .hero-stat-icon svg { width: 18px; height: 18px; stroke: var(--teal); fill: none;
+                          stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .hero-stat-text strong { display: block; font-size: 14px; font-weight: 600; color: var(--text); }
+    .hero-stat-text span   { font-size: 12px; color: var(--muted); }
 
-    /* ── Test control panel ── */
-    .test-panel {
-      margin: 56px auto;
-      max-width: 680px;
-      padding: 0 24px;
+    /* ── Services ── */
+    .section { padding: 80px 40px; }
+    .section-label { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                     letter-spacing: .1em; color: var(--teal); margin-bottom: 10px; }
+    .section h2 { font-size: clamp(24px, 3vw, 36px); font-weight: 800; letter-spacing: -.02em;
+                  color: var(--text); margin-bottom: 12px; }
+    .section > p { font-size: 16px; color: var(--muted); max-width: 520px; line-height: 1.7;
+                   margin-bottom: 48px; }
+    .services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+                     gap: 20px; max-width: 1000px; }
+    .service-card {
+      background: #fff; border: 1px solid var(--border); border-radius: 14px;
+      padding: 22px; transition: border-color .2s, box-shadow .2s;
     }
-    .test-panel h2 {
-      font-size: 13px;
-      font-weight: 600;
-      letter-spacing: .08em;
-      text-transform: uppercase;
-      color: #94a3b8;
-      margin-bottom: 16px;
-    }
-    .test-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 12px;
-      margin-bottom: 24px;
-    }
-    .test-card {
-      background: #fff;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      padding: 16px;
-    }
-    .test-card label {
-      display: block;
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: .06em;
-      text-transform: uppercase;
-      color: #94a3b8;
-      margin-bottom: 6px;
-    }
-    .test-card .val {
-      font-size: 13px;
-      color: #0f172a;
-      word-break: break-all;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-    }
-    .test-card .val.ok  { color: #16a34a; }
-    .test-card .val.err { color: #dc2626; }
-    .test-card .val.loading { color: #94a3b8; font-style: italic; }
+    .service-card:hover { border-color: var(--teal); box-shadow: 0 4px 20px rgba(8,145,178,.1); }
+    .service-icon { width: 42px; height: 42px; border-radius: 12px; background: var(--teal-soft);
+                    display: flex; align-items: center; justify-content: center; margin-bottom: 14px; }
+    .service-icon svg { width: 22px; height: 22px; stroke: var(--teal); fill: none;
+                        stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .service-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+    .service-card p  { font-size: 13px; color: var(--muted); line-height: 1.55; }
 
-    .instructions {
-      background: #fff;
-      border: 1px solid #e2e8f0;
-      border-radius: 12px;
-      padding: 20px 24px;
+    /* ── Why us ── */
+    .why-section { background: var(--bg); padding: 80px 40px; }
+    .why-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 24px; max-width: 900px; margin-top: 48px; }
+    .why-card { text-align: center; padding: 24px 16px; }
+    .why-num { font-size: 36px; font-weight: 800; color: var(--teal);
+               letter-spacing: -.03em; margin-bottom: 6px; }
+    .why-card h4 { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+    .why-card p  { font-size: 13px; color: var(--muted); line-height: 1.55; }
+
+    /* ── Testimonials ── */
+    .testimonials { padding: 80px 40px; }
+    .testi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+                  gap: 20px; max-width: 900px; margin-top: 48px; }
+    .testi-card { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 24px; }
+    .testi-stars { color: #f59e0b; font-size: 14px; margin-bottom: 12px; }
+    .testi-card p { font-size: 14px; color: var(--text); line-height: 1.65;
+                    font-style: italic; margin-bottom: 16px; }
+    .testi-author { font-size: 13px; font-weight: 600; color: var(--muted); }
+
+    /* ── CTA Banner ── */
+    .cta-banner {
+      background: linear-gradient(135deg, var(--teal) 0%, var(--teal-dark) 100%);
+      padding: 64px 40px; text-align: center; color: #fff;
     }
-    .instructions h3 {
-      font-size: 14px;
-      font-weight: 600;
-      color: #0f172a;
-      margin-bottom: 12px;
+    .cta-banner h2 { font-size: clamp(22px, 3vw, 34px); font-weight: 800;
+                     letter-spacing: -.02em; margin-bottom: 12px; }
+    .cta-banner p  { font-size: 16px; opacity: .88; margin-bottom: 28px; }
+    .cta-banner .btn-white {
+      background: #fff; color: var(--teal); padding: 13px 28px;
+      border-radius: 10px; font-size: 15px; font-weight: 700;
+      text-decoration: none; display: inline-block; transition: transform .15s;
     }
-    .instructions ol {
-      padding-left: 20px;
-      font-size: 14px;
-      color: #475569;
-      line-height: 2;
+    .cta-banner .btn-white:hover { transform: translateY(-2px); }
+
+    /* ── Footer ── */
+    footer {
+      background: #0f172a; color: #94a3b8;
+      padding: 40px; display: flex; flex-wrap: wrap;
+      gap: 24px; align-items: center; justify-content: space-between;
     }
-    code {
-      background: #f1f5f9;
-      border-radius: 4px;
-      padding: 1px 6px;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 12.5px;
-      color: #0f172a;
+    .footer-brand { font-size: 16px; font-weight: 700; color: #fff; }
+    .footer-brand span { color: var(--teal); }
+    footer p { font-size: 13px; }
+    .footer-links { display: flex; gap: 20px; }
+    .footer-links a { font-size: 13px; color: #94a3b8; text-decoration: none; }
+    .footer-links a:hover { color: #fff; }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      nav { padding: 0 20px; }
+      .nav-links { display: none; }
+      .hero { padding: 60px 20px; }
+      .section, .why-section, .testimonials { padding: 60px 20px; }
+      .cta-banner { padding: 48px 20px; }
+      footer { padding: 32px 20px; }
     }
   </style>
 </head>
 <body>
 
-  <!-- Fake website chrome -->
-  <nav class="fake-nav">
-    <div class="logo">Demo<span>Clinic</span></div>
-    <nav>
-      <a href="#">Services</a>
-      <a href="#">About</a>
-      <a href="#">Contact</a>
-    </nav>
-  </nav>
-
-  <div class="hero">
-    <h1>Your patients deserve<br><span>instant answers.</span></h1>
-    <p>
-      This page simulates a real client website.<br>
-      The chat bubble in the bottom-right corner is your ConverseKit widget.
-    </p>
+<!-- Nav -->
+<nav>
+  <div class="nav-logo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="#0891b2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2C8 2 4 5 4 9c0 5 4 10 8 13 4-3 8-8 8-13 0-4-4-7-8-7z"/>
+      <path d="M9 9h6M12 6v6"/>
+    </svg>
+    Pearl<span>Dental</span>
   </div>
+  <div class="nav-links">
+    <a href="#services">Services</a>
+    <a href="#why">Why Us</a>
+    <a href="#testimonials">Reviews</a>
+    <a href="#contact">Contact</a>
+  </div>
+  <a class="nav-cta" href="#contact">Book Appointment</a>
+</nav>
 
-  <div class="test-panel">
-    <h2>Widget diagnostics</h2>
-
-    <div class="test-grid">
-      <div class="test-card">
-        <label>Bot ID</label>
-        <div class="val" id="diag-botid">reading…</div>
-      </div>
-      <div class="test-card">
-        <label>Session ID</label>
-        <div class="val" id="diag-session">reading…</div>
-      </div>
-      <div class="test-card">
-        <label>API Base</label>
-        <div class="val" id="diag-api">conversekit.mukeremshifa.workers.dev</div>
-      </div>
-      <div class="test-card">
-        <label>Health check</label>
-        <div class="val loading" id="diag-health">checking…</div>
-      </div>
-      <div class="test-card">
-        <label>Bot name</label>
-        <div class="val loading" id="diag-name">–</div>
-      </div>
-      <div class="test-card">
-        <label>Primary color</label>
-        <div class="val loading" id="diag-color">–</div>
-      </div>
-    </div>
-
-    <div class="instructions">
-      <h3>How to test</h3>
-      <ol>
-        <li>Run <code>npm run dev</code> inside <code>D:\conversekit</code></li>
-        <li>Replace <code>c6f02df5-e81c-447f-9055-981bfb64d31a</code> in the script tag below with your real UUID</li>
-        <li>Open this file in your browser — the diagnostics above update automatically</li>
-        <li>Click the chat bubble → type a message → verify a reply comes back</li>
-        <li>Refresh the page → the conversation continues (same <code>sessionId</code> in sessionStorage)</li>
-        <li>Open DevTools → Network tab to watch the <code>/v1/chat</code> request/response</li>
-      </ol>
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-text">
+    <div class="hero-badge">Dubai Marina's Trusted Dental Clinic</div>
+    <h1>A Healthier Smile<br>Starts <em>Here</em></h1>
+    <p>Pain-free, modern dental care for the whole family. From routine check-ups to full smile makeovers — our multilingual team is here for you 7 days a week.</p>
+    <div class="hero-actions">
+      <a class="btn-primary" href="#contact">Book a Free Consultation</a>
+      <a class="btn-outline" href="#services">View Services</a>
     </div>
   </div>
+  <div class="hero-card">
+    <div class="hero-card-label">Clinic at a Glance</div>
+    <div class="hero-stat">
+      <div class="hero-stat-icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      </div>
+      <div class="hero-stat-text">
+        <strong>Mon–Sat 9 AM – 9 PM</strong>
+        <span>Sun 10 AM – 6 PM</span>
+      </div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-icon">
+        <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+      </div>
+      <div class="hero-stat-text">
+        <strong>Marina Walk Tower, Unit 204</strong>
+        <span>Dubai Marina, UAE</span>
+      </div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-icon">
+        <svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 0 1-2.18 2A19.79 19.79 0 0 1 3.08 4.18 2 2 0 0 1 5.07 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L9.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      </div>
+      <div class="hero-stat-text">
+        <strong>+971 4 123 4567</strong>
+        <span>hello@pearldental.ae</span>
+      </div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-icon">
+        <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      </div>
+      <div class="hero-stat-text">
+        <strong>Daman · AXA · MetLife</strong>
+        <span>Most UAE insurance accepted</span>
+      </div>
+    </div>
+  </div>
+</section>
 
-  <!--
-    ════════════════════════════════════════════════════
-    THE WIDGET — this is the only tag your clients need
-    Replace c6f02df5-e81c-447f-9055-981bfb64d31a with the UUID from your bots table
-    ════════════════════════════════════════════════════
-  -->
-  <script src="./widget.js" data-bot-id="c6f02df5-e81c-447f-9055-981bfb64d31a" defer></script>
+<!-- Services -->
+<section class="section" id="services">
+  <div class="section-label">What We Offer</div>
+  <h2>Comprehensive Dental Care</h2>
+  <p>Everything your smile needs, under one roof — from everyday check-ups to full cosmetic transformations.</p>
+  <div class="services-grid">
+    <div class="service-card">
+      <div class="service-icon"><svg viewBox="0 0 24 24"><path d="M12 2C8 2 4 5 4 9c0 5 4 10 8 13 4-3 8-8 8-13 0-4-4-7-8-7z"/></svg></div>
+      <h3>General Dentistry</h3>
+      <p>Routine check-ups, cleanings, fillings, and preventative care to keep your teeth healthy.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></div>
+      <h3>Teeth Whitening</h3>
+      <p>Professional Zoom in-office whitening and custom home kits for a noticeably brighter smile.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div>
+      <h3>Dental Implants</h3>
+      <p>Permanent, natural-looking replacements for missing teeth using titanium implants.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg></div>
+      <h3>Invisalign & Braces</h3>
+      <p>Straighten your teeth discreetly with clear aligners or traditional braces.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+      <h3>Veneers & Cosmetic</h3>
+      <p>Porcelain veneers, bonding, and complete smile makeovers tailored to your face.</p>
+    </div>
+    <div class="service-card">
+      <div class="service-icon"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+      <h3>Paediatric Dentistry</h3>
+      <p>Gentle, child-friendly dental care from our dedicated paediatric specialist.</p>
+    </div>
+  </div>
+</section>
 
-  <!-- Diagnostic panel updater (not part of the widget) -->
-  <script>
-    (function () {
-      var BOT_ID = 'c6f02df5-e81c-447f-9055-981bfb64d31a';
-      var SESSION_KEY = 'ck_session_' + BOT_ID;
+<!-- Why Us -->
+<section class="why-section" id="why">
+  <div style="max-width:900px">
+    <div class="section-label">Why Pearl Dental</div>
+    <h2>Care You Can Trust</h2>
+    <div class="why-grid">
+      <div class="why-card">
+        <div class="why-num">12+</div>
+        <h4>Years of Experience</h4>
+        <p>Over a decade serving Dubai's residents and expat community.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-num">3</div>
+        <h4>Languages Spoken</h4>
+        <p>English, Arabic, and Hindi — we speak your language.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-num">7</div>
+        <h4>Days a Week</h4>
+        <p>Open Sundays too. Appointments and walk-in emergencies welcome.</p>
+      </div>
+      <div class="why-card">
+        <div class="why-num">AED 150</div>
+        <h4>Starting Consultation</h4>
+        <p>Transparent pricing. No hidden fees. Insurance billing handled for you.</p>
+      </div>
+    </div>
+  </div>
+</section>
 
-      document.getElementById('diag-botid').textContent = BOT_ID;
-      document.getElementById('diag-session').textContent =
-        sessionStorage.getItem(SESSION_KEY) || '(loads with widget)';
+<!-- Testimonials -->
+<section class="testimonials" id="testimonials">
+  <div class="section-label">Patient Reviews</div>
+  <h2>What Our Patients Say</h2>
+  <div class="testi-grid">
+    <div class="testi-card">
+      <div class="testi-stars">★★★★★</div>
+      <p>"Got my Invisalign here and the results are incredible. The team was patient, professional, and always available to answer my questions."</p>
+      <div class="testi-author">— Sarah K., Dubai Marina</div>
+    </div>
+    <div class="testi-card">
+      <div class="testi-stars">★★★★★</div>
+      <p>"I had serious dental anxiety but Pearl Dental made the whole experience so calm and pain-free. Won't go anywhere else now."</p>
+      <div class="testi-author">— Ravi M., JBR</div>
+    </div>
+    <div class="testi-card">
+      <div class="testi-stars">★★★★★</div>
+      <p>"Brought my kids here for the first time and they actually enjoyed it. The paediatric dentist was amazing with them."</p>
+      <div class="testi-author">— Fatima A., Jumeirah</div>
+    </div>
+  </div>
+</section>
 
-      // Poll session key briefly in case widget hasn't set it yet
-      var tries = 0;
-      var poll = setInterval(function () {
-        var s = sessionStorage.getItem(SESSION_KEY);
-        if (s) {
-          document.getElementById('diag-session').textContent = s;
-          clearInterval(poll);
-        }
-        if (++tries > 20) clearInterval(poll);
-      }, 150);
+<!-- CTA -->
+<section class="cta-banner" id="contact">
+  <h2>Ready for a Healthier Smile?</h2>
+  <p>Book a free consultation today — no commitment, no pressure. Our AI assistant can answer your questions right now.</p>
+  <a class="btn-white" href="tel:+97141234567">Call +971 4 123 4567</a>
+</section>
 
-      // Health check
-      fetch('https://conversekit.mukeremshifa.workers.dev/v1/bots/' + BOT_ID + '/health')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d.status === 'ok') {
-            setDiag('diag-health', '✓ 200 OK', 'ok');
-            setDiag('diag-name', d.name, 'ok');
-            setDiag('diag-color', d.primaryColor, 'ok');
-            var swatch = document.getElementById('diag-color');
-            swatch.style.display = 'flex';
-            swatch.style.alignItems = 'center';
-            swatch.style.gap = '6px';
-            var dot = document.createElement('span');
-            dot.style.cssText = 'width:12px;height:12px;border-radius:50%;background:' + d.primaryColor + ';display:inline-block;flex-shrink:0;';
-            swatch.prepend(dot);
-          } else {
-            setDiag('diag-health', '✗ ' + (d.error || 'unknown'), 'err');
-          }
-        })
-        .catch(function () {
-          setDiag('diag-health', '✗ connection refused', 'err');
-          setDiag('diag-name', 'N/A', 'err');
-          setDiag('diag-color', 'N/A', 'err');
-        });
+<!-- Footer -->
+<footer>
+  <div class="footer-brand">Pearl<span>Dental</span> Clinic</div>
+  <p>Unit 204, Marina Walk Tower, Dubai Marina, UAE</p>
+  <div class="footer-links">
+    <a href="#">Privacy</a>
+    <a href="#">Terms</a>
+    <a href="mailto:hello@pearldental.ae">Email Us</a>
+  </div>
+</footer>
 
-      function setDiag(id, text, state) {
-        var el = document.getElementById(id);
-        el.textContent = text;
-        el.className = 'val ' + (state || '');
-      }
-    })();
-  </script>
+<!-- ConverseKit Widget -->
+<script src="./widget.js" data-bot-id="c6f02df5-e81c-447f-9055-981bfb64d31a" defer></script>
 
 </body>
 </html>
-
-
