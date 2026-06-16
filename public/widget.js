@@ -64,13 +64,13 @@
     '#aicb-status-dot{width:7px;height:7px;border-radius:50%;background:#4ade80;display:inline-block;flex-shrink:0;box-shadow:0 0 0 2px rgba(74,222,128,.3);}',
 
     /* Messages */
-    '#aicb-messages{flex:1;overflow-y:auto;padding:20px 16px 14px;display:flex;flex-direction:column;gap:6px;min-height:300px;max-height:380px;scroll-behavior:smooth;background:#f9fafb;}',
+    '#aicb-messages{flex:1;overflow-y:auto;padding:14px 14px 8px;display:flex;flex-direction:column;gap:6px;min-height:300px;max-height:380px;scroll-behavior:smooth;background:#f9fafb;}',
     '#aicb-messages::-webkit-scrollbar{width:4px;}',
     '#aicb-messages::-webkit-scrollbar-track{background:transparent;}',
     '#aicb-messages::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:4px;}',
 
     /* Bubbles */
-    '.ck-msg{max-width:82%;padding:13px 17px;border-radius:18px;font-size:14px;line-height:1.7;word-break:break-word;animation:ck-pop .2s cubic-bezier(.4,0,.2,1);}',
+    '.ck-msg{max-width:75%;padding:13px 17px;border-radius:18px;font-size:14px;line-height:1.7;word-break:break-word;animation:ck-pop .2s cubic-bezier(.4,0,.2,1);}',
     '@keyframes ck-pop{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}',
     '.ck-msg.bot{background:#fff;color:#111827;border-bottom-left-radius:5px;align-self:flex-start;box-shadow:0 1px 4px rgba(0,0,0,.08);}',
     '.ck-msg.user{background:var(--ck-color);color:#fff;border-bottom-right-radius:5px;align-self:flex-end;}',
@@ -90,7 +90,7 @@
     '@keyframes ck-bounce{0%,60%,100%{transform:translateY(0);}30%{transform:translateY(-5px);}}',
 
     /* Chips */
-    '#aicb-chips{padding:4px 14px 12px;display:flex;flex-wrap:wrap;gap:6px;background:#f9fafb;flex-shrink:0;}',
+    '#aicb-chips{padding:2px 14px 10px;display:flex;flex-wrap:wrap;gap:6px;background:#f9fafb;flex-shrink:0;}',
     '.ck-chip{background:#fff;border:1.5px solid var(--ck-color);color:var(--ck-color);border-radius:20px;padding:5px 13px;font-size:12px;font-weight:500;cursor:pointer;transition:background .15s,color .15s;white-space:nowrap;font-family:inherit;line-height:1.4;}',
     '.ck-chip:hover{background:var(--ck-color);color:#fff;}',
 
@@ -328,4 +328,5 @@
   }
 
 })();
+
 
