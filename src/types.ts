@@ -129,7 +129,7 @@ export interface Bot {
   address: string | null;
 
   // Per-tenant AI vendor selection (JSONB). Optional until the
-  // migration in PLAN.md task 1 lands — undefined falls back to
+  // migration in docs/roadmap.md task 1 lands — undefined falls back to
   // the Worker's env defaults.
   provider_config?: ProviderConfig | null;
   embedding_config?: EmbeddingConfig | null;

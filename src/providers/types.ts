@@ -82,7 +82,7 @@ export interface EmbeddingProvider {
 // ----------------------------------------------------------------
 // Per-tenant configuration
 //
-// Stored as JSONB on the bot row (see PLAN.md task 1). Every field is
+// Stored as JSONB on the bot row (see docs/roadmap.md task 1). Every field is
 // optional — anything omitted falls back to the vendor preset, then to
 // Worker-level env defaults.
 // ----------------------------------------------------------------

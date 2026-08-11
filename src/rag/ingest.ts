@@ -9,7 +9,7 @@
 // Status on the document row is the durability mechanism: a failure
 // leaves `failed` plus the reason, and re-ingesting is idempotent
 // because chunks are replaced wholesale. That is deliberately less
-// than a Workflow gives you — see PLAN.md Phase 2b for when to
+// than a Workflow gives you — see docs/roadmap.md Phase 2b for when to
 // upgrade — but it survives the failure that actually happens here,
 // which is a vendor rate-limit part-way through a batch.
 // ----------------------------------------------------------------

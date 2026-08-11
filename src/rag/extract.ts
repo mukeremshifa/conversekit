@@ -110,7 +110,7 @@ export async function fetchUrl(url: string, signal?: AbortSignal): Promise<{ tex
  * Blocks the obvious SSRF targets: loopback, link-local, and the
  * RFC1918 ranges. Hostnames that resolve to private space are still
  * reachable — a full defence needs resolve-then-check, which the
- * Workers runtime does not expose. Recorded in PLAN.md risks.
+ * Workers runtime does not expose. Recorded in docs/roadmap.md risks.
  */
 export function isPrivateHost(hostname: string): boolean {
   const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');

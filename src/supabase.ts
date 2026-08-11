@@ -4,7 +4,7 @@
 // can cause issues in the Cloudflare Workers runtime.
 // PostgREST's REST API is simple enough to call directly.
 //
-// Two identities, deliberately separated (see PLAN.md Phase 1):
+// Two identities, deliberately separated (see docs/roadmap.md Phase 1):
 //
 //   serviceDb(env)      — service_role key. Bypasses RLS entirely.
 //                         For the public chat path, where the caller
