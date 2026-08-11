@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { FileText, FileUp, Link2, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { Boxes, FileText, FileUp, Link2, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { endpoints, uploadDocument, type Bot, type Chunk, type Doc } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   Field, Input, Muted, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-  Spinner, Table, Td, Textarea, Th,
+  EmptyState, ListSkeleton, Table, TableSkeleton, Td, Textarea, Th,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
@@ -114,11 +114,14 @@ export function Sources({ bot }: { bot: Bot }) {
         </CardHeader>
         <CardContent>
           {docs === null ? (
-            <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>
+            <ListSkeleton rows={3} />
           ) : docs.length === 0 ? (
-            <Muted className="text-sm">
-              No sources yet. Until you add one, the bot answers from its Knowledge Base fields alone.
-            </Muted>
+            <EmptyState
+              icon={Boxes}
+              title="No knowledge sources"
+              description="Until you add one, the bot answers from its Knowledge Base fields alone. Paste text or markdown, or point it at a URL."
+              action={{ label: 'Add a source', onClick: () => document.getElementById('ck-add-source')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}
+            />
           ) : (
             <Table>
               <thead>
@@ -183,7 +186,7 @@ export function Sources({ bot }: { bot: Bot }) {
           </CardHeader>
           <CardContent>
             {inspect.chunks === null ? (
-              <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>
+              <TableSkeleton rows={4} cols={2} />
             ) : inspect.chunks.length === 0 ? (
               <Muted className="text-sm">No chunks — indexing may still be running, or it failed.</Muted>
             ) : (
@@ -289,7 +292,8 @@ function AddSource({ botId, onAdded }: { botId: string; onAdded: () => void }) {
   }
 
   return (
-    <Card>
+    /* id is the scroll target for the empty state's action. */
+    <Card id="ck-add-source">
       <CardHeader>
         <div>
           <CardTitle>Add a source</CardTitle>

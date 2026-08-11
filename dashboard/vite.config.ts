@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath, URL } from 'node:url';
 
-// Builds straight into public/admin/, because the same Pages project
-// also serves widget.js and test.html — one deploy, not two.
+// Builds straight into public/admin/, because the same Pages project also
+// serves the landing page, widget.js and the brand assets — one deploy.
 export default defineConfig({
   base: '/admin/',
   plugins: [react(), tailwindcss()],

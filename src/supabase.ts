@@ -481,3 +481,50 @@ export async function hasChunks(db: ServiceDb, botId: string): Promise<boolean> 
   );
   return rows.length > 0;
 }
+
+// ── Overview statistics ───────────────────────────────────────────
+//
+// Aggregated in the Worker rather than in Postgres. A `group by` here
+// would mean an RPC function and therefore a migration, and at this
+// volume the round trip is cheaper than the deployment coupling. The
+// row caps below are the ceiling on that trade: past them the counts
+// would silently under-report, so they are returned to the caller and
+// surfaced rather than hidden. Move to an RPC when a bot regularly
+// hits them.
+export const STATS_MESSAGE_CAP = 4000;
+export const STATS_LEAD_CAP = 1000;
+
+/** Only the columns the aggregates need — `content` is the expensive one
+ *  and is fetched for user turns alone. */
+export interface StatMessageRow {
+  session_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+export interface StatLeadRow { created_at: string; session_id: string }
+export interface StatDocRow { status: string; chunk_count: number }
+
+export function getStatMessages(db: UserDb, botId: string, since: string): Promise<StatMessageRow[]> {
+  return pgFetch<StatMessageRow[]>(db,
+    `/conversations?select=session_id,role,content,created_at` +
+    `&bot_id=eq.${encodeURIComponent(botId)}` +
+    `&created_at=gte.${encodeURIComponent(since)}` +
+    `&order=created_at.desc&limit=${STATS_MESSAGE_CAP}`
+  );
+}
+
+export function getStatLeads(db: UserDb, botId: string, since: string): Promise<StatLeadRow[]> {
+  return pgFetch<StatLeadRow[]>(db,
+    `/leads?select=created_at,session_id` +
+    `&bot_id=eq.${encodeURIComponent(botId)}` +
+    `&created_at=gte.${encodeURIComponent(since)}` +
+    `&order=created_at.desc&limit=${STATS_LEAD_CAP}`
+  );
+}
+
+export function getStatDocuments(db: UserDb, botId: string): Promise<StatDocRow[]> {
+  return pgFetch<StatDocRow[]>(db,
+    `/documents?select=status,chunk_count&bot_id=eq.${encodeURIComponent(botId)}`
+  );
+}

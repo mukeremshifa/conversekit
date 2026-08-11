@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Download, RefreshCw } from 'lucide-react';
+import { Download, RefreshCw, Search, Target } from 'lucide-react';
 import { endpoints, type Bot, type Lead } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  Input, Muted, Spinner, Table, Td, Th,
+  EmptyState, Input, Table, TableSkeleton, Td, Th,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
@@ -67,13 +67,18 @@ export function Leads({ bot }: { bot: Bot }) {
         </CardHeader>
         <CardContent>
           {leads === null ? (
-            <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>
+            <TableSkeleton rows={5} cols={5} />
           ) : filtered.length === 0 ? (
-            <Muted className="text-sm">
-              {leads.length === 0
-                ? 'No leads yet. They appear here the moment a visitor shares their name and email.'
-                : 'No leads match that search.'}
-            </Muted>
+            leads.length === 0 ? (
+              <EmptyState
+                icon={Target}
+                title="No leads yet"
+                description="A lead appears the moment a visitor shares their name and email mid-conversation. Make sure the widget is live on your site."
+                action={{ label: 'Get the install snippet', onClick: () => { window.location.hash = 'install'; } }}
+              />
+            ) : (
+              <EmptyState icon={Search} title="No matches" description="No leads match that search." />
+            )
           ) : (
             <Table>
               <thead>

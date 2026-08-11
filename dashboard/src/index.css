@@ -38,6 +38,16 @@
   --color-accent-strong: #B98B0F;
   --color-accent-ink:    #936F0C;
 
+  /* Chart series. Validated with the dataviz six checks against the card
+     surface (#FFFFFF): lightness band, chroma floor, CVD separation
+     (worst adjacent dE 27.9 protan), normal-vision floor, and >=3:1
+     contrast. The brand gold itself is 1.8:1 here and L 0.81 — out of
+     band on both counts — so series 1 is the gold-600 step, which is the
+     value the UI already uses for strokes. */
+  --color-chart-1:       #B98B0F;
+  --color-chart-2:       #1D5FA8;
+  --color-chart-grid:    #EDEDF0;
+
   --color-danger:        #B42318;
   /* Moved off amber. The old #b45309 sat 2.80:1 from the brand gold —
      a warning state that looks like the logo is not a warning state. */
@@ -69,6 +79,11 @@
     /* No derived shades needed: the brand reads at 11.02:1 on this ground. */
     --color-accent-strong: #EEBA2B;
     --color-accent-ink:    #EEBA2B;
+    /* Chosen for the dark surface rather than flipped from light. Series 1
+       holds — it validates on #141417 too — while series 2 lifts, because
+       #1D5FA8 drops under 3:1 here. */
+    --color-chart-2:       #4C8FD6;
+    --color-chart-grid:    #23232A;
 
     --color-danger:        #F0857A;
     --color-warning:       #F09052;
@@ -87,6 +102,11 @@
 
   --color-accent-strong: #EEBA2B;
   --color-accent-ink:    #EEBA2B;
+  /* Chosen for the dark surface rather than flipped from light. Series 1
+     holds — it validates on #141417 too — while series 2 lifts, because
+     #1D5FA8 drops under 3:1 here. */
+  --color-chart-2:       #4C8FD6;
+  --color-chart-grid:    #23232A;
 
   --color-danger:        #F0857A;
   --color-warning:       #F09052;
@@ -125,5 +145,64 @@
     font-family: var(--font-display);
     font-weight: 700;
     letter-spacing: -0.026em;
+  }
+}
+
+@layer utilities {
+  /* ── Motion ──────────────────────────────────────────────────────
+     Deliberately small: one route transition, one stagger, press
+     feedback, and the skeleton shimmer. Nothing ambient and nothing
+     looping except the shimmer, which stops when the data lands.
+     Scattered animation is the fastest way to make a UI feel generated. */
+
+  @keyframes ck-rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes ck-shimmer {
+    100% { transform: translateX(100%); }
+  }
+
+  /* Keyed on the route so React remounts it and the animation replays. */
+  .ck-route { animation: ck-rise .26s cubic-bezier(.2,.7,.3,1) both; }
+
+  /* Capped at 6 steps: past that the last card would visibly lag. */
+  .ck-stagger > * { animation: ck-rise .3s cubic-bezier(.2,.7,.3,1) both; }
+  .ck-stagger > *:nth-child(1) { animation-delay: 0ms; }
+  .ck-stagger > *:nth-child(2) { animation-delay: 40ms; }
+  .ck-stagger > *:nth-child(3) { animation-delay: 80ms; }
+  .ck-stagger > *:nth-child(4) { animation-delay: 120ms; }
+  .ck-stagger > *:nth-child(5) { animation-delay: 160ms; }
+  .ck-stagger > *:nth-child(n+6) { animation-delay: 200ms; }
+
+  /* A moving highlight rather than a pulsing opacity — it reads as
+     "loading" instead of "disabled". */
+  .ck-shimmer { position: relative; overflow: hidden; }
+  .ck-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-fg) 7%, transparent), transparent);
+    animation: ck-shimmer 1.6s infinite;
+  }
+
+  .ck-press { transition: transform .12s ease; }
+  .ck-press:active { transform: translateY(1px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Suppressed, not merely shortened. The shimmer highlight is removed
+     outright rather than left parked over the block. */
+  .ck-route,
+  .ck-stagger > *,
+  .ck-shimmer::after { animation: none !important; }
+  .ck-shimmer::after { display: none; }
+  .ck-press { transition: none; }
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
   }
 }

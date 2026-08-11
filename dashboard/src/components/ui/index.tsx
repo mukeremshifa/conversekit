@@ -304,3 +304,81 @@ export function Spinner({ className }: { className?: string }) {
     />
   );
 }
+
+// ── Skeletons ───────────────────────────────────────────────────
+// A spinner says "something is happening"; a skeleton says "here is the
+// shape of what is coming", and the page does not jump when it lands.
+// Spinner is still right inside a button, where there is no shape to
+// preview.
+export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return <div className={cn('ck-shimmer rounded-md bg-sunk', className)} aria-hidden="true" {...props} />;
+}
+
+/** Shaped against the table it stands in for, so the columns do not shift. */
+export function TableSkeleton({ rows = 5, cols = 4, className }: { rows?: number; cols?: number; className?: string }) {
+  // Uneven widths read as content; a grid of identical bars reads as a loader.
+  const widths = ['w-24', 'w-32', 'w-40', 'w-20', 'w-28', 'w-36'];
+  return (
+    <div className={cn('space-y-3', className)} role="status" aria-label="Loading">
+      <div className="flex gap-4 border-b border-border pb-2.5">
+        {Array.from({ length: cols }, (_, c) => <Skeleton key={c} className="h-2.5 w-16" />)}
+      </div>
+      {Array.from({ length: rows }, (_, r) => (
+        <div key={r} className="flex gap-4" style={{ opacity: 1 - r * 0.13 }}>
+          {Array.from({ length: cols }, (_, c) => (
+            <Skeleton key={c} className={cn('h-3.5', widths[(r + c) % widths.length])} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Card-shaped skeleton for list screens that render tiles rather than rows. */
+export function ListSkeleton({ rows = 3, className }: { rows?: number; className?: string }) {
+  return (
+    <div className={cn('space-y-3', className)} role="status" aria-label="Loading">
+      {Array.from({ length: rows }, (_, r) => (
+        <div key={r} className="flex items-center gap-3 rounded-lg border border-border p-3"
+             style={{ opacity: 1 - r * 0.15 }}>
+          <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton className="h-3 w-1/3" />
+            <Skeleton className="h-2.5 w-2/3" />
+          </div>
+          <Skeleton className="h-5 w-14 shrink-0 rounded-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Empty state ─────────────────────────────────────────────────
+// These appear when a new account has nothing, which is exactly when
+// someone most needs telling what to do next — hence the action.
+export function EmptyState({
+  icon: Icon, title, description, action, className,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  description?: string;
+  action?: { label: string; onClick: () => void };
+  className?: string;
+}) {
+  return (
+    <div className={cn('flex flex-col items-center gap-3 px-6 py-12 text-center', className)}>
+      <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-sunk">
+        <Icon className="h-5 w-5 text-muted" />
+      </span>
+      <div className="space-y-1">
+        <p className="font-semibold">{title}</p>
+        {description && <p className="mx-auto max-w-sm text-sm leading-relaxed text-muted">{description}</p>}
+      </div>
+      {action && (
+        <Button variant="outline" size="sm" className="mt-1" onClick={action.onClick}>
+          {action.label}
+        </Button>
+      )}
+    </div>
+  );
+}

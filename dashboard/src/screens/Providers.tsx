@@ -13,7 +13,7 @@ import { CircleAlert, KeyRound } from 'lucide-react';
 import { endpoints, type Bot, type Vendor, type VendorConfig } from '@/lib/api';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  Field, Input, Muted, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Spinner,
+  Field, Input, ListSkeleton, Muted, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui';
 
 const TIER_TONE = { 'free-tier': 'ok', local: 'neutral', paid: 'wait' } as const;
@@ -61,7 +61,7 @@ export function Providers({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => voi
   }
 
   if (!vendors) {
-    return <div className="flex items-center gap-2 text-muted"><Spinner /> Loading vendors…</div>;
+    return <ListSkeleton rows={4} />;
   }
 
   const embedVendors = vendors.filter((v) => v.supportsEmbeddings);

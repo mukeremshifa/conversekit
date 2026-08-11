@@ -25,10 +25,26 @@
     <meta property="og:image" content="https://conversekit-widget.pages.dev/brand/og.png" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
-    <script type="module" crossorigin src="/admin/assets/index-DkrwF4aJ.js"></script>
-    <link rel="stylesheet" crossorigin href="/admin/assets/index-ozCa-BMb.css">
+    <!-- Applies the stored theme before the bundle loads. Without this a
+         dark-mode user gets a white flash on every navigation, because the
+         attribute would only be stamped once React mounts. Kept tiny and
+         defensive: any unexpected stored value falls through to "system",
+         which lets the media query in index.css decide. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('ck_theme');
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.setAttribute('data-theme', t);
+          }
+        } catch (e) { /* storage unavailable - follow the OS */ }
+      })();
+    </script>
+
+    <script type="module" crossorigin src="/admin/assets/index-pFqEMDtX.js"></script>
+    <link rel="stylesheet" crossorigin href="/admin/assets/index-CQez-jq2.css">
   </head>
   <body class="h-full">
-    <div id="root" class="h-full"></div>
+    <div id="root" class="h-full"></div>
   </body>
 </html>

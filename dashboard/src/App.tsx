@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
+  LayoutDashboard,
   BookText, Boxes, Cable, Cpu, MessageSquareText, MessagesSquare, Plug, Settings2, Target, Search,
 } from 'lucide-react';
 import { clearSession, currentSession } from '@/lib/auth';
@@ -16,10 +17,14 @@ import { Leads } from '@/screens/Leads';
 import { Conversations } from '@/screens/Conversations';
 import { Install } from '@/screens/Install';
 import { Playground } from '@/screens/Playground';
+import { Overview } from '@/screens/Overview';
 import { NoOrg } from '@/screens/NoOrg';
-import { Spinner } from '@/components/ui';
+import { EmptyState, Spinner } from '@/components/ui';
+import { CommandPalette, buildCommands, useCommandPalette } from '@/components/CommandPalette';
+import { readTheme, setTheme } from '@/lib/theme';
 
 const NAV: NavItem[] = [
+  { id: 'overview',      label: 'Overview',          icon: LayoutDashboard },
   { id: 'playground',    label: 'Playground',        icon: MessagesSquare },
   { id: 'settings',      label: 'Bot Settings',      icon: Settings2 },
   { id: 'knowledge',     label: 'Knowledge Base',    icon: BookText },
@@ -30,6 +35,9 @@ const NAV: NavItem[] = [
   { id: 'conversations', label: 'Conversations',     icon: MessageSquareText },
   { id: 'install',       label: 'Install',           icon: Plug },
 ];
+
+/** Screens whose content is a table or a chart grid rather than a form. */
+const WIDE_ROUTES = new Set(['overview', 'leads', 'conversations', 'sources']);
 
 /** Hash routing: deep links work with no server rewrite rules, which
  *  matters on Pages where the app is one static index.html. */
@@ -49,7 +57,8 @@ export default function App() {
   const [bots, setBots] = useState<Bot[]>([]);
   const [botId, setBotId] = useState<string>(() => localStorage.getItem('ck_bot_id') ?? '');
   const [loading, setLoading] = useState(true);
-  const [route, navigate] = useHashRoute('playground');
+  const [route, navigate] = useHashRoute('overview');
+  const palette = useCommandPalette();
 
   const bot = bots.find((b) => b.id === botId) ?? null;
 
@@ -85,6 +94,15 @@ export default function App() {
   const patchBot = useCallback((updated: Bot) => {
     setBots((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
   }, []);
+
+  /** The palette cannot open Shell's dialog directly, so it routes to the
+   *  place that has one. Cycling beats a submenu for a three-state setting. */
+  const cycleTheme = () => {
+    const order = ['system', 'light', 'dark'] as const;
+    const next = order[(order.indexOf(readTheme()) + 1) % order.length];
+    setTheme(next);
+    toast.success(`Theme: ${next}`);
+  };
 
   const onSignOut = () => {
     clearSession();
@@ -135,15 +153,20 @@ export default function App() {
         orgs={me?.orgs ?? []}
         onBotCreated={(b) => { setBots((prev) => [b, ...prev]); setBotId(b.id); }}
         onSignOut={onSignOut}
+        wide={WIDE_ROUTES.has(route)}
+        onOpenPalette={() => palette.setOpen(true)}
       >
         {!bot ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-24 text-center">
-            <Cable className="h-8 w-8 text-muted" />
-            <p className="font-medium">No bots yet</p>
-            <p className="text-sm text-muted">Create one from the sidebar to get started.</p>
-          </div>
+          <EmptyState
+            className="py-24"
+            icon={Cable}
+            title="No bots yet"
+            description="A bot is one row: give it a name, tell it what your business does, and paste the script tag on your site."
+            action={{ label: 'Create your first bot', onClick: () => document.querySelector<HTMLElement>('[aria-label="Select bot"]')?.focus() }}
+          />
         ) : (
-          <>
+          <div key={route} className="ck-route space-y-6">
+            {route === 'overview'      && <Overview bot={bot} onNavigate={navigate} />}
             {route === 'playground'    && <Playground bot={bot} />}
             {route === 'settings'      && <BotSettings bot={bot} onSaved={patchBot} />}
             {route === 'knowledge'     && <KnowledgeBase bot={bot} onSaved={patchBot} />}
@@ -153,9 +176,21 @@ export default function App() {
             {route === 'leads'         && <Leads bot={bot} />}
             {route === 'conversations' && <Conversations bot={bot} />}
             {route === 'install'       && <Install bot={bot} />}
-          </>
+          </div>
         )}
       </Shell>
+
+      <CommandPalette
+        open={palette.open}
+        onOpenChange={palette.setOpen}
+        commands={buildCommands({
+          nav: NAV, route, bots, botId,
+          onNavigate: navigate,
+          onSelectBot: setBotId,
+          onNewBot: () => navigate('settings'),
+          onCycleTheme: cycleTheme,
+        })}
+      />
       <Toaster richColors position="top-center" />
     </>
   );

@@ -25,6 +25,11 @@ import {
   orgStorageBytes,
   listChunks,
   hasChunks,
+  getStatMessages,
+  getStatLeads,
+  getStatDocuments,
+  STATS_MESSAGE_CAP,
+  STATS_LEAD_CAP,
   type ServiceDb,
   type UserDb,
 } from './supabase';
@@ -50,6 +55,7 @@ import {
   type Usage,
 } from './providers';
 import { extractLead } from './leads';
+import { buildStats } from './stats';
 import { LeadStreamFilter } from './lead-stream';
 import { issueSessionId, verifySessionId } from './session';
 import { isOriginAllowed, validateOrigins, validateSuggestions } from './origin';
@@ -885,6 +891,32 @@ app.delete('/v1/admin/documents/:docId', async (c) => {
   }
 
   return c.body(null, 204);
+});
+
+app.get('/v1/admin/bots/:id/stats', async (c) => {
+  const botId = c.req.param('id');
+
+  // Clamped: the window drives how many rows are pulled, and an
+  // unbounded `days` would let one request try to read the whole table.
+  const raw = Number(c.req.query('days') ?? 30);
+  const days = Number.isFinite(raw) ? Math.min(90, Math.max(7, Math.trunc(raw))) : 30;
+
+  // Reach back two windows so the comparison period can be counted from
+  // the same fetch; buildStats sorts rows into current vs prior.
+  const since = new Date(Date.now() - days * 2 * 86_400_000).toISOString();
+
+  try {
+    const db = c.get('db');
+    const [messages, leads, documents] = await Promise.all([
+      getStatMessages(db, botId, since),
+      getStatLeads(db, botId, since),
+      getStatDocuments(db, botId),
+    ]);
+    return c.json(buildStats({
+      days, messages, leads, documents,
+      caps: { messages: STATS_MESSAGE_CAP, leads: STATS_LEAD_CAP },
+    }));
+  } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
 app.get('/v1/admin/bots/:id/conversations', async (c) => {

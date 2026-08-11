@@ -3,6 +3,51 @@
 Notable changes to ConverseKit. The widget carries its own version, shown in
 `window.ConverseKit.version` and in the banner at the top of `public/widget.js`.
 
+## Unreleased
+
+### Added
+
+- **Overview screen**, now the dashboard's landing route. Conversations,
+  messages, leads and lead conversion as stat tiles with sparklines and a delta
+  against the preceding window; messages per day as a stacked area split by
+  visitor and assistant; leads per day; the questions visitors actually asked;
+  and knowledge-base health. Selectable 7/30/90-day range.
+- **`GET /v1/admin/bots/:id/stats`** — aggregated in the Worker rather than in
+  Postgres, so it needs no migration. Row caps are reported to the caller and
+  surfaced in the UI rather than silently under-reporting.
+- **Chart colour tokens**, computed rather than eyeballed: lightness band,
+  chroma floor, CVD separation under simulated protanopia and deuteranopia,
+  normal-vision floor, and contrast against the card surface — checked in both
+  themes. The brand gold is 1.8:1 on a white card and outside the lightness
+  band, so the series uses the gold-600 step the UI already uses for strokes.
+- **`scripts/check-deploy.mjs`**, run automatically before `deploy:pages`.
+  `wrangler pages deploy` uploads `public/` as it finds it, so a git-ignored
+  scratch file still reaches production — one did.
+- **`npm run test:stats`** — 33 assertions over the aggregation, mostly on day
+  bucketing, where an off-by-one puts every chart a day out invisibly.
+- **Theme toggle** — System / Light / Dark in the sidebar, persisted, with a
+  pre-paint script in `dashboard/index.html` so a dark-mode user never gets a
+  white flash. The dark palette already existed in `index.css` and nothing had
+  ever been able to select it.
+- **Skeletons** replacing the `Spinner` on Leads, Conversations, Sources and
+  AI Providers, each shaped like the content that lands so the page does not
+  jump. `Spinner` stays where a wait is genuinely indeterminate.
+- **Empty states** with an icon, an explanation and an action that unblocks the
+  user, replacing one-line grey text on five screens.
+- **Command palette** (Cmd/Ctrl-K) over navigation, bot switching and actions,
+  built on the Radix Dialog already in the bundle rather than a new dependency.
+- **Motion pass** — one route transition, a capped stagger, press feedback and
+  a skeleton shimmer, all suppressed under `prefers-reduced-motion` (verified
+  by computed style, not by inspection).
+- **Wider column for data screens** — Overview, Leads, Conversations and
+  Sources get `max-w-6xl`; forms stay narrow and readable.
+
+### Notes
+
+- Token spend is not charted. Providers return usage per turn but nothing
+  persists it, so there is no history to draw; charting it needs a schema
+  change first.
+
 ## v1.0.0
 
 First tagged release. The platform was already functional; this release is

@@ -1,9 +1,11 @@
-import { useState, type ReactNode } from 'react';
-import { LogOut, Plus, Menu } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { LogOut, Plus, Menu, Monitor, Moon, Sun, Search } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { endpoints, type Bot, type Org } from '@/lib/api';
 import { Wordmark } from '@/components/Mark';
+import { readTheme, setTheme, type Theme } from '@/lib/theme';
+import { Kbd } from '@/components/CommandPalette';
 import { cn } from '@/lib/utils';
 import {
   Button, Dialog, DialogContent, DialogTrigger, Field, Input,
@@ -11,6 +13,11 @@ import {
 } from '@/components/ui';
 
 export interface NavItem { id: string; label: string; icon: LucideIcon }
+
+/* navigator.platform is deprecated and not guaranteed to exist; reading it
+   bare would throw during render and blank the app for a cosmetic hint. */
+const isMac = typeof navigator !== 'undefined' &&
+  /mac|iphone|ipad/i.test(navigator.platform || navigator.userAgent || '');
 
 interface Props {
   nav: NavItem[];
@@ -23,12 +30,15 @@ interface Props {
   orgs: Org[];
   onBotCreated: (bot: Bot) => void;
   onSignOut: () => void;
+  /** Data-heavy screens get a wider column than forms do. */
+  wide?: boolean;
+  onOpenPalette: () => void;
   children: ReactNode;
 }
 
 export function Shell({
   nav, route, onNavigate, bots, botId, onSelectBot,
-  email, orgs, onBotCreated, onSignOut, children,
+  email, orgs, onBotCreated, onSignOut, wide, onOpenPalette, children,
 }: Props) {
   const [open, setOpen] = useState(false); // mobile drawer
 
@@ -53,6 +63,18 @@ export function Shell({
         <NewBotDialog orgs={orgs} onCreated={onBotCreated} />
       </div>
 
+      <button
+        type="button"
+        onClick={() => { onOpenPalette(); setOpen(false); }}
+        className="mx-3 mt-3 flex items-center gap-2 rounded-lg border border-border px-2.5 py-1.5
+                   text-xs text-muted transition-colors cursor-pointer hover:text-fg ck-press"
+      >
+        <Search className="h-3.5 w-3.5" />
+        <span className="flex-1 text-left">Search…</span>
+        <Kbd>{isMac ? '⌘' : 'Ctrl'}</Kbd>
+        <Kbd>K</Kbd>
+      </button>
+
       <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
         {nav.map(({ id, label, icon: Icon }) => (
           <button
@@ -60,7 +82,7 @@ export function Shell({
             type="button"
             onClick={() => { onNavigate(id); setOpen(false); }}
             className={cn(
-              'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer',
+              'flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors cursor-pointer ck-press',
               route === id ? 'bg-accent text-accent-fg font-medium' : 'text-muted hover:bg-bg hover:text-fg',
             )}
             aria-current={route === id ? 'page' : undefined}
@@ -72,7 +94,8 @@ export function Shell({
       </nav>
 
       <div className="border-t border-border p-3">
-        <p className="truncate px-2 pb-2 text-xs text-muted" title={email ?? ''}>{email}</p>
+        <ThemeToggle />
+        <p className="truncate px-2 pb-2 pt-3 text-xs text-muted" title={email ?? ''}>{email}</p>
         <Button variant="ghost" className="w-full justify-start text-muted" onClick={onSignOut}>
           <LogOut className="h-4 w-4" /> Sign out
         </Button>
@@ -106,9 +129,46 @@ export function Shell({
         </header>
 
         <main className="min-w-0 flex-1 overflow-y-auto p-4 md:p-8">
-          <div className="mx-auto w-full max-w-4xl space-y-6">{children}</div>
+          <div className={cn('mx-auto w-full space-y-6', wide ? 'max-w-6xl' : 'max-w-4xl')}>
+            {children}
+          </div>
         </main>
       </div>
+    </div>
+  );
+}
+
+/** Three states rather than two: "System" keeps following the OS, which a
+ *  stored light/dark deliberately stops doing. */
+function ThemeToggle() {
+  const [theme, setLocal] = useState<Theme>(() => readTheme());
+  useEffect(() => { setTheme(theme); }, [theme]);
+
+  const options: { value: Theme; label: string; icon: typeof Sun }[] = [
+    { value: 'system', label: 'System', icon: Monitor },
+    { value: 'light', label: 'Light', icon: Sun },
+    { value: 'dark', label: 'Dark', icon: Moon },
+  ];
+
+  return (
+    <div className="flex rounded-lg border border-border p-0.5" role="radiogroup" aria-label="Colour theme">
+      {options.map(({ value, label, icon: Icon }) => (
+        <button
+          key={value}
+          type="button"
+          role="radio"
+          aria-checked={theme === value}
+          aria-label={label}
+          title={label}
+          onClick={() => setLocal(value)}
+          className={cn(
+            'flex flex-1 items-center justify-center rounded-[6px] py-1.5 transition-colors cursor-pointer',
+            theme === value ? 'bg-accent text-accent-fg' : 'text-muted hover:text-fg',
+          )}
+        >
+          <Icon className="h-3.5 w-3.5" />
+        </button>
+      ))}
     </div>
   );
 }

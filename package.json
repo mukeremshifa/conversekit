@@ -19,7 +19,9 @@
     "test:widget": "node scripts/test-widget-markdown.mjs",
     "test:session": "node scripts/test-session.mjs",
     "test:session-units": "node scripts/test-session-units.mjs",
-    "test": "npm run test:widget && npm run test:session-units && npm run test:rag"
+    "test": "npm run test:widget && npm run test:session-units && npm run test:rag && npm run test:stats",
+    "predeploy:pages": "node scripts/check-deploy.mjs",
+    "test:stats": "node scripts/test-stats-units.mjs"
   },
   "dependencies": {
     "hono": "^4.13.1",

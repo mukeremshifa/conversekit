@@ -216,6 +216,38 @@ export interface Message {
   content: string; created_at: string;
 }
 
+
+// ── Overview statistics ──────────────────────────────────────────
+export interface DayPoint {
+  date: string;
+  visitor: number;
+  assistant: number;
+  sessions: number;
+  leads: number;
+}
+export interface StatTotals {
+  sessions: number;
+  messages: number;
+  visitorMessages: number;
+  assistantMessages: number;
+  leads: number;
+  conversionRate: number | null;
+  turnsPerSession: number | null;
+  documents: number;
+  documentsReady: number;
+  documentsFailed: number;
+  documentsPending: number;
+  chunks: number;
+}
+export interface Stats {
+  range: { days: number; from: string; to: string };
+  totals: StatTotals;
+  previous: Pick<StatTotals, 'sessions' | 'messages' | 'leads'>;
+  series: DayPoint[];
+  topQuestions: { text: string; count: number }[];
+  truncated: { messages: boolean; leads: boolean };
+}
+
 export const endpoints = {
   me:            () => api.get<Me>('/v1/admin/me'),
   createOrg:     (name: string) => api.post<Org>('/v1/admin/orgs', { name }),
@@ -232,6 +264,7 @@ export const endpoints = {
   reindex:       (docId: string) => api.post<Doc>(`/v1/admin/documents/${docId}/reindex`),
   deleteDoc:     (docId: string) => api.del<null>(`/v1/admin/documents/${docId}`),
   chunks:        (docId: string) => api.get<{ chunks: Chunk[] }>(`/v1/admin/documents/${docId}/chunks`),
+  stats:         (id: string, days = 30) => api.get<Stats>(`/v1/admin/bots/${id}/stats?days=${days}`),
   preview:       (id: string, body: { message: string; history: PreviewTurn[] }) =>
                    api.post<PreviewReply>(`/v1/admin/bots/${id}/preview`, body),
 };

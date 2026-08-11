@@ -8,3 +8,9 @@ dist/
 # --noEmit; wrangler builds from the .ts, so they are always litter.
 src/**/*.js
 *.tsbuildinfo
+
+# Scratch harnesses. Keeps them out of git; the deploy itself is guarded
+# by the predeploy:pages script, because `wrangler pages deploy public`
+# uploads the whole directory regardless of what git ignores — an
+# uncommitted debug page reached production once that way.
+public/__*

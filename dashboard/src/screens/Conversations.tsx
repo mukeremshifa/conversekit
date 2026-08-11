@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { RefreshCw } from 'lucide-react';
+import { MessageSquareText, RefreshCw } from 'lucide-react';
 import { endpoints, type Bot, type Message } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  Muted, Spinner,
+  EmptyState, TableSkeleton,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
@@ -50,9 +50,14 @@ export function Conversations({ bot }: { bot: Bot }) {
         </CardHeader>
         <CardContent>
           {messages === null ? (
-            <div className="flex items-center gap-2 text-muted"><Spinner /> Loading…</div>
+            <TableSkeleton rows={4} cols={3} />
           ) : sessions.length === 0 ? (
-            <Muted className="text-sm">No conversations yet.</Muted>
+            <EmptyState
+              icon={MessageSquareText}
+              title="No conversations yet"
+              description="Transcripts land here once visitors start talking to this bot."
+              action={{ label: 'Try it in the Playground', onClick: () => { window.location.hash = 'playground'; } }}
+            />
           ) : (
             <div className="space-y-6">
               {sessions.map(([sid, msgs]) => (
