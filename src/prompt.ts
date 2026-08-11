@@ -1,6 +1,12 @@
 import type { Bot } from './types';
 
-export function buildSystemPrompt(bot: Bot): string {
+/**
+ * @param retrievedContext Rendered RAG excerpts, appended after the
+ *   conversation rules so those rules take precedence over anything an
+ *   ingested document might try to assert. Empty string when a bot has
+ *   no corpus, which leaves the prompt byte-identical to pre-RAG.
+ */
+export function buildSystemPrompt(bot: Bot, retrievedContext = ''): string {
   const lines: string[] = [
     `You are a helpful AI assistant for ${bot.business_name}.`,
     `Your name is ${bot.name}.`,
@@ -90,6 +96,13 @@ export function buildSystemPrompt(bot: Bot): string {
   lines.push('   Use null for any field the visitor did not provide.');
   lines.push('   This marker is processed automatically — it must NEVER appear in the visible reply.');
   lines.push('   Only emit it once per conversation.');
+
+  // Last, so the rules above are established before any ingested text
+  // is introduced — and so the retrieval section can refer back to them.
+  if (retrievedContext) {
+    lines.push('');
+    lines.push(retrievedContext);
+  }
 
   return lines.join('\n');
 }

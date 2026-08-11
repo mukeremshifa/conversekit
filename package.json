@@ -1,18 +1,29 @@
 {
   "name": "conversekit",
   "version": "1.0.0",
-  "description": "AI website chatbot backend – Cloudflare Workers + Hono + Supabase + Claude",
+  "description": "Multi-tenant conversational AI platform \u2013 Cloudflare Workers + Hono + Supabase + pluggable AI vendors",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "verify:isolation": "node scripts/verify-isolation.mjs",
+    "verify:rls": "node scripts/verify-rls.mjs",
+    "db:status": "node scripts/migrate.mjs status",
+    "db:migrate": "node scripts/migrate.mjs up",
+    "db:baseline": "node scripts/migrate.mjs baseline",
+    "test:rag": "node scripts/test-rag-units.mjs",
+    "dashboard": "npm --prefix dashboard run dev",
+    "build:dashboard": "npm --prefix dashboard run build",
+    "deploy:pages": "npm run build:dashboard && wrangler pages deploy public --project-name=conversekit-widget --commit-dirty=true",
+    "test:widget": "node scripts/test-widget-markdown.mjs",
+    "test:session": "node scripts/test-session.mjs",
+    "test:session-units": "node scripts/test-session-units.mjs",
+    "test": "npm run test:widget && npm run test:session-units && npm run test:rag"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.52.0",
-    "@google/generative-ai": "^0.24.1",
-    "@supabase/supabase-js": "^2.49.9",
-    "hono": "^4.7.10"
+    "hono": "^4.13.1",
+    "jose": "^6.2.8"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250620.0",

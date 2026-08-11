@@ -3,3 +3,8 @@ dist/
 .wrangler/
 .dev.vars
 *.env
+
+# tsc emits these next to their sources if it is ever run without
+# --noEmit; wrangler builds from the .ts, so they are always litter.
+src/**/*.js
+*.tsbuildinfo

@@ -1,0 +1,11 @@
+# Throwaway Worker for the Phase 2B spike: measure env.AI.toMarkdown()
+# against real files before committing to an architecture.
+#   npx wrangler dev -c scripts/spike/wrangler.toml --remote --port 8788
+name = "conversekit-spike-tomarkdown"
+main = "worker.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[ai]
+binding = "AI"

@@ -3,14 +3,30 @@
     "target": "ES2022",
     "module": "ES2022",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types"],
+    "lib": [
+      "ES2022"
+    ],
+    // Dated entrypoint on purpose, matching wrangler.toml's
+    // compatibility_date. The bare "@cloudflare/workers-types" is the
+    // *oldest* compat date, where FormData.get() is typed `string | null`
+    // because the runtime could not return files yet. Under it, the file
+    // in an upload narrows to `never` and the upload route does not
+    // compile — while the deployed Worker, on a 2024 compatibility date,
+    // hands back a real File. Do not "simplify" this back.
+    "types": [
+      "@cloudflare/workers-types/2023-07-01"
+    ],
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "noEmit": true
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules"]
+  "include": [
+    "src/**/*"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }

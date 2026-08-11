@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/* Design tokens, carried over from the vanilla dashboard so the visual
+   identity survives the rewrite. Light and dark are both defined —
+   an admin console people sit in all day should respect the OS. */
+@theme {
+  --color-bg:        #f8fafc;
+  --color-surface:   #ffffff;
+  --color-border:    #e2e8f0;
+  --color-fg:        #0f172a;
+  --color-muted:     #64748b;
+  --color-accent:    #2563eb;
+  --color-accent-fg: #ffffff;
+  --color-danger:    #dc2626;
+  --color-success:   #16a34a;
+  --color-warning:   #b45309;
+
+  --radius: 0.625rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-bg:      #0b1220;
+    --color-surface: #111a2b;
+    --color-border:  #1e293b;
+    --color-fg:      #e2e8f0;
+    --color-muted:   #94a3b8;
+    --color-accent:  #3b82f6;
+  }
+}
+
+@layer base {
+  * { border-color: var(--color-border); }
+  html, body { height: 100%; }
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Focus rings are load-bearing for keyboard users; never remove
+     without replacing. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}

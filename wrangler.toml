@@ -4,5 +4,49 @@ compatibility_date = "2024-11-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+# Workers AI — the keyless vendor in the provider catalog, and the
+# embedding provider for RAG (@cf/baai/bge-base-en-v1.5, 768 dims).
+#
+# TRADE-OFF: the AI binding has no local simulator, so enabling it puts
+# `wrangler dev` into a remote proxy session and local runs then require
+# `wrangler login`. Accepted because it is the only free 768-dimension
+# embedding source the deployed Worker can actually reach — Ollama is
+# free too, but Cloudflare's edge cannot see your laptop.
+[ai]
+binding = "AI"
+
+# Uploaded source files (PDF, DOCX). The bytes have to live somewhere
+# between the upload and the parse, and stay readable afterwards so a
+# document can be re-chunked — or re-extracted with a better converter —
+# without asking the tenant to upload it again.
+#
+# Requires R2 to be enabled on the account and the bucket to exist:
+#   wrangler r2 bucket create conversekit-documents
+# A deploy fails if it does not. The Worker itself degrades gracefully:
+# without this binding the upload route answers 501 and every other
+# source type keeps working.
+[[r2_buckets]]
+binding = "DOCS"
+bucket_name = "conversekit-documents"
+
+# Platform defaults. A bot with no provider_config inherits these, so
+# new bots land on the free stack rather than a metered one. Per-tenant
+# config in bots.provider_config still overrides them.
+[vars]
+AI_VENDOR = "groq"
+AI_MODEL = "llama-3.3-70b-versatile"
+EMBEDDING_VENDOR = "workers-ai"
+
+# Abuse guard for the public chat path. Not monetisation: every bot
+# shares one Groq key and one Workers AI allocation, so an unthrottled
+# endpoint lets anyone holding a bot UUID drain the free tier from a
+# script. 30 messages/minute per bot per client IP is generous for a
+# human and hostile to a loop.
+[[unsafe.bindings]]
+name = "CHAT_LIMITER"
+type = "ratelimit"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
 [observability]
 enabled = true

@@ -1,7 +1,10 @@
 /*!
- * ConverseKit Chat Widget v0.3.1
+ * ConverseKit Chat Widget v0.6.0
  * Drop-in AI chatbot for any website.
  * Usage: <script src="widget.js" data-bot-id="YOUR_BOT_ID" defer></script>
+ *
+ * Streams replies over SSE, falling back to the buffered /v1/chat
+ * endpoint on any transport failure.
  */
 (function () {
   'use strict';
@@ -18,15 +21,21 @@
   var botId = scriptTag && scriptTag.getAttribute('data-bot-id');
   if (!botId) { console.warn('[ConverseKit] No data-bot-id found.'); return; }
 
+  /* Session ids are issued and signed by the server. The widget never
+     invents one: a client-generated id could be guessed or replayed to
+     read another visitor's transcript. Sending none on the first
+     message makes the server mint one, which we then carry. */
   var SESSION_KEY = 'ck_session_' + botId;
-  var sessionId   = sessionStorage.getItem(SESSION_KEY);
-  if (!sessionId) {
-    sessionId = 'ck-' + Math.random().toString(36).slice(2, 11) + '-' + Date.now();
-    sessionStorage.setItem(SESSION_KEY, sessionId);
+  var sessionId   = sessionStorage.getItem(SESSION_KEY) || null;
+
+  function rememberSession(id) {
+    if (!id || id === sessionId) return;
+    sessionId = id;
+    try { sessionStorage.setItem(SESSION_KEY, id); } catch (e) { /* private mode */ }
   }
 
   // ── State ─────────────────────────────────────────────────────
-  var config   = { name: 'Assistant', contact: null, primaryColor: '#2563eb' };
+  var config   = { name: 'Assistant', contact: null, primaryColor: '#2563eb', suggestions: null };
   var isOpen   = false;
   var isTyping = false;
 
@@ -74,7 +83,19 @@
     '@keyframes ck-pop{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}',
     '.ck-msg.bot{background:#fff;color:#111827;border-bottom-left-radius:5px;align-self:flex-start;box-shadow:0 1px 4px rgba(0,0,0,.08);}',
     '.ck-msg.user{background:var(--ck-color);color:#fff;border-bottom-right-radius:5px;align-self:flex-end;}',
-    '.ck-msg.error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;align-self:flex-start;font-size:13px;}',
+    '.ck-msg.error{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;align-self:flex-start;font-size:13px;white-space:pre-line;}',
+
+    /* Markdown output */
+    '.ck-msg p{margin:0;}',
+    '.ck-msg p + p,.ck-msg p + ul,.ck-msg p + ol,.ck-msg ul + p,.ck-msg ol + p{margin-top:8px;}',
+    '.ck-msg ul,.ck-msg ol{margin:0;padding-left:20px;}',
+    '.ck-msg li{margin:2px 0;}',
+    '.ck-msg strong{font-weight:700;}',
+    '.ck-msg em{font-style:italic;}',
+    '.ck-msg code{background:rgba(0,0,0,.06);padding:1px 5px;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;}',
+    '.ck-msg.user code{background:rgba(255,255,255,.22);}',
+    '.ck-msg a{color:inherit;text-decoration:underline;text-underline-offset:2px;}',
+    '.ck-msg.bot a{color:var(--ck-color);}',
 
     /* Timestamps */
     '.ck-time{font-size:10px;color:#9ca3af;margin-top:4px;margin-bottom:10px;padding:0 4px;}',
@@ -126,6 +147,90 @@
   var ICON_CLOSE = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><line x1="18" y1="6" x2="6" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/></svg>';
   var ICON_BOT   = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M12 2v4M8 11V7a4 4 0 0 1 8 0v4"/><circle cx="9" cy="16" r="1" fill="#fff" stroke="none"/><circle cx="15" cy="16" r="1" fill="#fff" stroke="none"/></svg>';
   var ICON_SEND  = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>';
+
+  // ── Markdown ──────────────────────────────────────────────────
+  /*
+   * Renders a small, safe subset of markdown.
+   *
+   * SECURITY: reply text is model output, and the model may have read
+   * attacker-controlled documents through RAG. So this ESCAPES FIRST
+   * and only then applies transforms — no HTML from the model can ever
+   * survive into the DOM. Links are additionally protocol-checked,
+   * because an escaped "javascript:" would still be a live URL.
+   */
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function safeUrl(url) {
+    /* Only absolute http(s) and mailto. Anything else — javascript:,
+       data:, vbscript: — is dropped rather than rendered. */
+    return /^(https?:\/\/|mailto:)[^\s<>"']+$/i.test(url) ? url : null;
+  }
+
+  function renderInline(text) {
+    return text
+      /* Links first: their label may itself contain emphasis markers. */
+      .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, function (m, label, href) {
+        var safe = safeUrl(href);
+        return safe
+          ? '<a href="' + safe + '" target="_blank" rel="noopener noreferrer">' + label + '</a>'
+          : label;
+      })
+      /* Bare URLs, but not ones already inside an href we just built. */
+      .replace(/(^|[\s(])((?:https?:\/\/)[^\s<>"']+)/g, function (m, pre, url) {
+        var safe = safeUrl(url);
+        return safe ? pre + '<a href="' + safe + '" target="_blank" rel="noopener noreferrer">' + safe + '</a>' : m;
+      })
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  }
+
+  function renderMarkdown(raw) {
+    var lines = escapeHtml(raw).split('\n');
+    var html = '';
+    var listType = null;   // 'ul' | 'ol' | null
+    var para = [];
+
+    function flushPara() {
+      if (!para.length) return;
+      html += '<p>' + renderInline(para.join('<br>')) + '</p>';
+      para = [];
+    }
+    function closeList() {
+      if (listType) { html += '</' + listType + '>'; listType = null; }
+    }
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var bullet  = /^\s*[-*+]\s+(.*)$/.exec(line);
+      var ordered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+      var heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
+
+      if (bullet || ordered) {
+        flushPara();
+        var want = bullet ? 'ul' : 'ol';
+        if (listType !== want) { closeList(); html += '<' + want + '>'; listType = want; }
+        html += '<li>' + renderInline((bullet || ordered)[1]) + '</li>';
+      } else if (heading) {
+        /* Rendered as bold rather than a real heading: an h1 inside a
+           chat bubble inherits the host page's typography and looks
+           broken on most sites. */
+        flushPara(); closeList();
+        html += '<p><strong>' + renderInline(heading[1]) + '</strong></p>';
+      } else if (line.trim() === '') {
+        flushPara(); closeList();
+      } else {
+        closeList();
+        para.push(line);
+      }
+    }
+    flushPara(); closeList();
+    return html;
+  }
 
   // ── DOM helper ────────────────────────────────────────────────
   function el(tag, attrs, children) {
@@ -184,25 +289,66 @@
   }
 
   // ── Messages ──────────────────────────────────────────────────
+  function nearBottom(box) {
+    return box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  }
+
   function appendMessage(dom, text, role) {
     var div  = el('div', { className: 'ck-msg ' + role });
-    div.textContent = text;
+    /* Only bot replies are markdown. Visitor text and our own error
+       copy are inserted as text, never parsed. */
+    if (role === 'bot') div.innerHTML = renderMarkdown(text);
+    else div.textContent = text;
     var time = el('div', { className: 'ck-time ' + (role === 'bot' ? 'left' : 'right'), textContent: timeStr() });
     dom.messages.insertBefore(div,  dom.typing);
     dom.messages.insertBefore(time, dom.typing);
     dom.messages.scrollTop = dom.messages.scrollHeight;
   }
 
+  /* Empty bot bubble that text is streamed into. Returns a handle so
+     deltas can be appended without rebuilding the node. */
+  function beginBotMessage(dom) {
+    var div  = el('div', { className: 'ck-msg bot' });
+    var time = el('div', { className: 'ck-time left', textContent: timeStr() });
+    dom.messages.insertBefore(div,  dom.typing);
+    dom.messages.insertBefore(time, dom.typing);
+    var raw = '';
+    return {
+      append: function (text) {
+        var stick = nearBottom(dom.messages);
+        raw += text;
+        /* Re-render the whole bubble each delta. A marker split across
+           chunks ("**bo") briefly shows literally, then resolves — the
+           alternative, holding text back until the stream ends, costs
+           the streaming effect entirely. */
+        div.innerHTML = renderMarkdown(raw);
+        if (stick) dom.messages.scrollTop = dom.messages.scrollHeight;
+      },
+      isEmpty: function () { return raw === ''; },
+      remove:  function () {
+        if (div.parentNode)  dom.messages.removeChild(div);
+        if (time.parentNode) dom.messages.removeChild(time);
+      },
+    };
+  }
+
   // ── Chips ─────────────────────────────────────────────────────
-  var CHIPS = [
+  /* Fallback only. These used to be the ONLY chips available, and they
+     were dental-specific — every bot on the platform asked its visitors
+     about insurance and booking appointments, whatever the business
+     actually was. Per-bot chips now arrive from /health; this set is
+     the vertical-neutral default when a bot has not set its own. */
+  var DEFAULT_CHIPS = [
     'What services do you offer?',
     'What are your opening hours?',
-    'Do you accept insurance?',
-    'I\'d like to book an appointment',
+    'How can I contact you?',
   ];
 
   function renderChips(dom, doSend) {
-    CHIPS.forEach(function (label) {
+    var chips = (config.suggestions && config.suggestions.length)
+      ? config.suggestions.slice(0, 6)
+      : DEFAULT_CHIPS;
+    chips.forEach(function (label) {
       var chip = el('button', { className: 'ck-chip', textContent: label });
       chip.addEventListener('click', function () {
         dom.chips.style.display = 'none';
@@ -220,20 +366,106 @@
         if (d.name)         config.name         = d.name;
         if (d.contact)      config.contact      = d.contact;
         if (d.primaryColor) config.primaryColor = d.primaryColor;
+        if (Array.isArray(d.suggestions)) config.suggestions = d.suggestions;
         cb(null);
       })
       .catch(cb);
   }
 
+  function payload(msg) {
+    var body = { botId: botId, message: msg };
+    if (sessionId) body.sessionId = sessionId;
+    return JSON.stringify(body);
+  }
+
+  /* Buffered fallback — one request, one reply. */
   function callChat(msg, onReply, onDone, onError) {
     fetch(API_BASE + '/v1/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ botId: botId, message: msg, sessionId: sessionId }),
+      body: payload(msg),
     })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (d) { onReply(d.reply || ''); onDone(); })
+      .then(function (d) { rememberSession(d.sessionId); onReply(d.reply || ''); onDone(); })
       .catch(onError);
+  }
+
+  var canStream = typeof TextDecoder !== 'undefined' &&
+                  typeof ReadableStream !== 'undefined';
+
+  /*
+   * SSE over POST — EventSource can't send a body, so the response
+   * stream is read manually. onError receives a flag saying whether
+   * any text had already been shown: if not, the caller can silently
+   * retry on the buffered endpoint.
+   */
+  function callChatStream(msg, onDelta, onDone, onError) {
+    var started = false;
+
+    fetch(API_BASE + '/v1/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+      body: payload(msg),
+    })
+      .then(function (res) {
+        if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+
+        var reader  = res.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer  = '';
+        var evName  = '';
+        var dataBuf = [];
+
+        function dispatch() {
+          if (!dataBuf.length) return;
+          var raw = dataBuf.join('\n');
+          evName = evName || 'message';
+          dataBuf = [];
+
+          var parsed;
+          try { parsed = JSON.parse(raw); } catch (e) { evName = ''; return; }
+
+          if (evName === 'delta' && parsed.text) {
+            started = true;
+            onDelta(parsed.text);
+          } else if (evName === 'done') {
+            rememberSession(parsed.sessionId);
+          } else if (evName === 'error') {
+            throw new Error(parsed.error || 'stream error');
+          }
+          evName = '';
+        }
+
+        function pump() {
+          return reader.read().then(function (r) {
+            if (r.done) { dispatch(); onDone(); return; }
+
+            buffer += decoder.decode(r.value, { stream: true });
+
+            var nl;
+            while ((nl = buffer.indexOf('\n')) !== -1) {
+              var line = buffer.slice(0, nl);
+              buffer   = buffer.slice(nl + 1);
+              if (line.charAt(line.length - 1) === '\r') line = line.slice(0, -1);
+
+              if (line === '')            { dispatch(); continue; }
+              if (line.charAt(0) === ':') { continue; }
+
+              var colon = line.indexOf(':');
+              var field = colon === -1 ? line : line.slice(0, colon);
+              var val   = colon === -1 ? ''   : line.slice(colon + 1);
+              if (val.charAt(0) === ' ') val = val.slice(1);
+
+              if (field === 'event')     evName = val;
+              else if (field === 'data') dataBuf.push(val);
+            }
+            return pump();
+          });
+        }
+
+        return pump();
+      })
+      .catch(function (err) { onError(err, started); });
   }
 
   // ── Init ──────────────────────────────────────────────────────
@@ -298,26 +530,52 @@
       dom.typing.classList.add('visible');
       dom.messages.scrollTop = dom.messages.scrollHeight;
 
-      callChat(text,
-        function (reply) {
+      var bubble = null;
+
+      function settle() {
+        dom.typing.classList.remove('visible');
+        isTyping = false;
+        dom.sendBtn.disabled = dom.input.value.trim() === '';
+        if (!isOpen) dom.badge.classList.add('visible');
+      }
+
+      /* First delta replaces the typing dots with a live bubble. */
+      function onDelta(chunk) {
+        if (!bubble) {
           dom.typing.classList.remove('visible');
-          appendMessage(dom, reply, 'bot');
-          if (!isOpen) dom.badge.classList.add('visible');
-        },
-        function () {
-          isTyping = false;
-          dom.sendBtn.disabled = dom.input.value.trim() === '';
-        },
-        function () {
-          dom.typing.classList.remove('visible');
-          isTyping = false;
-          dom.sendBtn.disabled = dom.input.value.trim() === '';
-          var msg = 'I\'m having a moment — please reach us directly.';
-          if (config.contact) msg += '\n📞 ' + config.contact;
-          appendMessage(dom, msg, 'error');
-          if (!isOpen) dom.badge.classList.add('visible');
+          bubble = beginBotMessage(dom);
         }
-      );
+        bubble.append(chunk);
+      }
+
+      function showError() {
+        if (bubble && bubble.isEmpty()) { bubble.remove(); bubble = null; }
+        var msg = 'I\'m having a moment — please reach us directly.';
+        if (config.contact) msg += '\n📞 ' + config.contact;
+        appendMessage(dom, msg, 'error');
+        settle();
+      }
+
+      function bufferedSend() {
+        callChat(text,
+          function (reply) {
+            dom.typing.classList.remove('visible');
+            appendMessage(dom, reply, 'bot');
+          },
+          settle,
+          showError
+        );
+      }
+
+      if (!canStream) { bufferedSend(); return; }
+
+      callChatStream(text, onDelta, settle, function (err, started) {
+        // Nothing rendered yet — the visitor never saw the failure, so
+        // retry quietly on the buffered endpoint.
+        if (!started) { bufferedSend(); return; }
+        console.warn('[ConverseKit] stream interrupted:', err);
+        settle();
+      });
     }
   }
 
