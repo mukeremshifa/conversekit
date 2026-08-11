@@ -1,0 +1,1155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ConverseKit — Drop-in AI chat for any website</title>
+    <meta
+      name="description"
+      content="An AI chat widget that answers from a business's own knowledge base and captures leads. One script tag. Eleven AI vendors, one interface. Built on Cloudflare Workers and Supabase."
+    />
+
+    <link rel="icon" href="/brand/favicon.ico" sizes="any" />
+    <link rel="icon" href="/brand/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />
+    <link rel="manifest" href="/brand/site.webmanifest" />
+    <link rel="canonical" href="https://conversekit-widget.pages.dev/" />
+    <meta name="theme-color" content="#0A0A0C" />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph requires absolute URLs; a relative one yields no preview. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://conversekit-widget.pages.dev/" />
+    <meta
+      property="og:title"
+      content="ConverseKit — Drop-in AI chat for any website"
+    />
+    <meta
+      property="og:description"
+      content="Answers from your own docs. Captures leads. One script tag."
+    />
+    <meta
+      property="og:image"
+      content="https://conversekit-widget.pages.dev/brand/og.png"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:image"
+      content="https://conversekit-widget.pages.dev/brand/og.png"
+    />
+
+    <style>
+      /* Fonts are vendored into /fonts because this page has no build step.
+   See public/fonts/README.md for provenance. */
+      @font-face {
+        font-family: "Bricolage";
+        src: url(/fonts/bricolage-grotesque-latin.woff2) format("woff2");
+        font-weight: 200 800;
+        font-display: swap;
+      }
+      @font-face {
+        font-family: "Instrument";
+        src: url(/fonts/instrument-sans-latin.woff2) format("woff2");
+        font-weight: 400 700;
+        font-display: swap;
+      }
+
+      /* This page commits to dark. The identity spec puts gold-on-dark on
+   everything seen from outside — social cards, the tab icon, this — and
+   reserves ink-on-paper for the working environment, which is the
+   dashboard. So there is no light palette here by choice, not omission. */
+      :root {
+        --bg: #0a0a0c;
+        --surface: #141417;
+        --sunk: #08080a;
+        --raised: #1b1b1f;
+        --fg: #f7f7f8;
+        --muted: #a1a1ac;
+        --faint: #71717b;
+        --line: #26262c;
+        --line-strong: #33333b;
+        --gold: #eeba2b;
+        --on-gold: #0a0a0c;
+        --maxw: 1120px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      img,
+      svg,
+      pre,
+      canvas {
+        max-width: 100%;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          "Instrument",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        font-size: 16px;
+        line-height: 1.62;
+        font-weight: 460;
+        font-variant-numeric: tabular-nums;
+        -webkit-font-smoothing: antialiased;
+        overflow-x: hidden;
+      }
+      .wrap {
+        max-width: var(--maxw);
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      .disp {
+        font-family: "Bricolage", "Instrument", sans-serif;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+      a {
+        color: inherit;
+      }
+      :focus-visible {
+        outline: 2px solid var(--gold);
+        outline-offset: 3px;
+        border-radius: 5px;
+      }
+
+      /* ── Nav ── */
+      header.nav {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgba(10, 10, 12, 0.78);
+        backdrop-filter: blur(14px);
+        border-bottom: 1px solid var(--line);
+      }
+      .nav-in {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        height: 64px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        text-decoration: none;
+      }
+      .brand svg {
+        width: 28px;
+        height: 28px;
+        flex: none;
+        color: var(--fg);
+      }
+      .brand .wm {
+        font-family: "Bricolage", sans-serif;
+        font-weight: 700;
+        font-size: 18px;
+        letter-spacing: -0.03em;
+      }
+      .brand .wm span {
+        font-weight: 400;
+        color: var(--muted);
+      }
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .nav-links a {
+        text-decoration: none;
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 560;
+        padding: 8px 12px;
+        border-radius: 9px;
+        transition:
+          color 0.15s,
+          background 0.15s;
+      }
+      .nav-links a:hover {
+        color: var(--fg);
+        background: var(--surface);
+      }
+      .nav-links a.cta {
+        color: var(--on-gold);
+        background: var(--gold);
+        font-weight: 640;
+      }
+      .nav-links a.cta:hover {
+        color: var(--on-gold);
+        background: #f2c443;
+      }
+      @media (max-width: 680px) {
+        .nav-links a.ghost {
+          display: none;
+        }
+      }
+
+      /* ── Buttons ── */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        height: 46px;
+        padding: 0 22px;
+        border-radius: 11px;
+        font: inherit;
+        font-size: 15px;
+        font-weight: 640;
+        text-decoration: none;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition:
+          background 0.15s,
+          border-color 0.15s,
+          transform 0.12s;
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+      .btn-primary {
+        background: var(--gold);
+        color: var(--on-gold);
+      }
+      .btn-primary:hover {
+        background: #f2c443;
+      }
+      .btn-ghost {
+        background: transparent;
+        color: var(--fg);
+        border-color: var(--line-strong);
+      }
+      .btn-ghost:hover {
+        background: var(--surface);
+        border-color: var(--faint);
+      }
+
+      /* ── Hero ── */
+      .hero {
+        position: relative;
+        padding: 96px 0 88px;
+        text-align: center;
+        overflow: hidden;
+      }
+      .hero::before {
+        content: "";
+        position: absolute;
+        top: -340px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 900px;
+        height: 640px;
+        pointer-events: none;
+        background: radial-gradient(
+          closest-side,
+          rgba(238, 186, 43, 0.16),
+          rgba(238, 186, 43, 0.04) 55%,
+          transparent 72%
+        );
+      }
+      .hero > * {
+        position: relative;
+      }
+      .eyebrow {
+        display: inline-flex;
+        justify-content: center;
+        max-width: 100%;
+        align-items: center;
+        gap: 9px;
+        font-size: 12.5px;
+        font-weight: 640;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+        color: var(--muted);
+        border: 1px solid var(--line-strong);
+        background: var(--surface);
+        padding: 7px 15px;
+        border-radius: 100px;
+        margin-bottom: 28px;
+      }
+      .eyebrow i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--gold);
+        flex: none;
+      }
+      h1 {
+        font-family: "Bricolage", sans-serif;
+        font-weight: 700;
+        letter-spacing: -0.04em;
+        line-height: 1.02;
+        margin: 0 0 22px;
+        font-size: clamp(42px, 7.4vw, 80px);
+        text-wrap: balance;
+      }
+      .sub {
+        font-size: clamp(17px, 2vw, 20px);
+        line-height: 1.5;
+        color: var(--muted);
+        max-width: 52ch;
+        margin: 0 auto 40px;
+        text-wrap: balance;
+      }
+
+      /* ── Snippet ── */
+      .snippet {
+        max-width: 640px;
+        margin: 0 auto;
+        text-align: left;
+        border: 1px solid var(--line-strong);
+        border-radius: 15px;
+        background: var(--surface);
+        overflow: hidden;
+        box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+      }
+      .snippet-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--sunk);
+      }
+      .snippet-bar .label {
+        font-size: 11.5px;
+        font-weight: 640;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--faint);
+      }
+      .copy {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        background: transparent;
+        border: 1px solid var(--line-strong);
+        color: var(--muted);
+        font: inherit;
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 5px 11px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition:
+          color 0.15s,
+          border-color 0.15s;
+      }
+      .copy:hover {
+        color: var(--fg);
+        border-color: var(--faint);
+      }
+      .copy[data-copied="true"] {
+        color: var(--gold);
+        border-color: var(--gold);
+      }
+      .snippet pre {
+        margin: 0;
+        padding: 20px;
+        overflow-x: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        line-height: 1.75;
+      }
+      .snippet .t {
+        color: #8fb8e8;
+      }
+      .snippet .a {
+        color: var(--gold);
+      }
+      .snippet .s {
+        color: #9bd9a4;
+      }
+      .hero-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin-top: 34px;
+      }
+      .hero-note {
+        margin-top: 18px;
+        font-size: 13.5px;
+        color: var(--faint);
+      }
+
+      /* ── Sections ── */
+      section {
+        padding: 88px 0;
+        border-top: 1px solid var(--line);
+      }
+      .sec-head {
+        max-width: 640px;
+        margin-bottom: 44px;
+      }
+      .kicker {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        margin-bottom: 16px;
+      }
+      .kicker .n {
+        font-size: 11.5px;
+        font-weight: 700;
+        color: var(--on-gold);
+        background: var(--gold);
+        padding: 2px 8px;
+        border-radius: 5px;
+      }
+      .kicker h2 {
+        font-size: 12.5px;
+        font-weight: 700;
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+        margin: 0;
+        color: var(--muted);
+      }
+      h3 {
+        font-family: "Bricolage", sans-serif;
+        font-weight: 700;
+        letter-spacing: -0.032em;
+        line-height: 1.1;
+        margin: 0 0 14px;
+        font-size: clamp(27px, 4vw, 42px);
+        text-wrap: balance;
+      }
+      .lede {
+        font-size: 17px;
+        line-height: 1.55;
+        color: var(--muted);
+        max-width: 62ch;
+        margin: 0 0 44px;
+      }
+
+      /* ── Steps ── */
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 20px;
+      }
+      .step {
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: var(--surface);
+        padding: 28px 24px;
+      }
+      .step .num {
+        font-family: "Bricolage", sans-serif;
+        font-weight: 700;
+        font-size: 13px;
+        color: var(--gold);
+        letter-spacing: 0.06em;
+        margin-bottom: 16px;
+      }
+      .step h4 {
+        font-size: 18px;
+        font-weight: 640;
+        letter-spacing: -0.015em;
+        margin: 0 0 9px;
+      }
+      .step p {
+        margin: 0;
+        font-size: 14.5px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      /* ── Vendors ── */
+      .vendors {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(178px, 1fr));
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+      .v {
+        display: flex;
+        min-height: 56px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 11px;
+        background: var(--surface);
+        padding: 14px 15px;
+        font-size: 14.5px;
+        font-weight: 560;
+      }
+      .v .tier {
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        padding: 2px 7px;
+        border-radius: 5px;
+        white-space: nowrap;
+      }
+      .tier-free {
+        color: var(--gold);
+        border: 1px solid rgba(238, 186, 43, 0.32);
+        background: rgba(238, 186, 43, 0.1);
+      }
+      .tier-local {
+        color: #7fd4a8;
+        border: 1px solid rgba(127, 212, 168, 0.28);
+        background: rgba(127, 212, 168, 0.09);
+      }
+      .tier-paid {
+        color: var(--faint);
+        border: 1px solid var(--line-strong);
+      }
+
+      /* ── Feature rows ── */
+      .cols {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: var(--surface);
+        padding: 28px 26px;
+      }
+      .card h4 {
+        font-size: 18px;
+        font-weight: 640;
+        letter-spacing: -0.015em;
+        margin: 0 0 10px;
+      }
+      .card p {
+        margin: 0 0 12px;
+        font-size: 14.5px;
+        line-height: 1.62;
+        color: var(--muted);
+      }
+      .card p:last-child {
+        margin-bottom: 0;
+      }
+      .card code,
+      .inline-code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.88em;
+        color: var(--fg);
+        background: var(--raised);
+        border: 1px solid var(--line-strong);
+        padding: 1px 6px;
+        border-radius: 5px;
+        white-space: nowrap;
+      }
+
+      .facts {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        overflow: hidden;
+        margin-top: 28px;
+      }
+      .fact {
+        background: var(--surface);
+        padding: 22px 20px;
+      }
+      .fact b {
+        display: block;
+        font-family: "Bricolage", sans-serif;
+        font-weight: 700;
+        font-size: 26px;
+        letter-spacing: -0.03em;
+        margin-bottom: 5px;
+      }
+      .fact span {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.45;
+      }
+
+      /* ── Install ── */
+      .install {
+        text-align: center;
+      }
+      .install .snippet {
+        margin: 0 auto 30px;
+      }
+
+      /* ── Footer ── */
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 44px 0;
+        background: var(--sunk);
+      }
+      .foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        flex-wrap: wrap;
+      }
+      .foot-links {
+        display: flex;
+        gap: 22px;
+        flex-wrap: wrap;
+      }
+      .foot-links a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 14px;
+      }
+      .foot-links a:hover {
+        color: var(--fg);
+      }
+      .foot .built {
+        font-size: 13px;
+        color: var(--faint);
+      }
+
+      /* One restrained entrance, and nothing else moves on its own. */
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .hero .eyebrow,
+      .hero h1,
+      .hero .sub,
+      .hero .snippet,
+      .hero .hero-actions,
+      .hero .hero-note {
+        animation: rise 0.62s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+      }
+      .hero h1 {
+        animation-delay: 0.05s;
+      }
+      .hero .sub {
+        animation-delay: 0.11s;
+      }
+      .hero .snippet {
+        animation-delay: 0.17s;
+      }
+      .hero .hero-actions {
+        animation-delay: 0.23s;
+      }
+      .hero .hero-note {
+        animation-delay: 0.28s;
+      }
+      @media (max-width: 560px) {
+        .hero {
+          padding: 64px 0 68px;
+        }
+        .eyebrow {
+          font-size: 11.5px;
+          letter-spacing: 0.06em;
+        }
+        section {
+          padding: 64px 0;
+        }
+        .snippet pre {
+          font-size: 12px;
+          padding: 16px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+        *,
+        *::before,
+        *::after {
+          animation: none !important;
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="nav">
+      <div class="wrap nav-in">
+        <a class="brand" href="/" aria-label="ConverseKit home">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <mask id="nav-mk">
+              <rect width="32" height="32" fill="#fff" />
+              <circle cx="23" cy="23" r="8.25" fill="#000" />
+            </mask>
+            <rect
+              x="3.25"
+              y="3.25"
+              width="25.5"
+              height="25.5"
+              rx="7.5"
+              stroke="currentColor"
+              stroke-width="2.5"
+              mask="url(#nav-mk)"
+            />
+            <circle cx="23" cy="23" r="5.25" fill="#EEBA2B" />
+          </svg>
+          <span class="wm">Converse<span>Kit</span></span>
+        </a>
+        <nav class="nav-links">
+          <a class="ghost" href="#how">How it works</a>
+          <a class="ghost" href="#providers">Providers</a>
+      <a class="ghost" href="#tenancy">Multi-tenant</a>
+              <a class="cta" href="/admin/">Dashboard</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <div class="eyebrow">
+            <i></i> Cloudflare Workers · Supabase · pgvector
+          </div>
+          <h1>Drop-in AI chat<br />for any website.</h1>
+          <p class="sub">
+            Answers from your own docs. Captures leads while it talks. One
+            script tag, pasted once — no build step on the client's side.
+          </p>
+
+          <div class="snippet">
+            <div class="snippet-bar">
+              <span class="label">Paste before &lt;/body&gt;</span>
+              <button
+                class="copy"
+                id="copy-hero"
+                type="button"
+                data-copied="false"
+              >
+                Copy
+              </button>
+            </div>
+            <pre id="snippet-hero"><span class="t">&lt;script</span>
+  <span class="a">src</span>=<span class="s">"https://conversekit-widget.pages.dev/widget.js"</span>
+  <span class="a">data-bot-id</span>=<span class="s">"YOUR_BOT_ID"</span>
+  <span class="a">defer</span><span class="t">&gt;&lt;/script&gt;</span></pre>
+          </div>
+
+          <div class="hero-actions">
+            <button class="btn btn-primary" id="try-it" type="button">
+              Try it live
+            </button>
+            <a class="btn btn-ghost" href="/admin/">Open the dashboard</a>
+          </div>
+          <p class="hero-note">
+            The chat bubble in the corner is the real widget, running on this
+            page.
+          </p>
+        </div>
+      </section>
+
+      <section id="how">
+        <div class="wrap">
+          <div class="sec-head">
+            <div class="kicker">
+              <span class="n">01</span>
+              <h2>How it works</h2>
+            </div>
+            <h3>Three steps, and the third one never ends</h3>
+            <p class="lede">
+              Onboarding a client is a row in a table and a script tag. There is
+              no per-customer deploy, no rebuild, and nothing to install on
+              their side.
+            </p>
+          </div>
+          <div class="steps">
+            <div class="step">
+              <div class="num">STEP 01</div>
+              <h4>Give it something to say</h4>
+              <p>
+                Paste a business description, services, hours and an FAQ — or
+                point it at a URL and let it read. Longer material becomes a
+                knowledge source: chunked, embedded and searched at question
+                time.
+              </p>
+            </div>
+            <div class="step">
+              <div class="num">STEP 02</div>
+              <h4>Paste one tag</h4>
+              <p>
+                The snippet goes anywhere before the closing body tag. The
+                widget styles itself from the bot's own brand colour and only
+                answers on the origins you allow.
+              </p>
+            </div>
+            <div class="step">
+              <div class="num">STEP 03</div>
+              <h4>It answers, and it listens</h4>
+              <p>
+                Replies stream token by token. When a visitor shows intent, the
+                model collects a name, email or phone number mid-conversation
+                and files it as a lead you can export.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="providers">
+        <div class="wrap">
+          <div class="sec-head">
+            <div class="kicker">
+              <span class="n">02</span>
+              <h2>AI providers</h2>
+            </div>
+            <h3>Eleven vendors, one interface</h3>
+            <p class="lede">
+              Most vendors speak the OpenAI chat-completions shape, so they are
+              configuration rather than code — one adapter, many entries. Only
+              Anthropic, Google and Workers AI need their own translation layer.
+              Switching vendor is a dropdown, per bot.
+            </p>
+          </div>
+
+          <div class="vendors">
+            <div class="v">OpenAI <span class="tier tier-paid">Paid</span></div>
+            <div class="v">
+              Anthropic Claude <span class="tier tier-paid">Paid</span>
+            </div>
+            <div class="v">
+              Google Gemini <span class="tier tier-free">Free tier</span>
+            </div>
+            <div class="v">
+              Groq <span class="tier tier-free">Free tier</span>
+            </div>
+            <div class="v">
+              OpenRouter <span class="tier tier-free">Free tier</span>
+            </div>
+            <div class="v">
+              Mistral <span class="tier tier-free">Free tier</span>
+            </div>
+            <div class="v">
+              Workers AI <span class="tier tier-free">Free tier</span>
+            </div>
+            <div class="v">
+              DeepSeek <span class="tier tier-paid">Paid</span>
+            </div>
+            <div class="v">
+              Together AI <span class="tier tier-paid">Paid</span>
+            </div>
+            <div class="v">
+              Ollama <span class="tier tier-local">Local</span>
+            </div>
+            <div class="v">
+              LM Studio <span class="tier tier-local">Local</span>
+            </div>
+            <div class="v">
+              Any OpenAI-compatible <span class="tier tier-local">Custom</span>
+            </div>
+          </div>
+
+          <div class="cols">
+            <div class="card">
+              <h4>It runs on nothing</h4>
+              <p>
+                Groq for chat and Cloudflare Workers AI for embeddings run the
+                entire loop — ingest, retrieve, answer — at no cost. That is the
+                platform default, and it is verified rather than theoretical.
+              </p>
+            </div>
+            <div class="card">
+              <h4>Bring your own key</h4>
+              <p>
+                Each bot can carry its own vendor credentials, or fall back to
+                the platform's. Keys are write-only through the API: once
+                stored, they are redacted from every response and the UI shows
+                the last four characters.
+              </p>
+            </div>
+            <div class="card">
+              <h4>Streaming, with a net</h4>
+              <p>
+                Replies arrive over SSE. If the stream fails for any reason — a
+                proxy, an extension, a vendor hiccup — the widget silently
+                retries against the buffered endpoint, and the visitor sees an
+                answer either way.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="knowledge">
+        <div class="wrap">
+          <div class="sec-head">
+            <div class="kicker">
+              <span class="n">03</span>
+              <h2>Knowledge</h2>
+            </div>
+            <h3>Answers from your documents, not from the internet</h3>
+            <p class="lede">
+              Text, markdown and URLs become a searchable corpus. At question
+              time the query is embedded, matched against that bot's chunks by
+              cosine similarity, and the best passages are assembled into the
+              prompt with their sources.
+            </p>
+          </div>
+          <div class="cols">
+            <div class="card">
+              <h4>Tuned per bot</h4>
+              <p>
+                The number of passages retrieved, a similarity floor and chunk
+                size are per-bot settings, not global constants. A dense product
+                manual and a short FAQ do not want the same retrieval.
+              </p>
+            </div>
+            <div class="card">
+              <h4>Retrieval never fails the visitor</h4>
+              <p>
+                A bot with no corpus, or an embedding vendor having a bad
+                minute, falls back to the plain knowledge-base prompt instead of
+                failing the turn. A degraded answer beats an error message.
+              </p>
+            </div>
+            <div class="card">
+              <h4>Inspect what it found</h4>
+              <p>
+                The dashboard shows the chunks a document produced and lets you
+                reindex a source after editing it, so "why did it say that?" is
+                a question you can actually answer.
+              </p>
+            </div>
+          </div>
+          <div class="facts">
+            <div class="fact">
+              <b>768</b
+              ><span
+                >Embedding dimensions, fixed platform-wide so every vendor can
+                serve it</span
+              >
+            </div>
+            <div class="fact">
+              <b>pgvector</b
+              ><span
+                >Vectors live in Postgres beside the tenant data, not in a
+                separate store</span
+              >
+            </div>
+            <div class="fact">
+              <b>HNSW</b
+              ><span
+                >Approximate nearest-neighbour index over every bot's
+                chunks</span
+              >
+            </div>
+            <div class="fact">
+              <b>SSE</b
+              ><span>Token-by-token streaming with a buffered fallback</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="tenancy">
+        <div class="wrap">
+          <div class="sec-head">
+            <div class="kicker">
+              <span class="n">04</span>
+              <h2>Multi-tenant</h2>
+            </div>
+            <h3>Built for someone running this for other people</h3>
+            <p class="lede">
+              One Worker and one Pages site serve an unlimited number of client
+              bots. Isolation is enforced in the database, not in application
+              code that a future refactor can quietly drop.
+            </p>
+          </div>
+          <div class="cols">
+            <div class="card">
+              <h4>Row-level security</h4>
+              <p>
+                Every tenant-scoped table carries an RLS policy keyed off the
+                signed-in user's memberships. Two organizations cannot see each
+                other's bots, leads or conversations — proven by a test that
+                authenticates as one org and asks for the other's ids directly.
+              </p>
+            </div>
+            <div class="card">
+              <h4>Origin lock</h4>
+              <p>
+                Each bot carries a list of allowed origins, normalised and
+                matched exactly — scheme and port included. A request from
+                anywhere else is refused with a 403 before the model is ever
+                called.
+              </p>
+            </div>
+            <div class="card">
+              <h4>Signed sessions</h4>
+              <p>
+                Conversation ids are minted and signed by the server. The widget
+                never invents one, because a guessable id would let anyone
+                replay it and read another visitor's transcript.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="install" class="install">
+        <div class="wrap">
+          <div class="sec-head" style="margin: 0 auto 40px; text-align: center">
+            <div class="kicker" style="justify-content: center">
+              <span class="n">05</span>
+              <h2>Install</h2>
+            </div>
+            <h3>One tag. Any site.</h3>
+            <p class="lede" style="margin: 0 auto 40px">
+              Create a bot in the dashboard, fill in what it should know, then
+              paste this with your own bot id.
+            </p>
+          </div>
+
+          <div class="snippet">
+            <div class="snippet-bar">
+              <span class="label">Paste before &lt;/body&gt;</span>
+              <button
+                class="copy"
+                id="copy-install"
+                type="button"
+                data-copied="false"
+              >
+                Copy
+              </button>
+            </div>
+            <pre id="snippet-install"><span class="t">&lt;script</span>
+  <span class="a">src</span>=<span class="s">"https://conversekit-widget.pages.dev/widget.js"</span>
+  <span class="a">data-bot-id</span>=<span class="s">"YOUR_BOT_ID"</span>
+  <span class="a">defer</span><span class="t">&gt;&lt;/script&gt;</span></pre>
+          </div>
+
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="/admin/">Create a bot</a>
+            <a class="btn btn-ghost" href="#how">How it works</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap foot">
+        <a class="brand" href="/" aria-label="ConverseKit home">
+          <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <mask id="foot-mk">
+              <rect width="32" height="32" fill="#fff" />
+              <circle cx="23" cy="23" r="8.25" fill="#000" />
+            </mask>
+            <rect
+              x="3.25"
+              y="3.25"
+              width="25.5"
+              height="25.5"
+              rx="7.5"
+              stroke="currentColor"
+              stroke-width="2.5"
+              mask="url(#foot-mk)"
+            />
+            <circle cx="23" cy="23" r="5.25" fill="#EEBA2B" />
+          </svg>
+          <span class="wm">Converse<span>Kit</span></span>
+        </a>
+        <div class="foot-links">
+          <a href="#how">How it works</a>
+          <a href="#providers">Providers</a>
+      <a href="#knowledge">Knowledge</a>
+              <a href="/admin/">Dashboard</a>
+        </div>
+        <p class="built">Cloudflare Workers · Hono · Supabase</p>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        "use strict";
+
+        /* Copy buttons. The <pre> carries syntax spans, so textContent is the
+     clean source — innerText would also work but collapses differently
+     across browsers. */
+        function wireCopy(btnId, preId) {
+          var btn = document.getElementById(btnId),
+            pre = document.getElementById(preId);
+          if (!btn || !pre) return;
+          btn.addEventListener("click", function () {
+            var text = pre.textContent;
+            function done() {
+              btn.textContent = "Copied";
+              btn.setAttribute("data-copied", "true");
+              setTimeout(function () {
+                btn.textContent = "Copy";
+                btn.setAttribute("data-copied", "false");
+              }, 2000);
+            }
+            if (navigator.clipboard && window.isSecureContext) {
+              navigator.clipboard.writeText(text).then(done, fallback);
+            } else {
+              fallback();
+            }
+            function fallback() {
+              /* clipboard API needs a secure context; this still works on plain http. */
+              var ta = document.createElement("textarea");
+              ta.value = text;
+              ta.setAttribute("readonly", "");
+              ta.style.position = "fixed";
+              ta.style.opacity = "0";
+              document.body.appendChild(ta);
+              ta.select();
+              try {
+                document.execCommand("copy");
+              } catch (e) {
+                /* nothing else to try */
+              }
+              ta.remove();
+              done();
+            }
+          });
+        }
+        wireCopy("copy-hero", "snippet-hero");
+        wireCopy("copy-install", "snippet-install");
+
+        /* "Try it live" drives the real widget through its public API. The
+     widget tag is deferred, so it has run by the time this listener
+     fires on click — but poll briefly anyway rather than dead-ending if
+     the script is slow or blocked. */
+        var tryBtn = document.getElementById("try-it");
+        if (tryBtn) {
+          tryBtn.addEventListener("click", function () {
+            var waited = 0;
+            (function attempt() {
+              if (window.ConverseKit && window.ConverseKit.open) {
+                window.ConverseKit.open();
+                return;
+              }
+              if ((waited += 100) > 3000) {
+                tryBtn.textContent = "Chat unavailable";
+                return;
+              }
+              setTimeout(attempt, 100);
+            })();
+          });
+        }
+      })();
+    </script>
+    <!-- The live widget, pointed at the ConverseKit bot. Its allowed
+     origins must include this page's origin exactly — a Pages preview
+     deployment (<hash>.conversekit-widget.pages.dev) is a different
+     origin and will be refused with a 403. -->
+    <script
+      src="/widget.js"
+      data-bot-id="33439629-353f-4ec1-b6af-2d5d6847c581"
+      defer
+    ></script>
+  </body>
+</html>

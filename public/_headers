@@ -1,0 +1,22 @@
+# Cloudflare Pages header rules.
+#
+# The widget is injected into other people's sites, so every asset it
+# pulls is a cross-origin request. Fonts in particular are fetched in
+# CORS mode by the browser regardless of crossorigin= on the tag, and a
+# response without Access-Control-Allow-Origin is discarded silently —
+# the widget would just render in the fallback face on every customer
+# site while looking fine on ours.
+/fonts/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=31536000, immutable
+
+# widget.js is loaded by <script src>, which is not CORS-gated, but the
+# permissive header keeps fetch()-based loaders and integrity checks
+# working too. Short cache: this file changes and tenants never bust it.
+/widget.js
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=300, must-revalidate
+
+/brand/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=604800
