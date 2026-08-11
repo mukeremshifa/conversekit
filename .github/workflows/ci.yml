@@ -1,0 +1,64 @@
+name: CI
+
+# Everything here runs without credentials. `scripts/verify-isolation.mjs` and
+# `scripts/verify-rls.mjs` are deliberately excluded: they assert RLS policy
+# behaviour against a real Supabase project, which cannot be mocked and cannot
+# be reached from CI without handing this workflow a service-role key.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: type-check · test · build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            dashboard/package-lock.json
+
+      - name: Install (worker)
+        run: npm ci
+
+      # working-directory rather than `npm ci --prefix`, which has historically
+      # been inconsistent about which lockfile it honours.
+      - name: Install (dashboard)
+        run: npm ci
+        working-directory: dashboard
+
+      - name: Type-check the Worker
+        run: npm run type-check
+
+      # Widget markdown renderer, signed-session encoding, and the RAG
+      # chunker/extractor. All pure units — no network, no database.
+      - name: Unit tests
+        run: npm test
+
+      - name: Build the dashboard
+        run: npm run build:dashboard
+
+      # The landing page has no bundler to catch a bad asset path or an
+      # unclosed tag, so this stands in for one.
+      - name: Check the landing page
+        run: node scripts/check-landing.mjs
+
+      - name: Check documentation links
+        run: node scripts/check-links.mjs

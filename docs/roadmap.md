@@ -132,7 +132,7 @@ actually happens — a vendor rate-limit part-way through a batch.
 This is a deliberate deviation from the locked "Workflows + R2" decision above.
 Revisit when PDF ingestion is actually wanted.
 
-**Ready to build:** see [PHASE-2B.md](PHASE-2B.md) — a self-contained brief with
+**Ready to build:** see [phase-2b.md](phase-2b.md) — a self-contained brief with
 the architecture-deciding spike (`env.AI.toMarkdown()`), the work breakdown, the
 constraints that must not break, and the landmines this project hit the hard way.
 
@@ -283,7 +283,7 @@ membership. `create_organization` (SECURITY DEFINER, owner derived from
 **Never graft a test user into a real organization.** A cleanup that deleted
 "this user's org" destroyed the live one, cascading away every bot, conversation
 and lead, because earlier scripts had added throwaway users to it so they could
-exercise a real bot. [scripts/lib/testenv.mjs](scripts/lib/testenv.mjs) now
+exercise a real bot. [scripts/lib/testenv.mjs](../scripts/lib/testenv.mjs) now
 gives each test its own user, org and bots, and tears down only ids it recorded.
 The Playground removed the reason anyone would graft membership again.
 
@@ -322,7 +322,7 @@ conversation rules.
 filter on a client-supplied `session_id` the widget generated with
 `Math.random()`, so guessing or replaying one returned another visitor's
 conversation. Session ids are now minted and HMAC-signed by the server
-([src/session.ts](src/session.ts)) and bound to a single bot. An unsigned id is
+([src/session.ts](../src/session.ts)) and bound to a single bot. An unsigned id is
 deliberately not an error — it loads no history and the caller is handed a
 signed replacement, which closes the disclosure without breaking embedded
 widgets or the documented curl flow. Guarded by `npm run test:session`.

@@ -1,0 +1,42 @@
+ConverseKit — Proprietary License
+
+Copyright (c) 2026 Mukerem Shifa. All rights reserved.
+
+This source code is made publicly readable for evaluation, reference and
+educational purposes only. Publication of this repository does not place the
+software in the public domain and does not grant an open source license.
+
+No permission is granted to any person to use, copy, modify, merge, publish,
+distribute, sublicense, sell, host, or create derivative works from this
+software or any portion of it, in source or binary form, without the prior
+written permission of the copyright holder.
+
+You may:
+
+  - View and read the source code.
+  - Fork the repository on GitHub for the sole purpose of proposing a change
+    back to it.
+  - Quote short excerpts with attribution, as when discussing or reviewing the
+    work.
+
+You may not:
+
+  - Deploy or operate this software, in whole or in part, for yourself or for
+    anyone else.
+  - Incorporate any part of it into another project, commercial or otherwise.
+  - Redistribute it, with or without modification.
+
+Third-party dependencies are covered by their own licenses, which are not
+affected by this notice. Trademarks, product names and brand assets in this
+repository — including the ConverseKit name and mark — remain the property of
+the copyright holder and are not licensed by this notice.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+For licensing enquiries, contact the copyright holder through the repository.
