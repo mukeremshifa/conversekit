@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { signIn, signUp } from '@/lib/auth';
+import { Wordmark } from '@/components/Mark';
 import { Button, Card, CardContent, Field, Input } from '@/components/ui';
 
 export function SignIn({ onAuthed }: { onAuthed: () => void }) {
@@ -38,10 +38,7 @@ export function SignIn({ onAuthed }: { onAuthed: () => void }) {
     <div className="flex min-h-full items-center justify-center p-6">
       <Card className="w-full max-w-sm">
         <CardContent className="pt-6">
-          <div className="mb-6 flex items-center gap-2">
-            <Zap className="h-5 w-5 text-accent" />
-            <span className="text-lg font-bold tracking-tight">ConverseKit</span>
-          </div>
+          <Wordmark className="mb-6 text-lg" />
 
           {/* A real form element, so password managers and Enter-to-submit
               both behave the way people expect. */}
@@ -71,7 +68,7 @@ export function SignIn({ onAuthed }: { onAuthed: () => void }) {
 
           <button
             type="button"
-            className="mt-4 w-full text-center text-xs text-accent hover:underline cursor-pointer"
+            className="mt-4 w-full text-center text-xs text-accent-ink hover:underline cursor-pointer"
             onClick={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setNotice(null); }}
           >
             {mode === 'signin' ? 'Need an account? Sign up' : 'Already have an account? Sign in'}

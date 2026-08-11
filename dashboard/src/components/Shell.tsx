@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
-import { LogOut, Plus, Zap, Menu } from 'lucide-react';
+import { LogOut, Plus, Menu } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { endpoints, type Bot, type Org } from '@/lib/api';
+import { Wordmark } from '@/components/Mark';
 import { cn } from '@/lib/utils';
 import {
   Button, Dialog, DialogContent, DialogTrigger, Field, Input,
@@ -33,9 +34,8 @@ export function Shell({
 
   const sidebar = (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-5 py-4">
-        <Zap className="h-5 w-5 text-accent" />
-        <span className="font-bold tracking-tight">ConverseKit</span>
+      <div className="flex items-center border-b border-border px-5 py-4">
+        <Wordmark />
       </div>
 
       <div className="space-y-2 border-b border-border px-4 py-4">
@@ -149,7 +149,7 @@ function NewBotDialog({ orgs, onCreated }: { orgs: Org[]; onCreated: (b: Bot) =>
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="w-full justify-start text-accent">
+        <Button variant="ghost" size="sm" className="w-full justify-start text-accent-ink">
           <Plus className="h-4 w-4" /> New bot
         </Button>
       </DialogTrigger>

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Zap } from 'lucide-react';
 import { endpoints } from '@/lib/api';
+import { Wordmark } from '@/components/Mark';
 import { Button, Card, CardContent, CardDescription, Field, Input } from '@/components/ui';
 
 /**
@@ -34,10 +34,7 @@ export function NoOrg({
     <div className="flex min-h-full items-center justify-center p-6">
       <Card className="w-full max-w-sm">
         <CardContent className="pt-6">
-          <div className="mb-4 flex items-center gap-2">
-            <Zap className="h-5 w-5 text-accent" />
-            <span className="text-lg font-bold tracking-tight">ConverseKit</span>
-          </div>
+          <Wordmark className="mb-4 text-lg" />
           <CardDescription className="mb-5">
             {email} has no workspace yet. Create one to start building bots.
           </CardDescription>

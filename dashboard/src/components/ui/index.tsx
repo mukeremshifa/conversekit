@@ -24,7 +24,7 @@ const buttonVariants = cva(
         outline: 'border border-border bg-surface hover:bg-bg',
         ghost:   'hover:bg-bg',
         danger:  'bg-danger text-white hover:opacity-90',
-        link:    'text-accent underline-offset-4 hover:underline p-0 h-auto',
+        link:    'text-accent-ink underline-offset-4 hover:underline p-0 h-auto',
       },
       size: {
         default: 'h-9 px-4',
@@ -125,10 +125,13 @@ export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDi
 const badgeVariants = cva('inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold', {
   variants: {
     tone: {
-      neutral: 'bg-bg text-muted border border-border',
-      ok:      'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300',
-      wait:    'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-      bad:     'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300',
+      // Semantic tokens, not raw palette shades: these carry their own
+      // dark values, and the old `wait` amber now reads as the brand
+      // gold, which makes a pending state look like a logo.
+      neutral: 'bg-sunk text-muted border border-border',
+      ok:      'bg-success/10 text-success border border-success/25',
+      wait:    'bg-warning/10 text-warning border border-warning/25',
+      bad:     'bg-danger/10 text-danger border border-danger/25',
     },
   },
   defaultVariants: { tone: 'neutral' },

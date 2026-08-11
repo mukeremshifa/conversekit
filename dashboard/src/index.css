@@ -1,32 +1,96 @@
 @import "tailwindcss";
 
-/* Design tokens, carried over from the vanilla dashboard so the visual
-   identity survives the rewrite. Light and dark are both defined —
-   an admin console people sit in all day should respect the OS. */
+/* Self-hosted, no CDN and no layout shift. Bricolage carries the
+   personality (display, headings, the wordmark); Instrument does the
+   reading and disappears under dense tables. */
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/instrument-sans";
+
+/* ── Design tokens ────────────────────────────────────────────────
+   The neutrals are true neutral with a whisper of cool. They are
+   deliberately NOT biased toward the gold: tinting the substrate makes
+   the whole page look goldish and leaves the accent nothing to stand
+   out against. Gold is the only chroma in the system.
+
+   The gold exists at three lightnesses that all hold the brand's exact
+   hue (44.0deg) and saturation (85.2%) — the same colour dimmed, never
+   rotated toward brown:
+
+     --color-accent         #EEBA2B  L 55%  every fill, every display use
+     --color-accent-strong  #B98B0F  L 39%  focus rings, strokes (needs 3:1)
+     --color-accent-ink     #936F0C  L 31%  small text (needs 4.5:1)
+
+   #EEBA2B is 1.75:1 on the light background, so it can never be text
+   there. On the dark background it is 11.02:1, which is why dark mode
+   uses the untouched brand colour everywhere including text. */
 @theme {
-  --color-bg:        #f8fafc;
-  --color-surface:   #ffffff;
-  --color-border:    #e2e8f0;
-  --color-fg:        #0f172a;
-  --color-muted:     #64748b;
-  --color-accent:    #2563eb;
-  --color-accent-fg: #ffffff;
-  --color-danger:    #dc2626;
-  --color-success:   #16a34a;
-  --color-warning:   #b45309;
+  --color-bg:            #FCFCFD;
+  --color-surface:       #FFFFFF;
+  --color-sunk:          #F4F4F6;
+  --color-fg:            #0A0A0C;
+  --color-muted:         #5B5B66;
+  --color-faint:         #8A8A96;
+  --color-border:        #E4E4E9;
+  --color-border-strong: #D2D2DA;
+
+  --color-accent:        #EEBA2B;
+  --color-accent-fg:     #0A0A0C;
+  --color-accent-strong: #B98B0F;
+  --color-accent-ink:    #936F0C;
+
+  --color-danger:        #B42318;
+  /* Moved off amber. The old #b45309 sat 2.80:1 from the brand gold —
+     a warning state that looks like the logo is not a warning state. */
+  --color-warning:       #C2410C;
+  --color-success:       #157347;
+
+  --font-sans:    "Instrument Sans Variable", system-ui, -apple-system, sans-serif;
+  --font-display: "Bricolage Grotesque Variable", "Instrument Sans Variable", sans-serif;
 
   --radius: 0.625rem;
 }
 
+/* Dark values are plain custom-property overrides rather than a nested
+   @theme, so the media query and the explicit toggle can both win.
+   Three states matter: no attribute (follow the OS), data-theme="dark",
+   and data-theme="light" beating a dark OS. The toggle UI is Phase D;
+   the selectors are here so it costs nothing when it lands. */
 @media (prefers-color-scheme: dark) {
-  @theme {
-    --color-bg:      #0b1220;
-    --color-surface: #111a2b;
-    --color-border:  #1e293b;
-    --color-fg:      #e2e8f0;
-    --color-muted:   #94a3b8;
-    --color-accent:  #3b82f6;
+  :root:not([data-theme="light"]) {
+    --color-bg:            #0A0A0C;
+    --color-surface:       #141417;
+    --color-sunk:          #08080A;
+    --color-fg:            #F7F7F8;
+    --color-muted:         #A1A1AC;
+    --color-faint:         #71717B;
+    --color-border:        #26262C;
+    --color-border-strong: #33333B;
+
+    /* No derived shades needed: the brand reads at 11.02:1 on this ground. */
+    --color-accent-strong: #EEBA2B;
+    --color-accent-ink:    #EEBA2B;
+
+    --color-danger:        #F0857A;
+    --color-warning:       #F09052;
+    --color-success:       #5CC08D;
   }
+}
+:root[data-theme="dark"] {
+  --color-bg:            #0A0A0C;
+  --color-surface:       #141417;
+  --color-sunk:          #08080A;
+  --color-fg:            #F7F7F8;
+  --color-muted:         #A1A1AC;
+  --color-faint:         #71717B;
+  --color-border:        #26262C;
+  --color-border-strong: #33333B;
+
+  --color-accent-strong: #EEBA2B;
+  --color-accent-ink:    #EEBA2B;
+
+  --color-danger:        #F0857A;
+  --color-warning:       #F09052;
+  --color-success:       #5CC08D;
 }
 
 @layer base {
@@ -35,14 +99,31 @@
   body {
     background: var(--color-bg);
     color: var(--color-fg);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: var(--font-sans);
     font-size: 14px;
+    /* 460 rather than 400. Heavier dark text on a brighter ground widens
+       the gap the gold has to jump, which is what makes it read as an
+       accent without reaching for more saturation. */
+    font-weight: 460;
+    font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
   }
+
   /* Focus rings are load-bearing for keyboard users; never remove
-     without replacing. */
+     without replacing. This uses accent-strong, not accent — the brand
+     gold is 1.75:1 here and a focus ring in it is invisible. */
   :focus-visible {
-    outline: 2px solid var(--color-accent);
+    outline: 2px solid var(--color-accent-strong);
     outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Display face, tightened. Tracking closes as size grows and never
+     goes positive above 16px. */
+  .font-display {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.026em;
   }
 }

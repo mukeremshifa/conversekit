@@ -84,7 +84,7 @@ export function Leads({ bot }: { bot: Bot }) {
                   <tr key={l.id}>
                     <Td className="whitespace-nowrap text-muted">{formatDate(l.created_at)}</Td>
                     <Td className="font-medium">{l.name}</Td>
-                    <Td><a className="text-accent hover:underline" href={`mailto:${l.email}`}>{l.email}</a></Td>
+                    <Td><a className="text-accent-ink hover:underline" href={`mailto:${l.email}`}>{l.email}</a></Td>
                     <Td>{l.phone ?? '—'}</Td>
                     <Td className="max-w-sm">{l.inquiry ?? '—'}</Td>
                   </tr>

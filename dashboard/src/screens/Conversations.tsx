@@ -68,7 +68,7 @@ export function Conversations({ bot }: { bot: Bot }) {
                         <div
                           className={
                             m.role === 'user'
-                              ? 'max-w-[80%] rounded-2xl rounded-br-sm bg-accent px-3.5 py-2 text-[13px] leading-relaxed text-accent-fg'
+                              ? 'max-w-[80%] rounded-2xl rounded-br-sm bg-fg/8 px-3.5 py-2 text-[13px] leading-relaxed text-fg'
                               : 'max-w-[80%] rounded-2xl rounded-bl-sm border border-border bg-bg px-3.5 py-2 text-[13px] leading-relaxed'
                           }
                         >

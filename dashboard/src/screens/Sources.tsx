@@ -131,7 +131,7 @@ export function Sources({ bot }: { bot: Bot }) {
                   <tr key={d.id}>
                     <Td className="font-medium">
                       {d.url
-                        ? <a href={d.url} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">{d.title}</a>
+                        ? <a href={d.url} target="_blank" rel="noopener noreferrer" className="text-accent-ink hover:underline">{d.title}</a>
                         : d.title}
                     </Td>
                     <Td>
