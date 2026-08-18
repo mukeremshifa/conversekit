@@ -8,7 +8,7 @@ import { clearSession, currentSession } from '@/lib/auth';
 import { endpoints, type Bot, type Me } from '@/lib/api';
 import { SignIn } from '@/screens/SignIn';
 import { Shell, type NavItem } from '@/components/Shell';
-import { BotSettings } from '@/screens/BotSettings';
+import { BotConfiguration } from '@/screens/BotConfiguration';
 import { KnowledgeBase } from '@/screens/KnowledgeBase';
 import { Providers } from '@/screens/Providers';
 import { Retrieval } from '@/screens/Retrieval';
@@ -26,7 +26,7 @@ import { readTheme, setTheme } from '@/lib/theme';
 const NAV: NavItem[] = [
   { id: 'overview',      label: 'Overview',          icon: LayoutDashboard },
   { id: 'playground',    label: 'Playground',        icon: MessagesSquare },
-  { id: 'settings',      label: 'Bot Settings',      icon: Settings2 },
+  { id: 'configuration', label: 'Bot Configuration', icon: Settings2 },
   { id: 'knowledge',     label: 'Knowledge Base',    icon: BookText },
   { id: 'sources',       label: 'Knowledge Sources', icon: Boxes },
   { id: 'retrieval',     label: 'Retrieval',         icon: Search },
@@ -39,12 +39,21 @@ const NAV: NavItem[] = [
 /** Screens whose content is a table or a chart grid rather than a form. */
 const WIDE_ROUTES = new Set(['overview', 'leads', 'conversations', 'sources']);
 
+/** Routes that were renamed. The old id stays a working URL: #settings is
+ *  bookmarked, and a rename is not a reason to break someone's link. */
+const ALIASES: Record<string, string> = { settings: 'configuration' };
+
+const resolveRoute = (hash: string, fallback: string) => {
+  const id = hash.slice(1) || fallback;
+  return ALIASES[id] ?? id;
+};
+
 /** Hash routing: deep links work with no server rewrite rules, which
  *  matters on Pages where the app is one static index.html. */
 function useHashRoute(fallback: string) {
-  const [route, setRoute] = useState(() => window.location.hash.slice(1) || fallback);
+  const [route, setRoute] = useState(() => resolveRoute(window.location.hash, fallback));
   useEffect(() => {
-    const onHash = () => setRoute(window.location.hash.slice(1) || fallback);
+    const onHash = () => setRoute(resolveRoute(window.location.hash, fallback));
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, [fallback]);
@@ -168,7 +177,7 @@ export default function App() {
           <div key={route} className="ck-route space-y-6">
             {route === 'overview'      && <Overview bot={bot} onNavigate={navigate} />}
             {route === 'playground'    && <Playground bot={bot} />}
-            {route === 'settings'      && <BotSettings bot={bot} onSaved={patchBot} />}
+            {route === 'configuration' && <BotConfiguration bot={bot} onSaved={patchBot} />}
             {route === 'knowledge'     && <KnowledgeBase bot={bot} onSaved={patchBot} />}
             {route === 'sources'       && <Sources bot={bot} />}
             {route === 'retrieval'     && <Retrieval bot={bot} onSaved={patchBot} />}
@@ -187,7 +196,7 @@ export default function App() {
           nav: NAV, route, bots, botId,
           onNavigate: navigate,
           onSelectBot: setBotId,
-          onNewBot: () => navigate('settings'),
+          onNewBot: () => navigate('configuration'),
           onCycleTheme: cycleTheme,
         })}
       />

@@ -1,17 +1,70 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Download, RefreshCw, Search, Target } from 'lucide-react';
-import { endpoints, type Bot, type Lead } from '@/lib/api';
+import { Download, MessageSquareText, RefreshCw, Search, Target } from 'lucide-react';
+import { endpoints, type Bot, type Lead, type Message } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import {
-  Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  EmptyState, Input, Table, TableSkeleton, Td, Th,
+  Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
+  Dialog, DialogContent, EmptyState, Input, ListSkeleton, Muted,
+  Table, TableSkeleton, Td, Th,
 } from '@/components/ui';
+import { Transcript, orderedForReading } from '@/components/Transcript';
 import { Header } from '@/screens/Providers';
+
+/**
+ * The transcript behind one lead.
+ *
+ * `leads.session_id` has always matched `conversations.session_id` —
+ * the linkage existed from the first migration and nothing ever queried
+ * across it. Fetched on open rather than with the lead list, because
+ * most leads are never opened and pulling every transcript up front
+ * would be a hundred sessions of messages to render three of them.
+ */
+function LeadTranscript({ bot, lead, onClose }: { bot: Bot; lead: Lead; onClose: () => void }) {
+  const [messages, setMessages] = useState<Message[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const { conversations } = await endpoints.conversations(bot.id, lead.session_id);
+        if (live) setMessages(conversations);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not load that conversation');
+        if (live) setMessages([]);
+      }
+    })();
+    // A drawer closed before the fetch lands must not set state on an
+    // unmounted component, and must not overwrite the next lead's.
+    return () => { live = false; };
+  }, [bot.id, lead.session_id]);
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent
+        className="max-w-2xl"
+        title={`Conversation with ${lead.name}`}
+        description={formatDate(lead.created_at)}
+      >
+        {messages === null ? (
+          <ListSkeleton rows={4} />
+        ) : messages.length === 0 ? (
+          <Muted>
+            No messages found for this session. Transcripts are kept for the last 100 messages
+            per bot, so an older conversation may have rolled off.
+          </Muted>
+        ) : (
+          <Transcript messages={orderedForReading(messages)} />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export function Leads({ bot }: { bot: Bot }) {
   const [leads, setLeads] = useState<Lead[] | null>(null);
   const [q, setQ] = useState('');
+  const [viewing, setViewing] = useState<Lead | null>(null);
 
   const load = useCallback(async () => {
     setLeads(null);
@@ -27,14 +80,27 @@ export function Leads({ bot }: { bot: Bot }) {
 
   const filtered = (leads ?? []).filter((l) => {
     if (!q.trim()) return true;
-    const hay = `${l.name} ${l.email} ${l.phone ?? ''} ${l.inquiry ?? ''}`.toLowerCase();
+    const hay = `${l.name} ${l.email} ${l.phone ?? ''} ${l.company ?? ''} ${l.inquiry ?? ''} ${l.tag ?? ''}`.toLowerCase();
     return hay.includes(q.toLowerCase());
   });
 
+  // Columns only appear once something is actually using them, so a bot
+  // that has not turned company on or set a label keeps the table it had
+  // before 010 rather than growing two permanently empty columns.
+  const hasCompany = filtered.some((l) => l.company);
+  const hasTag = filtered.some((l) => l.tag);
+
   function exportCsv() {
+    // The export is not conditional the way the table is: a spreadsheet
+    // with an empty column costs nothing, and a header that changes
+    // shape between exports breaks whatever the recipient built on it.
     const rows = [
-      ['Date', 'Name', 'Email', 'Phone', 'Inquiry'],
-      ...filtered.map((l) => [formatDate(l.created_at), l.name, l.email, l.phone ?? '', l.inquiry ?? '']),
+      ['Date', 'Name', 'Email', 'Phone', 'Company', 'Inquiry', 'Label', 'Consent asked'],
+      ...filtered.map((l) => [
+        formatDate(l.created_at), l.name, l.email, l.phone ?? '',
+        l.company ?? '', l.inquiry ?? '', l.tag ?? '',
+        l.consent_given ? 'yes' : '',
+      ]),
     ];
     // Quote every field and double internal quotes — a lead's inquiry
     // routinely contains commas and newlines.
@@ -82,7 +148,13 @@ export function Leads({ bot }: { bot: Bot }) {
           ) : (
             <Table>
               <thead>
-                <tr><Th>Date</Th><Th>Name</Th><Th>Email</Th><Th>Phone</Th><Th>Inquiry</Th></tr>
+                <tr>
+                  <Th>Date</Th><Th>Name</Th><Th>Email</Th><Th>Phone</Th>
+                  {hasCompany && <Th>Company</Th>}
+                  <Th>Inquiry</Th>
+                  {hasTag && <Th>Label</Th>}
+                  <Th><span className="sr-only">Conversation</span></Th>
+                </tr>
               </thead>
               <tbody>
                 {filtered.map((l) => (
@@ -91,7 +163,14 @@ export function Leads({ bot }: { bot: Bot }) {
                     <Td className="font-medium">{l.name}</Td>
                     <Td><a className="text-accent-ink hover:underline" href={`mailto:${l.email}`}>{l.email}</a></Td>
                     <Td>{l.phone ?? '—'}</Td>
+                    {hasCompany && <Td>{l.company ?? '—'}</Td>}
                     <Td className="max-w-sm">{l.inquiry ?? '—'}</Td>
+                    {hasTag && <Td>{l.tag ? <Badge>{l.tag}</Badge> : '—'}</Td>}
+                    <Td className="text-right">
+                      <Button variant="outline" size="sm" onClick={() => setViewing(l)}>
+                        <MessageSquareText className="h-3.5 w-3.5" /> Conversation
+                      </Button>
+                    </Td>
                   </tr>
                 ))}
               </tbody>
@@ -99,6 +178,12 @@ export function Leads({ bot }: { bot: Bot }) {
           )}
         </CardContent>
       </Card>
+
+      {/* Keyed on the lead so switching rows refetches rather than
+          showing the previous transcript under the new name. */}
+      {viewing && (
+        <LeadTranscript key={viewing.id} bot={bot} lead={viewing} onClose={() => setViewing(null)} />
+      )}
     </>
   );
 }

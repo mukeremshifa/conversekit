@@ -1,12 +1,130 @@
-import type { Bot } from './types';
+import type { Bot, LeadFieldMode } from './types';
+import { leadConfigFor } from './config';
+
+/** "a", "a and b", "a, b and c". */
+function joinAnd(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? '';
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+}
+
+/**
+ * The `## Lead Capture` block, generated from bots.lead_config.
+ *
+ * THE CONTRACT THAT MATTERS HERE: a bot with no lead_config must
+ * produce this section byte for byte as it was hardcoded before 010.
+ * Every default below is chosen to satisfy that and nothing else —
+ * phone optional, company off, inquiry optional, intent trigger — and
+ * `scripts/test-lead-capture.mjs` compares the two strings directly
+ * rather than trusting the reading.
+ *
+ * Returned empty when capture is switched off, which leaves the prompt
+ * identical to a bot that never had the feature at all. That is the
+ * whole reason `enabled` is a hard omission rather than an instruction
+ * not to ask: half a feature is worse than none of it.
+ */
+function leadCaptureLines(bot: Bot): string[] {
+  const cfg = leadConfigFor(bot);
+  if (cfg.enabled === false) return [];
+
+  const f = cfg.fields ?? {};
+  const phone: LeadFieldMode   = f.phone   ?? 'optional';
+  const company: LeadFieldMode = f.company ?? 'off';
+  const inquiry: LeadFieldMode = f.inquiry ?? 'optional';
+
+  // name and email are not configurable — src/leads.ts will not save a
+  // lead without them, so offering to make them optional would be
+  // offering something the extraction guard then silently overrules.
+  const required = ['name', 'email'];
+  const optional: string[] = [];
+  for (const [label, mode] of [['phone', phone], ['company', company]] as const) {
+    if (mode === 'required') required.push(label);
+    else if (mode === 'optional') optional.push(label);
+  }
+
+  const collected = optional.length
+    ? `${required.join(', ')}, and optionally ${joinAnd(optional)}`
+    : joinAnd(required);
+
+  // Marker key order is fixed, not derived from the config object, so
+  // that reordering the settings form can never change the shape the
+  // model is asked for.
+  const markerKeys = ['name', 'email'];
+  if (phone   !== 'off') markerKeys.push('phone');
+  if (company !== 'off') markerKeys.push('company');
+  if (inquiry !== 'off') markerKeys.push('inquiry');
+  const marker = `[[LEAD:{${markerKeys.map((k) => `"${k}":"..."`).join(',')}}]]`;
+
+  // Each entry is one numbered step; entries after the first in an
+  // array are continuation lines under it.
+  const steps: string[][] = [];
+
+  if (cfg.consent_text) {
+    steps.push([
+      'Before you ask for any contact details, convey this in the visitor\'s own language:',
+      `"${cfg.consent_text}"`,
+      'If they decline, do not ask again and carry on helping them normally.',
+    ]);
+  }
+
+  steps.push(['Acknowledge their request warmly.']);
+  steps.push([`Collect ${collected} — ask naturally, one detail at a time.`]);
+
+  if (inquiry === 'optional') {
+    steps.push(['Ask what their inquiry is about in one short sentence.']);
+  } else if (inquiry === 'required') {
+    steps.push(['Ask what their inquiry is about in one short sentence — do not finish without it.']);
+  }
+
+  steps.push([
+    cfg.success_message
+      ? `Once you have at least ${required.join(' + ')}, convey this, adapted to their language: "${cfg.success_message}"`
+      : `Once you have at least ${required.join(' + ')}, confirm their details have been passed to the team.`,
+  ]);
+
+  if (cfg.booking_url) {
+    steps.push([
+      `Then offer this link so they can book a time themselves: ${cfg.booking_url}`,
+      'Share it once. Do not repeat it later in the conversation.',
+    ]);
+  }
+
+  steps.push([
+    'At the very end of that message, after your visible reply, append this on its own line:',
+    marker,
+    'Use null for any field the visitor did not provide.',
+    'This marker is processed automatically — it must NEVER appear in the visible reply.',
+    'Only emit it once per conversation.',
+  ]);
+
+  const opening = cfg.trigger === 'always'
+    ? 'Once you have answered the visitor\'s first question, work towards collecting their contact details:'
+    : 'When a visitor expresses intent to book, get a quote, request a consultation, or contact the business:';
+
+  const lines = ['', '## Lead Capture', opening];
+  steps.forEach(([first, ...rest], i) => {
+    lines.push(`${i + 1}. ${first}`);
+    for (const line of rest) lines.push(`   ${line}`);
+  });
+  return lines;
+}
 
 /**
  * @param retrievedContext Rendered RAG excerpts, appended after the
  *   conversation rules so those rules take precedence over anything an
  *   ingested document might try to assert. Empty string when a bot has
  *   no corpus, which leaves the prompt byte-identical to pre-RAG.
+ *
+ * @param situational Facts about THIS turn that the standing rules
+ *   cannot know: the conversation has run long, the last few questions
+ *   retrieved nothing, this one retrieved nothing. Each is a sentence
+ *   the model acts on, not a script it recites — the visitor may be
+ *   speaking any language, and a hardcoded English line would be the
+ *   one part of the reply that is not in theirs.
+ *
+ *   Empty for the overwhelming majority of turns, and an empty array
+ *   leaves the prompt byte-identical to what it was before 009.
  */
-export function buildSystemPrompt(bot: Bot, retrievedContext = ''): string {
+export function buildSystemPrompt(bot: Bot, retrievedContext = '', situational: string[] = []): string {
   const lines: string[] = [
     `You are a helpful AI assistant for ${bot.business_name}.`,
     `Your name is ${bot.name}.`,
@@ -84,18 +202,21 @@ export function buildSystemPrompt(bot: Bot, retrievedContext = ''): string {
   lines.push('   Example: "I\'m here to help with any dental questions you might have."');
   lines.push('   Do not apologise, do not repeat their words, do not lecture. Redirect once and move on.');
 
-  lines.push('');
-  lines.push('## Lead Capture');
-  lines.push('When a visitor expresses intent to book, get a quote, request a consultation, or contact the business:');
-  lines.push('1. Acknowledge their request warmly.');
-  lines.push('2. Collect name, email, and optionally phone — ask naturally, one detail at a time.');
-  lines.push('3. Ask what their inquiry is about in one short sentence.');
-  lines.push('4. Once you have at least name + email, confirm their details have been passed to the team.');
-  lines.push('5. At the very end of that message, after your visible reply, append this on its own line:');
-  lines.push('   [[LEAD:{"name":"...","email":"...","phone":"...","inquiry":"..."}]]');
-  lines.push('   Use null for any field the visitor did not provide.');
-  lines.push('   This marker is processed automatically — it must NEVER appear in the visible reply.');
-  lines.push('   Only emit it once per conversation.');
+  lines.push(...leadCaptureLines(bot));
+
+  // After the standing rules, before the retrieved material: these are
+  // instructions from the platform, so they belong on the trusted side
+  // of the line that the retrieval section is explicitly on the far
+  // side of.
+  if (situational.length) {
+    lines.push('');
+    lines.push('## This Conversation');
+    lines.push('');
+    lines.push('These apply to your NEXT reply only. Follow them in the visitor\'s own');
+    lines.push('language, in your own words — do not quote them back.');
+    lines.push('');
+    for (const note of situational) lines.push(`- ${note}`);
+  }
 
   // Last, so the rules above are established before any ingested text
   // is introduced — and so the retrieval section can refer back to them.

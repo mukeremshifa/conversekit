@@ -20,7 +20,7 @@
 // ----------------------------------------------------------------
 import type {
   Env, Bot, ConversationRow, Lead, BotUpdatePayload, BotCreatePayload, Membership, Organization,
-  Document, DocumentCreatePayload, ChunkRow,
+  Document, DocumentCreatePayload, ChunkRow, WidgetConfig,
 } from './types';
 import type { ExtractedLead } from './leads';
 
@@ -176,7 +176,10 @@ export async function createBot(db: UserDb, payload: BotCreatePayload): Promise<
  * because a sentinel is only as reliable as the encoding it survives.
  */
 async function mergeConfigs(db: UserDb, botId: string, payload: BotUpdatePayload): Promise<BotUpdatePayload> {
-  const touchesConfig = 'provider_config' in payload || 'embedding_config' in payload;
+  const touchesConfig = 'provider_config' in payload
+    || 'embedding_config' in payload
+    || 'widget_config' in payload
+    || 'lead_config' in payload;
   if (!touchesConfig) return payload;
 
   const current = await selectBot(db, botId);
@@ -205,6 +208,49 @@ async function mergeConfigs(db: UserDb, botId: string, payload: BotUpdatePayload
     }
     out[field] = merged;
   }
+
+  // widget_config is replaced wholesale, NOT merged: it holds no secret,
+  // the form posts the whole object, and a merge would make a cleared
+  // field un-clearable. The one exception is logo_key, which the
+  // settings form neither sends nor is allowed to send (see
+  // validateWidgetConfig) — it belongs to the upload route, so it is
+  // carried forward here rather than being wiped by every save.
+  // Note the null case: a tenant who clears every setting still has a
+  // logo, and wiping the key here would orphan the R2 object with
+  // nothing left pointing at it.
+  if ('widget_config' in out) {
+    const storedLogo = current.widget_config?.logo_key;
+    if (storedLogo) out.widget_config = { ...(out.widget_config ?? {}), logo_key: storedLogo };
+  }
+
+  // lead_config gets exactly the same treatment for exactly the same
+  // reason, with webhook_url in the role logo_key plays above: the
+  // settings form is never sent the URL (it is a credential — see
+  // redactBotSecrets), so it cannot send it back, and a plain replace
+  // would delete a tenant's Slack webhook every time they edited the
+  // success message next to it.
+  //
+  // The difference from logo_key is that this one IS clearable, because
+  // "stop notifying me" has to be expressible. A non-empty incoming
+  // value replaces the stored one; an explicit null for the whole
+  // object clears everything including the URL. Sending the object
+  // without the key means "leave the webhook alone", which is what the
+  // form does on every other save.
+  if ('lead_config' in out && out.lead_config !== null) {
+    const incoming = { ...(out.lead_config ?? {}) };
+
+    if (incoming.webhook_url === null) {
+      delete incoming.webhook_url;                  // explicit clear
+    } else if (!incoming.webhook_url && current.lead_config?.webhook_url) {
+      incoming.webhook_url = current.lead_config.webhook_url;
+    }
+
+    // Clearing the only setting a tenant had leaves {}, and an empty
+    // object is stored as NULL everywhere else in this codebase so that
+    // "never configured" and "configured back to defaults" read alike.
+    out.lead_config = Object.keys(incoming).length ? incoming : null;
+  }
+
   return out;
 }
 
@@ -217,6 +263,40 @@ export async function updateBot(db: UserDb, botId: string, payload: BotUpdatePay
   // Zero rows means RLS hid it — indistinguishable from "absent", and
   // deliberately so: callers turn this into a 404, not a 403.
   return rows[0] ?? null;
+}
+
+/**
+ * Point a bot at a logo object, or clear it.
+ *
+ * Deliberately NOT routed through updateBot: mergeConfigs carries the
+ * *stored* logo_key forward over anything the caller sends, which is
+ * what protects the logo from an ordinary settings save — and would
+ * equally stop this from ever replacing it. The upload route owns this
+ * field, so it writes it directly.
+ *
+ * Returns the previous key as well, because after the write there is
+ * nothing left saying which R2 object just became garbage.
+ */
+export async function setBotLogoKey(
+  db: UserDb,
+  botId: string,
+  key: string | null,
+): Promise<{ bot: Bot; previousKey: string | null } | null> {
+  const current = await selectBot(db, botId);
+  if (!current) return null;
+
+  const previousKey = current.widget_config?.logo_key ?? null;
+
+  const next: WidgetConfig = { ...(current.widget_config ?? {}) };
+  if (key) next.logo_key = key;
+  else delete next.logo_key;
+
+  const rows = await pgFetch<Bot[]>(db,
+    `/bots?id=eq.${encodeURIComponent(botId)}`,
+    { method: 'PATCH', body: JSON.stringify({ widget_config: Object.keys(next).length ? next : null }) }
+  );
+  if (!rows[0]) return null;
+  return { bot: rows[0], previousKey };
 }
 
 export async function deleteBot(db: UserDb, botId: string): Promise<boolean> {
@@ -243,7 +323,7 @@ export async function getSessionHistory(
 
 export async function logMessage(
   db: ServiceDb,
-  row: Omit<ConversationRow, 'id' | 'created_at'>
+  row: Omit<ConversationRow, 'id' | 'created_at'> & { retrieval_miss?: boolean }
 ): Promise<void> {
   await pgFetch<unknown>(db, '/conversations',
     { method: 'POST', body: JSON.stringify(row),
@@ -251,24 +331,115 @@ export async function logMessage(
   );
 }
 
+/**
+ * How long this conversation has run, capped.
+ *
+ * NOT derived from getSessionHistory: that ends at `limit=20`, so
+ * counting what it returns stops at 20 and a threshold above that would
+ * never fire. `cap` is the caller's threshold plus one — enough to
+ * answer "has it passed?", which is the only question asked, without
+ * dragging a long transcript over the wire on every turn.
+ */
+export async function countSessionMessages(
+  db: ServiceDb,
+  botId: string,
+  sessionId: string,
+  cap: number,
+): Promise<number> {
+  const rows = await pgFetch<Array<{ id: string }>>(db,
+    `/conversations?select=id&bot_id=eq.${encodeURIComponent(botId)}&session_id=eq.${encodeURIComponent(sessionId)}&limit=${cap}`
+  );
+  return rows.length;
+}
+
+/**
+ * How many of this session's most recent replies in a row had no
+ * retrieved context to work from.
+ *
+ * Ordered newest-first and counted until the streak breaks, so one
+ * answered question resets it — which is what "three failed answers in
+ * a row" has to mean for the setting to behave the way it reads.
+ */
+export async function countTrailingMisses(
+  db: ServiceDb,
+  botId: string,
+  sessionId: string,
+  cap: number,
+): Promise<number> {
+  const rows = await pgFetch<Array<{ retrieval_miss: boolean | null }>>(db,
+    `/conversations?select=retrieval_miss&bot_id=eq.${encodeURIComponent(botId)}&session_id=eq.${encodeURIComponent(sessionId)}&role=eq.assistant&order=created_at.desc&limit=${cap}`
+  );
+
+  let streak = 0;
+  for (const row of rows) {
+    if (row.retrieval_miss !== true) break;
+    streak++;
+  }
+  return streak;
+}
+
+/**
+ * Titles for the documents behind a set of retrieved chunks.
+ *
+ * A second query rather than a new match_chunks signature: the SQL
+ * function is versioned into a migration and called from two places,
+ * and this reads a handful of rows by primary key.
+ */
+export async function getDocumentTitles(
+  db: ServiceDb,
+  documentIds: string[],
+): Promise<Map<string, string>> {
+  if (documentIds.length === 0) return new Map();
+
+  const list = documentIds.map((id) => `"${encodeURIComponent(id)}"`).join(',');
+  const rows = await pgFetch<Array<{ id: string; title: string }>>(db,
+    `/documents?select=id,title&id=in.(${list})`
+  );
+  return new Map(rows.map((r) => [r.id, r.title]));
+}
+
+/**
+ * @param sessionId Narrow to one session. The bot filter stays in place
+ *   alongside it rather than being replaced by it: session ids are not
+ *   scoped to a bot, and dropping the bot_id would let a guessed id
+ *   read another bot's transcript. RLS would still confine it to the
+ *   caller's own orgs, but "their other bot" is not the right answer
+ *   either.
+ *
+ *   Also serves the drawer on the Leads screen — `leads.session_id` has
+ *   always matched this column; nothing ever queried across them.
+ */
 export async function getConversations(
   db: UserDb,
   botId: string,
-  limit = 100
+  limit = 100,
+  sessionId?: string,
 ): Promise<ConversationRow[]> {
+  const session = sessionId ? `&session_id=eq.${encodeURIComponent(sessionId)}` : '';
   return pgFetch<ConversationRow[]>(db,
-    `/conversations?select=*&bot_id=eq.${encodeURIComponent(botId)}&order=created_at.desc&limit=${limit}`
+    `/conversations?select=*&bot_id=eq.${encodeURIComponent(botId)}${session}&order=created_at.desc&limit=${limit}`
   );
 }
 
 // ----------------------------------------------------------------
 // Leads
 // ----------------------------------------------------------------
+/**
+ * @param meta The 010 columns. Passed as an object rather than read
+ *   from the bot here because the tag and the consent flag are facts
+ *   about the CAPTURE, not about the lead the model produced — and
+ *   because omitting the object entirely keeps this insert valid
+ *   against a database that has not had 010 applied yet.
+ *
+ *   Each key is only sent when it has a value, for that same reason:
+ *   the schema is allowed to be ahead of the code, never behind it.
+ */
 export async function saveLead(
   db: ServiceDb,
   botId: string,
   sessionId: string,
-  lead: ExtractedLead
+  lead: ExtractedLead,
+  meta?: { tag?: string | null; consentGiven?: boolean | null },
 ): Promise<void> {
   await pgFetch<unknown>(db, '/leads',
     { method: 'POST',
@@ -279,6 +450,9 @@ export async function saveLead(
         email:      lead.email,
         phone:      lead.phone,
         inquiry:    lead.inquiry,
+        ...(lead.company != null    && { company: lead.company }),
+        ...(meta?.tag                && { tag: meta.tag }),
+        ...(meta?.consentGiven != null && { consent_given: meta.consentGiven }),
       }),
       headers: { 'Prefer': 'return=minimal' },
     }

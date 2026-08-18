@@ -11,6 +11,7 @@ import {
   listBots,
   createBot,
   updateBot,
+  setBotLogoKey,
   deleteBot,
   getSessionHistory,
   logMessage,
@@ -25,6 +26,9 @@ import {
   orgStorageBytes,
   listChunks,
   hasChunks,
+  countSessionMessages,
+  countTrailingMisses,
+  getDocumentTitles,
   getStatMessages,
   getStatLeads,
   getStatDocuments,
@@ -42,7 +46,19 @@ import {
   ORG_STORAGE_CAP_BYTES,
   SNIFF_BYTES,
 } from './rag/files';
-import { retrieve, renderContext } from './rag/retrieve';
+import { retrieve, renderContext, type RetrievedChunk } from './rag/retrieve';
+import {
+  validateWidgetConfig, validateBehaviorConfig, validateLeadConfig,
+  behaviorConfigFor, widgetConfigFor, widgetPublicConfig, leadConfigFor,
+} from './config';
+import {
+  detectLogoType,
+  logoKeyFor,
+  logoUrlFor,
+  supportedLogoList,
+  LOGO_SNIFF_BYTES,
+  MAX_LOGO_BYTES,
+} from './logo';
 import { buildSystemPrompt } from './prompt';
 import { verifyToken, bearerFrom, AuthError } from './auth';
 import {
@@ -54,12 +70,15 @@ import {
   type Message,
   type Usage,
 } from './providers';
-import { extractLead } from './leads';
+import { extractLead, type ExtractedLead } from './leads';
+import { notifyLead, webhookHost } from './notify';
 import { buildStats } from './stats';
 import { LeadStreamFilter } from './lead-stream';
 import { issueSessionId, verifySessionId } from './session';
 import { isOriginAllowed, validateOrigins, validateSuggestions } from './origin';
-import type { Env, Bot, Document, ChatRequest, BotUpdatePayload, BotCreatePayload } from './types';
+import type {
+  Env, Bot, Document, ChatRequest, BotUpdatePayload, BotCreatePayload, LeadConfig,
+} from './types';
 
 type Vars = { db: UserDb; userId: string; email: string | null };
 
@@ -103,6 +122,14 @@ app.use('/v1/admin/*', async (c, next) => {
 });
 
 /**
+ * This deployment's own origin, taken from the request rather than
+ * configured. The Worker answers on workers.dev, on a custom domain and
+ * on localhost under `wrangler dev`, and a logo URL has to be right on
+ * all three without a var to keep in step.
+ */
+const origin = (c: { req: { url: string } }): string => new URL(c.req.url).origin;
+
+/**
  * Tenant-supplied API keys live in provider_config/embedding_config.
  * The dashboard needs to know a key is set without being handed it.
  *
@@ -111,17 +138,46 @@ app.use('/v1/admin/*', async (c, next) => {
  * way in as "unchanged" — which quietly destroyed the stored key the
  * moment anything re-encoded those multi-byte bullets. Absence is not
  * encoding-dependent, so absence is the signal.
+ *
+ * widget_config.logo_key gets the same treatment for a different
+ * reason: it names an object in a bucket shared with every tenant's
+ * documents, and the dashboard has no use for it — what a settings
+ * screen needs is a URL it can put in an <img>. Sending the URL instead
+ * of the key also keeps the key out of the form's round-trip, which is
+ * what validateWidgetConfig rejects on the way back in.
  */
-function redactBotSecrets(bot: Bot): Record<string, unknown> {
+function redactBotSecrets(bot: Bot, origin: string): Record<string, unknown> {
   const scrub = (cfg: { apiKey?: string } | null | undefined) => {
     if (!cfg) return cfg;
     const { apiKey, ...rest } = cfg;
     return { ...rest, hasApiKey: !!apiKey, apiKeyLast4: apiKey ? apiKey.slice(-4) : null };
   };
+
+  const widget = bot.widget_config
+    ? (() => { const { logo_key, ...rest } = bot.widget_config; void logo_key; return rest; })()
+    : bot.widget_config;
+
+  // lead_config.webhook_url is a third case, and the one with the
+  // sharpest edge: a Slack or Teams incoming-webhook URL is a bearer
+  // credential — anyone who has it can post into that channel — so it
+  // is removed for the same reason apiKey is, not merely tidied away
+  // like logo_key. What the settings screen needs is enough to say
+  // "posting to hooks.slack.com" and offer a Remove button, which is
+  // exactly these two derived fields and nothing more.
+  const lead = bot.lead_config
+    ? (() => {
+        const { webhook_url, ...rest } = bot.lead_config;
+        return { ...rest, has_webhook: !!webhook_url, webhook_host: webhookHost(webhook_url) };
+      })()
+    : bot.lead_config;
+
   return {
     ...bot,
     provider_config:  scrub(bot.provider_config),
     embedding_config: scrub(bot.embedding_config),
+    widget_config:    widget,
+    lead_config:      lead,
+    logo_url:         logoUrlFor(bot, origin),
   };
 }
 
@@ -163,7 +219,53 @@ app.get('/v1/bots/:id/health', async (c) => {
     // every bot on the platform asked visitors about dental insurance.
     suggestions:  bot.suggestions ?? null,
     streaming:    true,
+    // Only the keys a tenant actually set. Defaults are widget.js's to
+    // own — a second copy of them here is a second thing to keep in
+    // sync, and an older widget ignores this object entirely.
+    widget:       widgetPublicConfig(bot, logoUrlFor(bot, origin(c))),
   });
+});
+
+// ================================================================
+// GET /v1/bots/:id/logo
+//
+// Public, and the only route in this Worker that hands a browser bytes
+// a tenant uploaded. Knowledge-base files are converted to text and
+// never served, so R2 has no public read path — this route is it.
+//
+// Cached immutably and for a year, which is safe because a replacement
+// logo is written under a NEW key (see logoKeyFor): the URL changes, so
+// no cache anywhere ever has to be invalidated.
+// ================================================================
+app.get('/v1/bots/:id/logo', async (c) => {
+  const bucket = c.env.DOCS;
+  if (!bucket) return c.json({ error: 'Not found' }, 404);
+
+  let bot: Bot | null;
+  try { bot = await getBotForChat(serviceDb(c.env), c.req.param('id')); }
+  catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+
+  const key = bot && widgetConfigFor(bot).logo_key;
+  if (!key) return c.json({ error: 'Not found' }, 404);
+
+  let object: R2Object | R2ObjectBody | null;
+  // onlyIf handles the conditional request, so a repeat visitor pays
+  // for a 304 rather than for the image again.
+  try { object = await bucket.get(key, { onlyIf: c.req.raw.headers }); }
+  catch (err) { console.error('[logo] R2 get failed:', err); return c.json({ error: 'Not found' }, 404); }
+  if (!object) return c.json({ error: 'Not found' }, 404);
+
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set('etag', object.httpEtag);
+  headers.set('cache-control', 'public, max-age=31536000, immutable');
+  // These bytes came from a tenant. Never let a browser decide for
+  // itself what they are — the upload sniffed them, that stands.
+  headers.set('x-content-type-options', 'nosniff');
+
+  // No body means the precondition matched: nothing to send.
+  if (!('body' in object) || !object.body) return new Response(null, { status: 304, headers });
+  return new Response(object.body, { headers });
 });
 
 // ================================================================
@@ -178,7 +280,24 @@ app.get('/v1/bots/:id/health', async (c) => {
 // ================================================================
 type Preflight =
   | { ok: false; status: 400 | 403 | 404 | 502; error: string }
-  | { ok: true; bot: Bot; db: ServiceDb; provider: ChatProvider; system: string; messages: Message[]; sessionId: string; userMessage: string };
+  | {
+      ok: true; bot: Bot; db: ServiceDb; provider: ChatProvider; system: string;
+      messages: Message[]; sessionId: string; userMessage: string;
+      /** Document titles behind the retrieved context, when the bot has
+       *  citations switched on. Empty otherwise — including when
+       *  retrieval ran and simply found nothing. */
+      citations: string[];
+      /** True when the bot HAS a corpus and this turn retrieved nothing
+       *  above the similarity threshold. Recorded on the assistant row
+       *  so the escalation counter has something deterministic to count;
+       *  undefined when escalation is off, so a Worker running ahead of
+       *  009 never writes the column. */
+      retrievalMiss?: boolean;
+      /** This bot's lead settings, read once here. The routes need them
+       *  for the marker shape, the tag and the webhook, and all three
+       *  have to agree with the prompt that was actually sent. */
+      lead: LeadConfig;
+    };
 
 interface PreflightOptions {
   /** Set by the dashboard preview route, where the caller's origin is
@@ -260,14 +379,114 @@ async function preflight(
   // Retrieval. Never fatal: a bot with no corpus, or an embedding
   // vendor having a bad minute, falls back to the plain knowledge-base
   // prompt rather than failing the visitor's turn.
+  //
+  // The OUTCOME is kept now, not just the rendered text. "This bot has
+  // documents and none of them cleared the similarity threshold" is the
+  // only deterministic, language-independent signal available that the
+  // bot could not answer — everything in behavior_config is built on it.
   let context = '';
+  let hasCorpus = false;
+  let chunks: RetrievedChunk[] = [];
   try {
-    if (await hasChunks(db, botId)) {
+    hasCorpus = await hasChunks(db, botId);
+    if (hasCorpus) {
       const outcome = await retrieve(c.env, db, bot, userMessage);
-      context = renderContext(outcome.chunks);
+      chunks = outcome.chunks;
+      context = renderContext(chunks);
     }
   } catch (err) {
     console.error('[rag] skipped (non-fatal):', err);
+  }
+  const missedRetrieval = hasCorpus && chunks.length === 0;
+
+  const behavior = behaviorConfigFor(bot);
+  const widget = widgetConfigFor(bot);
+  const lead = leadConfigFor(bot);
+  const situational: string[] = [];
+
+  // The `after_messages` lead trigger, resolved to a threshold or to 0.
+  // Zero for every other trigger — `intent` and `always` are settled
+  // entirely inside buildSystemPrompt, because they are standing rules
+  // rather than facts about this particular turn.
+  const leadAfter = lead.enabled !== false && lead.trigger === 'after_messages'
+    ? (lead.trigger_after_messages ?? 0)
+    : 0;
+
+  // ── Configurable fallback wording ──────────────────────────────
+  // Appended as a preference, never substituted for the model's reply:
+  // replacing output wholesale would break streaming and answer a
+  // Spanish question in English.
+  if (missedRetrieval && behavior.fallback_message) {
+    situational.push(
+      'Nothing in this business\'s own material answers the visitor\'s question. Do not guess. '
+      + `Convey this, adapted to their language: "${behavior.fallback_message}"`,
+    );
+  }
+
+  // ── Length and escalation ──────────────────────────────────────
+  // Both are off by default and both cost a query, so neither runs
+  // unless a tenant switched it on. Failures are non-fatal: an
+  // escalation that does not fire is a missed nicety, not a broken
+  // conversation.
+  if (!opts.ephemeral && trusted) {
+    const capMessages = behavior.max_messages ?? 0;
+
+    // ONE count for both settings that need it. The cap has to cover
+    // whichever threshold is higher: countSessionMessages stops reading
+    // at the cap, so sizing it to the lower one would hand the higher
+    // one a number that can never reach it.
+    let sessionMessages = 0;
+    if (capMessages > 0 || leadAfter > 0) {
+      try {
+        sessionMessages = await countSessionMessages(
+          db, botId, resolvedSession, Math.max(capMessages, leadAfter) + 1,
+        );
+      } catch (err) { console.error('[behavior] message count failed (non-fatal):', err); }
+    }
+
+    if (capMessages > 0 && sessionMessages >= capMessages) {
+      situational.push(
+        'This conversation has run long without resolving. Warmly offer to put the visitor '
+        + 'in touch with a member of the team, and ask for the best way to reach them.',
+      );
+    }
+
+    // The one lead trigger that is a fact rather than an instruction:
+    // the row count is real, so this fires whether or not the model
+    // would have judged the moment right on its own.
+    if (leadAfter > 0 && sessionMessages >= leadAfter) {
+      situational.push(
+        'The visitor has been talking for a while now. If you do not already have their contact '
+        + 'details, this is a good moment to follow the Lead Capture steps — offer once, warmly, '
+        + 'and do not press if they would rather keep browsing.',
+      );
+    }
+
+    if (behavior.escalate_after_misses && behavior.escalate_after_misses > 0 && missedRetrieval) {
+      try {
+        const threshold = behavior.escalate_after_misses;
+        // The stored streak covers previous turns; this one is the
+        // current miss, which is not persisted yet.
+        const previous = await countTrailingMisses(db, botId, resolvedSession, threshold);
+        if (previous + 1 >= threshold) {
+          situational.push(
+            'Several questions in a row now have had no answer in this business\'s material. '
+            + 'Say so plainly, apologise once, and offer to connect the visitor with a person.',
+          );
+        }
+      } catch (err) { console.error('[behavior] miss streak failed (non-fatal):', err); }
+    }
+  }
+
+  // ── Citations ──────────────────────────────────────────────────
+  // Off by default. Titles are looked up rather than carried by
+  // match_chunks, which returns document_id only.
+  let citations: string[] = [];
+  if (widget.show_citations && chunks.length) {
+    try {
+      const titles = await getDocumentTitles(db, [...new Set(chunks.map((ch) => ch.document_id))]);
+      citations = [...new Set([...titles.values()].filter(Boolean))];
+    } catch (err) { console.error('[citations] title lookup failed (non-fatal):', err); }
   }
 
   return {
@@ -275,17 +494,31 @@ async function preflight(
     bot,
     db,
     provider,
-    system:   buildSystemPrompt(bot, context),
+    system:   buildSystemPrompt(bot, context, situational),
     // The current turn is not yet persisted, so append it to the window.
     messages: [...history, { role: 'user', content: userMessage }],
     sessionId: resolvedSession,
     userMessage,
+    citations,
+    // Carried out of here rather than re-read in the routes: it decides
+    // the marker shape extractLead parses, so both must come from the
+    // same snapshot of the bot.
+    lead,
+    // Only recorded when the feature that reads it is on — which also
+    // guarantees behavior_config exists, and therefore that 009 ran.
+    retrievalMiss: behavior.escalate_after_misses ? missedRetrieval : undefined,
   };
 }
 
 /**
  * Persist the exchange and any captured lead. Never throws — a logging
  * failure must not cost the visitor their answer.
+ *
+ * Returns the lead it saved, or null. The caller needs it to send the
+ * notification, and the notification deliberately does NOT happen here:
+ * this function is awaited on the request path, so a webhook fetch
+ * inside it would put a third party's latency on the visitor's reply.
+ * See the note at the top of src/notify.ts.
  */
 async function persistTurn(
   db: ServiceDb,
@@ -294,16 +527,58 @@ async function persistTurn(
   userMessage: string,
   reply: string,
   rawReply: string,
-): Promise<void> {
-  const { lead } = extractLead(rawReply);
+  leadConfig: LeadConfig,
+  retrievalMiss?: boolean,
+): Promise<ExtractedLead | null> {
+  const { lead } = extractLead(rawReply, leadConfig.fields);
+  // Recorded per lead rather than read back from the bot at display
+  // time, because a tenant who later edits the consent wording must not
+  // retroactively change what every past lead was asked.
+  const consentGiven = leadConfig.consent_text ? true : null;
+  let saved: ExtractedLead | null = null;
+
   if (lead) {
-    try { await saveLead(db, botId, sessionId, lead); }
-    catch (err) { console.error('saveLead failed (non-fatal):', err); }
+    try {
+      await saveLead(db, botId, sessionId, lead, { tag: leadConfig.tag ?? null, consentGiven });
+      saved = lead;
+    } catch (err) { console.error('saveLead failed (non-fatal):', err); }
   }
   try {
     await logMessage(db, { bot_id: botId, session_id: sessionId, role: 'user',      content: userMessage });
-    await logMessage(db, { bot_id: botId, session_id: sessionId, role: 'assistant', content: reply });
+    await logMessage(db, {
+      bot_id: botId, session_id: sessionId, role: 'assistant', content: reply,
+      // Omitted entirely unless escalation is on, so this insert stays
+      // valid against a database that has not had 009 applied.
+      ...(retrievalMiss !== undefined && { retrieval_miss: retrievalMiss }),
+    });
   } catch (err) { console.error('logMessage failed (non-fatal):', err); }
+
+  // Only a lead that actually reached Postgres is announced. Notifying
+  // on a failed insert would tell a sales team about a lead they will
+  // never find in the dashboard.
+  return saved;
+}
+
+/**
+ * Hand a captured lead to the configured webhook, off the request path.
+ *
+ * Returns a promise for waitUntil rather than being called for effect,
+ * so the Worker stays alive until the POST finishes. notifyLead itself
+ * never rejects, so nothing downstream needs a catch.
+ */
+function announceLead(
+  env: Env, bot: Bot, cfg: LeadConfig, lead: ExtractedLead, sessionId: string,
+): Promise<void> {
+  return notifyLead(cfg, {
+    botName: bot.name,
+    businessName: bot.business_name,
+    lead,
+    sessionId,
+    tag: cfg.tag ?? null,
+    consentGiven: cfg.consent_text ? true : null,
+    bookingUrl: cfg.booking_url ?? null,
+    capturedAt: new Date().toISOString(),
+  }, { apiKey: env.RESEND_API_KEY, from: env.LEAD_EMAIL_FROM });
 }
 
 /**
@@ -344,7 +619,7 @@ app.post('/v1/chat', async (c) => {
     return c.json({ error: 'Too many messages — please slow down.' }, 429);
   }
 
-  const { provider, system, messages, sessionId, userMessage, bot, db } = pre;
+  const { provider, system, messages, sessionId, userMessage, bot, db, citations, retrievalMiss, lead } = pre;
 
   let rawReply: string;
   try {
@@ -358,10 +633,14 @@ app.post('/v1/chat', async (c) => {
     return c.json({ error: 'AI service error' }, 502);
   }
 
-  const { cleanReply } = extractLead(rawReply);
-  await persistTurn(db, bot.id, sessionId, userMessage, cleanReply, rawReply);
+  const { cleanReply } = extractLead(rawReply, lead.fields);
+  const captured = await persistTurn(
+    db, bot.id, sessionId, userMessage, cleanReply, rawReply, lead, retrievalMiss,
+  );
+  if (captured) c.executionCtx.waitUntil(announceLead(c.env, bot, lead, captured, sessionId));
 
-  return c.json({ reply: cleanReply, sessionId });
+  // Additive: a widget that predates citations ignores the field.
+  return c.json({ reply: cleanReply, sessionId, citations });
 });
 
 // ================================================================
@@ -379,7 +658,7 @@ app.post('/v1/chat/stream', async (c) => {
     return c.json({ error: 'Too many messages — please slow down.' }, 429);
   }
 
-  const { provider, system, messages, sessionId, userMessage, bot, db } = pre;
+  const { provider, system, messages, sessionId, userMessage, bot, db, citations, retrievalMiss, lead } = pre;
 
   return streamSSE(c, async (stream) => {
     const filter = new LeadStreamFilter();
@@ -413,9 +692,19 @@ app.post('/v1/chat/stream', async (c) => {
     }
 
     const reply = visible.trim();
-    await persistTurn(db, bot.id, sessionId, userMessage, reply, raw);
+    const captured = await persistTurn(
+      db, bot.id, sessionId, userMessage, reply, raw, lead, retrievalMiss,
+    );
+    // Dispatched before `done` is written rather than after: waitUntil
+    // registers the work, it does not wait for it, so the visitor sees
+    // the stream close at exactly the same moment either way.
+    if (captured) c.executionCtx.waitUntil(announceLead(c.env, bot, lead, captured, sessionId));
 
-    await stream.writeSSE({ event: 'done', data: JSON.stringify({ sessionId, usage }) });
+    // Citations ride on `done` rather than as their own event: they are
+    // known before the first token and belong to the finished reply, so
+    // a new event type would only give older widgets something else to
+    // ignore.
+    await stream.writeSSE({ event: 'done', data: JSON.stringify({ sessionId, usage, citations }) });
   });
 });
 
@@ -490,7 +779,7 @@ app.get('/v1/admin/providers', (c) => {
 app.get('/v1/admin/bots', async (c) => {
   try {
     const bots = await listBots(c.get('db'));
-    return c.json({ bots: bots.map(redactBotSecrets) });
+    return c.json({ bots: bots.map((b) => redactBotSecrets(b, origin(c))) });
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
@@ -514,7 +803,7 @@ app.post('/v1/admin/bots', async (c) => {
 
   try {
     const bot = await createBot(c.get('db'), payload);
-    return c.json(redactBotSecrets(bot), 201);
+    return c.json(redactBotSecrets(bot, origin(c)), 201);
   } catch (err) {
     console.error(err);
     // RLS rejects an insert into an org the caller cannot write to.
@@ -526,7 +815,7 @@ app.get('/v1/admin/bots/:id', async (c) => {
   try {
     const bot = await getBotForAdmin(c.get('db'), c.req.param('id'));
     if (!bot) return c.json({ error: 'Bot not found' }, 404);
-    return c.json(redactBotSecrets(bot));
+    return c.json(redactBotSecrets(bot, origin(c)));
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
@@ -545,13 +834,28 @@ app.put('/v1/admin/bots/:id', async (c) => {
     if (!chips.ok) return c.json({ error: chips.error }, 400);
     payload.suggestions = chips.suggestions;
   }
+  if ('widget_config' in payload) {
+    const widget = validateWidgetConfig(payload.widget_config);
+    if (!widget.ok) return c.json({ error: widget.error }, 400);
+    payload.widget_config = widget.value;
+  }
+  if ('behavior_config' in payload) {
+    const behavior = validateBehaviorConfig(payload.behavior_config);
+    if (!behavior.ok) return c.json({ error: behavior.error }, 400);
+    payload.behavior_config = behavior.value;
+  }
+  if ('lead_config' in payload) {
+    const lead = validateLeadConfig(payload.lead_config);
+    if (!lead.ok) return c.json({ error: lead.error }, 400);
+    payload.lead_config = lead.value;
+  }
 
   try {
     // Masked/absent apiKeys are reconciled against what is stored inside
     // updateBot, so a settings save can never wipe a tenant's BYOK key.
     const updated = await updateBot(c.get('db'), c.req.param('id'), payload);
     if (!updated) return c.json({ error: 'Bot not found' }, 404);
-    return c.json(redactBotSecrets(updated));
+    return c.json(redactBotSecrets(updated, origin(c)));
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
@@ -567,6 +871,14 @@ app.delete('/v1/admin/bots/:id', async (c) => {
         return [] as string[];
       })
     : [];
+
+  // The logo is not a document, so it is not in that list — and it
+  // would otherwise sit in the bucket forever with nothing naming it.
+  if (c.env.DOCS) {
+    const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+    const logoKey = bot && widgetConfigFor(bot).logo_key;
+    if (logoKey) keys.push(logoKey);
+  }
 
   try {
     const removed = await deleteBot(c.get('db'), botId);
@@ -588,6 +900,114 @@ app.delete('/v1/admin/bots/:id', async (c) => {
   }
 
   return c.body(null, 204);
+});
+
+// ================================================================
+// POST /v1/admin/bots/:id/logo
+//
+// Narrower than the document upload on purpose: three raster formats,
+// 512 KB, no SVG (see src/logo.ts for why). Unlike a document, this is
+// not a knowledge source — it gets a `logos/` prefix and is deliberately
+// not counted against the org storage cap, whose whole mechanism lives
+// on the documents table.
+// ================================================================
+app.post('/v1/admin/bots/:id/logo', async (c) => {
+  const botId = c.req.param('id');
+
+  const bucket = c.env.DOCS;
+  if (!bucket) return c.json({ error: 'File storage is not enabled on this deployment' }, 501);
+
+  // Refuse an oversized body before Hono buffers it. The slack covers
+  // multipart framing.
+  const declaredLength = Number(c.req.header('content-length') ?? 0);
+  if (declaredLength > MAX_LOGO_BYTES + 64 * 1024) {
+    return c.json({ error: `That image is too large. The limit is ${Math.floor(MAX_LOGO_BYTES / 1024)} KB.` }, 413);
+  }
+
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  let form: FormData;
+  try { form = await c.req.raw.formData(); }
+  catch { return c.json({ error: 'Expected a multipart/form-data upload with a `file` part' }, 400); }
+
+  const file = form.get('file');
+  if (!file || typeof file === 'string') return c.json({ error: '`file` is required' }, 400);
+  if (file.size === 0) return c.json({ error: 'That file is empty' }, 400);
+  if (file.size > MAX_LOGO_BYTES) {
+    return c.json({ error: `That image is ${Math.round(file.size / 1024)} KB. The limit is ${Math.floor(MAX_LOGO_BYTES / 1024)} KB.` }, 413);
+  }
+
+  const bytes = await file.arrayBuffer();
+
+  // The leading bytes decide, not the filename and not the declared
+  // content type — both are supplied by whoever is uploading.
+  const detected = detectLogoType(new Uint8Array(bytes.slice(0, LOGO_SNIFF_BYTES)));
+  if (!detected.ok) return c.json({ error: detected.error, supported: supportedLogoList() }, 415);
+
+  const key = logoKeyFor(bot.org_id, botId, detected.type.extension);
+
+  try {
+    await bucket.put(key, bytes, {
+      httpMetadata:   { contentType: detected.type.mime },
+      customMetadata: { orgId: bot.org_id, botId, kind: 'logo' },
+    });
+  } catch (err) {
+    console.error('[logo] R2 put failed:', err);
+    return c.json({ error: 'Could not store that image' }, 502);
+  }
+
+  let result: Awaited<ReturnType<typeof setBotLogoKey>>;
+  try {
+    result = await setBotLogoKey(c.get('db'), botId, key);
+  } catch (err) {
+    // Nothing references the object now, so it must not survive.
+    await bucket.delete(key).catch((e) => console.error('[logo] orphan cleanup failed:', e));
+
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[logo] widget_config write failed:', message);
+    // Deployed ahead of its migration. Say so — the generic error reads
+    // like a permissions problem and sends the reader to RLS instead.
+    if (/widget_config/.test(message)) {
+      return c.json({ error: 'Logos need database migration 009_bot_configuration.sql, which has not been applied yet.' }, 501);
+    }
+    return c.json({ error: 'Could not save that logo' }, 502);
+  }
+
+  if (!result) {
+    await bucket.delete(key).catch((e) => console.error('[logo] orphan cleanup failed:', e));
+    return c.json({ error: 'Bot not found' }, 404);
+  }
+
+  // The replaced object is garbage the moment the row stops pointing at
+  // it, and no cache depends on it — every logo gets its own key.
+  if (result.previousKey && result.previousKey !== key) {
+    c.executionCtx.waitUntil(
+      bucket.delete(result.previousKey)
+        .catch((err) => console.error('[logo] replacing the old object failed:', err)),
+    );
+  }
+
+  return c.json(redactBotSecrets(result.bot, origin(c)));
+});
+
+app.delete('/v1/admin/bots/:id/logo', async (c) => {
+  const botId = c.req.param('id');
+
+  let result: Awaited<ReturnType<typeof setBotLogoKey>>;
+  try { result = await setBotLogoKey(c.get('db'), botId, null); }
+  catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+  if (!result) return c.json({ error: 'Bot not found' }, 404);
+
+  const bucket = c.env.DOCS;
+  if (bucket && result.previousKey) {
+    c.executionCtx.waitUntil(
+      bucket.delete(result.previousKey)
+        .catch((err) => console.error('[logo] object delete failed:', err)),
+    );
+  }
+
+  return c.json(redactBotSecrets(result.bot, origin(c)));
 });
 
 app.get('/v1/admin/bots/:id/leads', async (c) => {
@@ -636,7 +1056,7 @@ app.post('/v1/admin/bots/:id/preview', async (c) => {
       system: pre.system,
       messages: [...history, { role: 'user', content: pre.userMessage }],
     });
-    const { cleanReply } = extractLead(result.text);
+    const { cleanReply } = extractLead(result.text, pre.lead.fields);
     return c.json({
       reply: cleanReply,
       usage: result.usage,
@@ -919,9 +1339,13 @@ app.get('/v1/admin/bots/:id/stats', async (c) => {
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
+// `?session_id=` narrows to one transcript, which is what the drawer on
+// the Leads screen asks for. Additive: without it the route returns the
+// bot's last 100 messages exactly as before.
 app.get('/v1/admin/bots/:id/conversations', async (c) => {
   try {
-    const convos = await getConversations(c.get('db'), c.req.param('id'));
+    const sessionId = c.req.query('session_id') || undefined;
+    const convos = await getConversations(c.get('db'), c.req.param('id'), 100, sessionId);
     return c.json({ conversations: convos });
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });

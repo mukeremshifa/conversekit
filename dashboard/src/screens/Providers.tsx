@@ -257,8 +257,8 @@ export function Header({ title, subtitle, action }: { title: string; subtitle?: 
   return (
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div>
-        <h1 className="font-display text-[22px] leading-tight">{title}</h1>
-        {subtitle && <p className="mt-1 max-w-2xl text-sm text-muted">{subtitle}</p>}
+        <h1 className="font-display text-[26px] leading-tight">{title}</h1>
+        {subtitle && <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{subtitle}</p>}
       </div>
       {action}
     </div>

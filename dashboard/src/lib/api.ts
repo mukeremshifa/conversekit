@@ -115,6 +115,41 @@ export async function uploadDocument(
   return data as Doc;
 }
 
+/**
+ * Same multipart path as uploadDocument, and the same one-retry rule.
+ * Returns the updated bot, so the caller can patch its state without a
+ * refetch — `logo_url` on it is what the settings screen renders.
+ */
+export async function uploadLogo(
+  botId: string,
+  file: File,
+  onProgress?: (fraction: number) => void,
+): Promise<Bot> {
+  const build = () => {
+    const form = new FormData();
+    form.append('file', file);
+    return form;
+  };
+
+  const path = `/v1/admin/bots/${botId}/logo`;
+  let res = await sendFile(path, build(), await freshToken(), onProgress);
+
+  if (res.status === 401) {
+    try {
+      res = await sendFile(path, build(), await forceRefresh(), onProgress);
+    } catch {
+      clearSession();
+      throw new ApiError(401, 'Session expired — please sign in again.');
+    }
+  }
+
+  const data = res.text ? JSON.parse(res.text) : null;
+  if (res.status < 200 || res.status >= 300) {
+    throw new ApiError(res.status, (data as { error?: string })?.error ?? `Upload failed (${res.status})`);
+  }
+  return data as Bot;
+}
+
 // ── Shapes returned by the Worker ────────────────────────────────
 export interface Org { id: string; name: string | null; slug: string | null; plan: string | null; role: string }
 export interface Me { userId: string; email: string | null; orgs: Org[] }
@@ -138,6 +173,65 @@ export interface RagConfig {
   min_similarity?: number;
   chunk_size?: number;
   chunk_overlap?: number;
+}
+
+export type WidgetPosition = 'bottom-right' | 'bottom-left';
+export type WidgetTheme = 'light' | 'dark' | 'auto';
+
+/** bots.widget_config. logo_key is deliberately absent: the API strips
+ *  it and sends `Bot.logo_url` instead, and posting it back is a 400. */
+export interface WidgetConfig {
+  position?: WidgetPosition;
+  theme?: WidgetTheme;
+  greeting?: string;
+  greeting_delay_ms?: number;
+  show_typing?: boolean;
+  show_citations?: boolean;
+}
+
+export interface BehaviorConfig {
+  max_messages?: number;
+  fallback_message?: string;
+  escalate_after_misses?: number;
+}
+
+export type LeadTrigger = 'intent' | 'always' | 'after_messages';
+export type LeadFieldMode = 'off' | 'optional' | 'required';
+export type WebhookFormat = 'json' | 'slack' | 'teams';
+
+/**
+ * bots.lead_config. `webhook_url` is deliberately absent for the same
+ * reason logo_key is: the API strips it before this ever reaches the
+ * browser, because a Slack incoming-webhook URL is a credential.
+ *
+ * What comes back instead is `has_webhook` + `webhook_host`, which is
+ * enough to say "posting to hooks.slack.com" and offer a Remove button.
+ * Sending a new URL sets one; sending `webhook_url: null` clears it;
+ * sending neither leaves whatever is stored alone.
+ */
+export interface LeadConfig {
+  enabled?: boolean;
+  trigger?: LeadTrigger;
+  trigger_after_messages?: number;
+  fields?: { phone?: LeadFieldMode; company?: LeadFieldMode; inquiry?: LeadFieldMode };
+  consent_text?: string;
+  success_message?: string;
+  booking_url?: string;
+  tag?: string;
+  webhook_format?: WebhookFormat;
+  /**
+   * WRITE-ONLY — never present on a bot read back from the API. A
+   * string sets it, `null` clears it, and omitting it keeps whatever
+   * is stored.
+   */
+  webhook_url?: string | null;
+  /** Not a secret the way the webhook URL is, so this round-trips
+   *  normally. Sending needs Resend configured on the deployment. */
+  email_recipients?: string[];
+  /** Read-only, derived. */
+  has_webhook?: boolean;
+  /** Read-only, derived. Null when no webhook is set. */
+  webhook_host?: string | null;
 }
 
 export interface Bot {
@@ -165,6 +259,12 @@ export interface Bot {
   provider_config: VendorConfig | null;
   embedding_config: VendorConfig | null;
   rag_config: RagConfig | null;
+  widget_config: WidgetConfig | null;
+  behavior_config: BehaviorConfig | null;
+  lead_config: LeadConfig | null;
+  /** Served by the Worker from R2; null when no logo is set. Read-only —
+   *  it is derived from a key the dashboard never sees. */
+  logo_url: string | null;
 }
 
 export interface Vendor {
@@ -210,6 +310,11 @@ export interface PreviewReply {
 export interface Lead {
   id: string; name: string; email: string; phone: string | null;
   inquiry: string | null; created_at: string; session_id: string;
+  // supabase/010. Optional: rows captured before the migration have
+  // none of them, and a bot with no lead_config never sets them.
+  tag?: string | null;
+  company?: string | null;
+  consent_given?: boolean | null;
 }
 export interface Message {
   id: string; session_id: string; role: 'user' | 'assistant';
@@ -257,8 +362,13 @@ export const endpoints = {
   createBot:     (b: Record<string, unknown>) => api.post<Bot>('/v1/admin/bots', b),
   updateBot:     (id: string, b: Record<string, unknown>) => api.put<Bot>(`/v1/admin/bots/${id}`, b),
   deleteBot:     (id: string) => api.del<null>(`/v1/admin/bots/${id}`),
+  deleteLogo:    (id: string) => api.del<Bot>(`/v1/admin/bots/${id}/logo`),
   leads:         (id: string) => api.get<{ leads: Lead[] }>(`/v1/admin/bots/${id}/leads`),
-  conversations: (id: string) => api.get<{ conversations: Message[] }>(`/v1/admin/bots/${id}/conversations`),
+  conversations: (id: string, sessionId?: string) =>
+                   api.get<{ conversations: Message[] }>(
+                     `/v1/admin/bots/${id}/conversations`
+                     + (sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''),
+                   ),
   documents:     (id: string) => api.get<{ documents: Doc[] }>(`/v1/admin/bots/${id}/documents`),
   addDocument:   (id: string, b: Record<string, unknown>) => api.post<Doc>(`/v1/admin/bots/${id}/documents`, b),
   reindex:       (docId: string) => api.post<Doc>(`/v1/admin/documents/${docId}/reindex`),

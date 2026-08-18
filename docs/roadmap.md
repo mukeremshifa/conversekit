@@ -232,6 +232,10 @@ support conversation is guesswork.
 - Streaming cursor, stop-generation button
 - Bundle-size budget: it loads on customers' sites, so keep it under ~15KB gzipped
 
+**Ready to build:** see [bot-configuration.md](bot-configuration.md) — a
+self-contained brief for the Bot Configuration screen and the widget settings
+behind it (position, logo, greeting, theme, citations, escalation).
+
 ---
 
 ## Phase 5 — Operations

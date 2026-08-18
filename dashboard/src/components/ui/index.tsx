@@ -94,7 +94,7 @@ export function Field({
   children: React.ReactNode; className?: string;
 }) {
   return (
-    <div className={cn('space-y-1.5', className)}>
+    <div className={cn('space-y-2', className)}>
       <Label htmlFor={htmlFor}>
         {label}
         {hint && <span className="ml-2 font-normal text-muted text-xs">{hint}</span>}
@@ -109,16 +109,16 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
   return <div className={cn('rounded-xl border border-border bg-surface', className)} {...props} />;
 }
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('flex items-start justify-between gap-4 px-5 pt-5 pb-3', className)} {...props} />;
+  return <div className={cn('flex items-start justify-between gap-4 px-6 pt-6 pb-4', className)} {...props} />;
 }
 export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
-  return <h2 className={cn('text-base font-semibold tracking-tight', className)} {...props} />;
+  return <h2 className={cn('text-lg font-semibold tracking-tight', className)} {...props} />;
 }
 export function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParagraphElement>) {
-  return <p className={cn('text-xs text-muted mt-1 leading-relaxed', className)} {...props} />;
+  return <p className={cn('text-sm text-muted mt-1.5 leading-relaxed', className)} {...props} />;
 }
 export function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('px-5 pb-5 space-y-4', className)} {...props} />;
+  return <div className={cn('px-6 pb-6 space-y-5', className)} {...props} />;
 }
 
 // ── Badge ───────────────────────────────────────────────────────

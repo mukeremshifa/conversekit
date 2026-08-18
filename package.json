@@ -1,7 +1,7 @@
 {
   "name": "conversekit",
   "version": "1.0.0",
-  "description": "Multi-tenant conversational AI platform \u2013 Cloudflare Workers + Hono + Supabase + pluggable AI vendors",
+  "description": "Multi-tenant conversational AI platform – Cloudflare Workers + Hono + Supabase + pluggable AI vendors",
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
@@ -19,9 +19,12 @@
     "test:widget": "node scripts/test-widget-markdown.mjs",
     "test:session": "node scripts/test-session.mjs",
     "test:session-units": "node scripts/test-session-units.mjs",
-    "test": "npm run test:widget && npm run test:session-units && npm run test:rag && npm run test:stats",
+    "test": "npm run test:widget && npm run test:widget-theme && npm run test:session-units && npm run test:rag && npm run test:stats && npm run test:config && npm run test:leads",
     "predeploy:pages": "node scripts/check-deploy.mjs",
-    "test:stats": "node scripts/test-stats-units.mjs"
+    "test:stats": "node scripts/test-stats-units.mjs",
+    "test:config": "node scripts/test-config-units.mjs",
+    "test:widget-theme": "node scripts/test-widget-theme.mjs",
+    "test:leads": "node scripts/test-lead-capture.mjs"
   },
   "dependencies": {
     "hono": "^4.13.1",

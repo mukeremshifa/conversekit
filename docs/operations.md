@@ -78,6 +78,20 @@ wrangler secret put SUPABASE_SERVICE_ROLE_KEY  # secret key
 wrangler secret put GEMINI_API_KEY
 ```
 
+**Optional — lead notification emails.** Both are needed together; with either
+missing, the email half of lead notifications is simply off and webhooks are
+unaffected. Recipients configured in the dashboard are stored either way.
+
+```bash
+wrangler secret put RESEND_API_KEY
+wrangler secret put LEAD_EMAIL_FROM   # e.g. "ConverseKit <leads@yourdomain.com>"
+```
+
+> `LEAD_EMAIL_FROM` **must be on a domain verified with Resend.** An unverified
+> one is rejected at send time with a 403, not at deploy time, so the first sign
+> is a captured lead that nobody was told about. Verify the domain first, then
+> capture one lead and check the Worker logs before relying on it.
+
 > **Both Supabase keys are load-bearing, in different places.** The chat path
 > uses the service key; the admin path sends the publishable key as `apikey`
 > alongside the user's JWT. Rotating only one leaves half the API broken —

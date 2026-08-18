@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { MessageSquareText, RefreshCw } from 'lucide-react';
 import { endpoints, type Bot, type Message } from '@/lib/api';
+import { Transcript, groupBySession } from '@/components/Transcript';
 import { formatDate } from '@/lib/utils';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
@@ -24,17 +25,7 @@ export function Conversations({ bot }: { bot: Bot }) {
 
   useEffect(() => { void load(); }, [load]);
 
-  // The API returns newest-first; a transcript only reads correctly
-  // oldest-first within each session.
-  const sessions = useMemo(() => {
-    const grouped = new Map<string, Message[]>();
-    for (const m of [...(messages ?? [])].reverse()) {
-      const list = grouped.get(m.session_id) ?? [];
-      list.push(m);
-      grouped.set(m.session_id, list);
-    }
-    return [...grouped.entries()].reverse();
-  }, [messages]);
+  const sessions = useMemo(() => groupBySession(messages ?? []), [messages]);
 
   return (
     <>
@@ -67,21 +58,7 @@ export function Conversations({ bot }: { bot: Bot }) {
                     <span className="h-px flex-1 bg-border" />
                     <span className="text-xs text-muted">{formatDate(msgs[0]?.created_at)}</span>
                   </div>
-                  <div className="space-y-2">
-                    {msgs.map((m) => (
-                      <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : 'flex justify-start'}>
-                        <div
-                          className={
-                            m.role === 'user'
-                              ? 'max-w-[80%] rounded-2xl rounded-br-sm bg-fg/8 px-3.5 py-2 text-[13px] leading-relaxed text-fg'
-                              : 'max-w-[80%] rounded-2xl rounded-bl-sm border border-border bg-bg px-3.5 py-2 text-[13px] leading-relaxed'
-                          }
-                        >
-                          <p className="whitespace-pre-wrap break-words">{m.content}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <Transcript messages={msgs} />
                 </div>
               ))}
             </div>

@@ -1,5 +1,5 @@
 /*!
- * ConverseKit Chat Widget v0.8.0
+ * ConverseKit Chat Widget v0.9.0
  * Drop-in AI chatbot for any website.
  * Usage: <script src="widget.js" data-bot-id="YOUR_BOT_ID" defer></script>
  *
@@ -15,7 +15,7 @@
   'use strict';
 
   var API_BASE = 'https://conversekit.mukeremshifa.workers.dev';
-  var WIDGET_VERSION = '0.8.0';
+  var WIDGET_VERSION = '0.9.0';
 
   /* Two copies of the tag would mount two panels and leave
      window.ConverseKit pointing at whichever booted last. */
@@ -56,7 +56,24 @@
   }
 
   // ── State ─────────────────────────────────────────────────────
-  var config   = { name: 'Assistant', contact: null, primaryColor: '#EEBA2B', suggestions: null };
+  /* Defaults live HERE, not in the Worker. /health sends only the keys
+     a tenant actually set, so this object is the single description of
+     what an unconfigured bot looks like — and a widget served from a
+     tenant's own copy keeps behaving as it did when they copied it,
+     whatever fields the API learns later. */
+  var config = {
+    name: 'Assistant',
+    contact: null,
+    primaryColor: '#EEBA2B',
+    suggestions: null,
+    position: 'bottom-right',
+    theme: 'light',
+    logoUrl: null,
+    greeting: null,          // null → the built-in line, which needs config.name
+    greetingDelayMs: 0,
+    showTyping: true,
+    showCitations: false
+  };
   var isOpen   = false;
   var isTyping = false;
 
@@ -131,24 +148,81 @@
     return ratio(l, luminance(hexToRgb(INK))) >= ratio(l, 1) ? INK : '#ffffff';
   }
 
-  /** Same hue and saturation, walked darker until it clears 4.5:1 on
-      the white panel. Returns the colour itself when it already does. */
-  function inkVariant(hex) {
+  /* Relative luminance of each theme's panel. --ck-surface is #FFFFFF
+     in light and #141417 in dark; these are those two values, and they
+     are what inkVariant searches against. */
+  var SURFACE_LUM = { light: 1, dark: luminance([0x14, 0x14, 0x17]) };
+
+  /** Same hue and saturation, walked AWAY from the surface until it
+      clears 4.5:1 against it. Returns the colour itself when it already
+      does.
+
+      The surface argument is not decoration. This function used to walk
+      only downward, because the panel was always white — run that
+      search against a dark panel and it happily returns near-black text
+      on a near-black background, which is the one way dark mode here is
+      more than swapping a palette. */
+  function inkVariant(hex, surfaceLum) {
+    var away = surfaceLum > 0.5 ? '#0A0A0C' : '#FFFFFF';
     var rgb = hexToRgb(hex);
-    if (!rgb) return INK;
-    if (ratio(luminance(rgb), 1) >= 4.5) return hex;
+    if (!rgb) return away;
+    if (ratio(luminance(rgb), surfaceLum) >= 4.5) return hex;
+
     var hsl = rgbToHsl(rgb);
-    for (var l = hsl[2]; l > 0.04; l -= 0.01) {
+    var darker = surfaceLum > 0.5;
+    for (var i = 1; i <= 100; i++) {
+      var l = darker ? hsl[2] - i * 0.01 : hsl[2] + i * 0.01;
+      if (l <= 0.03 || l >= 0.99) break;
       var candidate = hslToRgb(hsl[0], hsl[1], l);
-      if (ratio(luminance(candidate), 1) >= 4.5) return toHex(candidate);
+      if (ratio(luminance(candidate), surfaceLum) >= 4.5) return toHex(candidate);
     }
-    return INK;
+    /* A fully saturated hue can run out of room before it clears 4.5:1
+       — pure yellow on white never does. Fall back to the neutral that
+       does rather than returning something unreadable. */
+    return away;
   }
 
   function applyColor(root) {
     root.style.setProperty('--ck-color', config.primaryColor);
     root.style.setProperty('--ck-on-color', onColor(config.primaryColor));
-    root.style.setProperty('--ck-color-ink', inkVariant(config.primaryColor));
+    root.style.setProperty('--ck-color-ink', inkVariant(config.primaryColor, SURFACE_LUM[resolvedTheme()]));
+  }
+
+  // ── Theme ─────────────────────────────────────────────────────
+  /* Three states, matching the dashboard's: an explicit light or dark,
+     and "auto", which follows the visitor's OS and keeps following it
+     if that changes while the panel is open.
+
+     Resolved in JS rather than by a bare prefers-color-scheme media
+     query, because a bot set to "light" must stay light for a visitor
+     whose OS is dark — a media query alone cannot express that. */
+  function prefersDark() {
+    try { return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches); }
+    catch (e) { return false; }
+  }
+
+  function resolvedTheme() {
+    if (config.theme === 'dark') return 'dark';
+    if (config.theme === 'auto') return prefersDark() ? 'dark' : 'light';
+    return 'light';
+  }
+
+  function applyTheme(root) {
+    if (resolvedTheme() === 'dark') root.classList.add('ck-dark');
+    else root.classList.remove('ck-dark');
+    /* --ck-color-ink is contrast-derived, so it has to be recomputed
+       against the new surface, not just re-declared. */
+    applyColor(root);
+  }
+
+  function watchSystemTheme(root) {
+    if (!window.matchMedia) return;
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    var onChange = function () { if (config.theme === 'auto') applyTheme(root); };
+    /* addListener is the Safari < 14 spelling; it is deprecated, not
+       absent, and this widget still runs on old iOS. */
+    if (mq.addEventListener) mq.addEventListener('change', onChange);
+    else if (mq.addListener) mq.addListener(onChange);
   }
 
   // ── Styles ────────────────────────────────────────────────────
@@ -158,7 +232,12 @@
        font never delays first paint, and a full system stack behind it. */
     '@font-face{font-family:"ck-sans";src:url("' + ASSET_BASE + '/fonts/instrument-sans-latin.woff2") format("woff2");font-weight:400 700;font-style:normal;font-display:swap;}',
 
-    '#aicb-root{--ck-ink:#0A0A0C;--ck-muted:#5B5B66;--ck-faint:#6E6E78;--ck-line:#E8E8EC;--ck-surface:#FFFFFF;--ck-sunk:#FAFAFA;--ck-chip:#F2F2F4;}',
+    '#aicb-root{--ck-ink:#0A0A0C;--ck-muted:#5B5B66;--ck-faint:#6E6E78;--ck-line:#E8E8EC;--ck-surface:#FFFFFF;--ck-sunk:#FAFAFA;--ck-chip:#F2F2F4;--ck-shadow:rgba(10,10,12,.28);}',
+    /* Dark. Applied by class, never by a bare media query: a bot set to
+       "light" has to stay light for a visitor whose OS is dark, and only
+       JS knows which of the three settings is in play. Values mirror the
+       dashboard's dark tokens so the two products look related. */
+    '#aicb-root.ck-dark{--ck-ink:#F7F7F8;--ck-muted:#A1A1AC;--ck-faint:#71717B;--ck-line:#26262C;--ck-surface:#141417;--ck-sunk:#08080A;--ck-chip:#1E1E23;--ck-shadow:rgba(0,0,0,.55);}',
     '#aicb-root *,#aicb-root *::before,#aicb-root *::after{box-sizing:border-box;margin:0;padding:0;}',
     '#aicb-root{position:fixed;bottom:24px;right:24px;z-index:2147483647;font-family:"ck-sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.5;font-weight:460;-webkit-font-smoothing:antialiased;}',
 
@@ -174,11 +253,11 @@
     '#aicb-root.is-open #aicb-bubble-close{opacity:1;transform:scale(1) rotate(0);}',
 
     /* Unread badge */
-    '#aicb-badge{position:absolute;top:-1px;right:-1px;min-width:19px;height:19px;border-radius:10px;background:#B42318;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px;opacity:0;transform:scale(0);transition:opacity .2s,transform .2s;border:2px solid #fff;}',
+    '#aicb-badge{position:absolute;top:-1px;right:-1px;min-width:19px;height:19px;border-radius:10px;background:#B42318;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 5px;opacity:0;transform:scale(0);transition:opacity .2s,transform .2s;border:2px solid var(--ck-surface);}',
     '#aicb-badge.visible{opacity:1;transform:scale(1);}',
 
     /* Panel */
-    '#aicb-panel{position:absolute;bottom:70px;right:0;width:380px;max-width:calc(100vw - 32px);background:var(--ck-surface);border:1px solid var(--ck-line);border-radius:16px;box-shadow:0 24px 60px -18px rgba(10,10,12,.28),0 2px 8px -2px rgba(10,10,12,.10);display:flex;flex-direction:column;overflow:hidden;transform-origin:bottom right;transition:opacity .22s cubic-bezier(.2,.7,.3,1),transform .22s cubic-bezier(.2,.7,.3,1);opacity:0;transform:scale(.96) translateY(10px);pointer-events:none;}',
+    '#aicb-panel{position:absolute;bottom:70px;right:0;width:380px;max-width:calc(100vw - 32px);background:var(--ck-surface);border:1px solid var(--ck-line);border-radius:16px;box-shadow:0 24px 60px -18px var(--ck-shadow),0 2px 8px -2px rgba(10,10,12,.10);display:flex;flex-direction:column;overflow:hidden;transform-origin:bottom right;transition:opacity .22s cubic-bezier(.2,.7,.3,1),transform .22s cubic-bezier(.2,.7,.3,1);opacity:0;transform:scale(.96) translateY(10px);pointer-events:none;}',
     '#aicb-panel.open{opacity:1;transform:none;pointer-events:all;}',
 
     /* Header — neutral, so the tenant colour reads as an accent rather than
@@ -187,6 +266,12 @@
     '#aicb-avatar{width:34px;height:34px;border-radius:50%;background:var(--ck-color);display:flex;align-items:center;justify-content:center;flex-shrink:0;}',
     '#aicb-avatar svg{width:18px;height:18px;fill:none;stroke:var(--ck-on-color);stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}',
     '#aicb-avatar svg .ck-eye{fill:var(--ck-on-color);stroke:none;}',
+    /* Tenant logo, in the header avatar and on the launcher. `cover` on
+       a square box: a wordmark uploaded as a wide rectangle crops to its
+       middle, which reads better than the letterboxing `contain` gives
+       inside a circle. */
+    '#aicb-avatar img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;}',
+    '#aicb-bubble-icon img{width:34px;height:34px;border-radius:50%;object-fit:cover;display:block;}',
     '#aicb-header-text{flex:1;min-width:0;}',
     '#aicb-bot-name{font-size:14.5px;font-weight:640;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.015em;line-height:1.3;}',
     '#aicb-status{font-size:11.5px;color:var(--ck-muted);display:flex;align-items:center;gap:5px;margin-top:1px;}',
@@ -220,6 +305,9 @@
     '#aicb-root .ck-msg.user code{background:rgba(10,10,12,.12);}',
     '#aicb-root .ck-msg a{color:inherit;text-decoration:underline;text-underline-offset:2px;}',
     '#aicb-root .ck-msg.bot a{color:var(--ck-color-ink);}',
+    /* Citation line. Quiet by design: it is provenance, not content, and
+       it must not compete with the answer it sits under. */
+    '#aicb-root .ck-cite{margin-top:7px;padding-top:6px;border-top:1px solid var(--ck-line);font-size:11px;line-height:1.35;color:var(--ck-faint);overflow-wrap:anywhere;}',
 
     /* Typing */
     '#aicb-typing{display:none;align-self:flex-start;background:var(--ck-surface);border:1px solid var(--ck-line);border-radius:14px;border-bottom-left-radius:5px;padding:12px 14px;gap:4px;align-items:center;}',
@@ -253,9 +341,19 @@
     '#aicb-powered a{color:var(--ck-muted);text-decoration:none;font-weight:560;transition:color .15s;}',
     '#aicb-powered a:hover{color:var(--ck-ink);}',
 
+    /* Bottom-left. One class on the root, because moving the launcher
+       also moves the panel it opens, the corner that panel scales from,
+       and the badge that sits on it — four rules that have to agree, and
+       four inline style patches that would not. */
+    '#aicb-root.ck-left{right:auto;left:24px;}',
+    '#aicb-root.ck-left #aicb-panel{right:auto;left:0;transform-origin:bottom left;}',
+    '#aicb-root.ck-left #aicb-badge{right:auto;left:-1px;}',
+
     '@media(max-width:480px){',
     '#aicb-root{bottom:16px;right:16px;}',
     '#aicb-panel{width:calc(100vw - 32px);right:-16px;border-radius:14px;}',
+    '#aicb-root.ck-left{left:16px;right:auto;}',
+    '#aicb-root.ck-left #aicb-panel{left:-16px;right:auto;}',
     '#aicb-messages{min-height:260px;max-height:calc(100svh - 260px);}',
     '}',
     '@media(prefers-reduced-motion:reduce){',
@@ -411,7 +509,25 @@
 
     var root = el('div', { id: 'aicb-root' }, [style, panel, bubble]);
 
-    return { root, panel, bubble, badge, messages, typing, chips, input, sendBtn, botName, closeBtn };
+    return { root, panel, bubble, badge, messages, typing, chips, input, sendBtn, botName, closeBtn, avatar, bubbleIcon };
+  }
+
+  /* Swap the built-in mark for the tenant's logo.
+     Applied after /health answers, so the SVG is what shows while that
+     request is in flight — and stays if it fails. `onerror` restores it
+     too: a logo that 404s or is blocked by a corporate proxy must leave
+     a bot looking generic, never looking broken. */
+  function applyLogo(dom) {
+    if (!config.logoUrl) return;
+
+    [[dom.avatar, ICON_BOT], [dom.bubbleIcon, ICON_CHAT]].forEach(function (pair) {
+      var host = pair[0], fallback = pair[1];
+      if (!host) return;
+      var img = el('img', { src: config.logoUrl, alt: '', 'aria-hidden': 'true' });
+      img.addEventListener('error', function () { host.innerHTML = fallback; });
+      host.innerHTML = '';
+      host.appendChild(img);
+    });
   }
 
   // ── Messages ──────────────────────────────────────────────────
@@ -427,6 +543,22 @@
     else div.textContent = text;
     dom.messages.insertBefore(div, dom.typing);
     dom.messages.scrollTop = dom.messages.scrollHeight;
+    return div;
+  }
+
+  /* "Source: Pricing 2026" under a reply that used retrieval.
+
+     textContent, never innerHTML, and deliberately not routed through
+     renderMarkdown either. A document title is whatever a tenant typed
+     — or, for an uploaded file, whatever the FILENAME was — so it is
+     untrusted text that happens to arrive over a trusted channel. The
+     one job here is to display it verbatim. */
+  function appendCitations(node, titles) {
+    if (!node || !titles || !titles.length) return;
+
+    var row = el('div', { className: 'ck-cite' });
+    row.textContent = (titles.length === 1 ? 'Source: ' : 'Sources: ') + titles.slice(0, 3).join(' · ');
+    node.appendChild(row);
   }
 
   /* Empty bot bubble that text is streamed into. Returns a handle so
@@ -447,6 +579,12 @@
         if (stick) dom.messages.scrollTop = dom.messages.scrollHeight;
       },
       isEmpty: function () { return raw === ''; },
+      /* Appended after the last delta, so the next re-render would wipe
+         it — which is fine, because `done` is the last thing to arrive. */
+      cite: function (titles) {
+        appendCitations(div, titles);
+        if (nearBottom(dom.messages)) dom.messages.scrollTop = dom.messages.scrollHeight;
+      },
       remove:  function () {
         if (div.parentNode) dom.messages.removeChild(div);
       },
@@ -489,6 +627,27 @@
         if (d.contact)      config.contact      = d.contact;
         if (d.primaryColor) config.primaryColor = d.primaryColor;
         if (Array.isArray(d.suggestions)) config.suggestions = d.suggestions;
+
+        /* Bot Configuration. Every field is checked for presence rather
+           than merged wholesale: /health sends only what a tenant set,
+           and an absent key has to mean "keep the default above" — not
+           "set it to undefined". A widget older than a field ignores it,
+           which is what lets a tenant's self-hosted copy keep working. */
+        var w = d.widget;
+        if (w && typeof w === 'object') {
+          if (w.position === 'bottom-left' || w.position === 'bottom-right') config.position = w.position;
+          if (w.theme === 'light' || w.theme === 'dark' || w.theme === 'auto') config.theme = w.theme;
+          if (typeof w.logoUrl === 'string')  config.logoUrl  = w.logoUrl;
+          if (typeof w.greeting === 'string') config.greeting = w.greeting;
+          if (typeof w.greetingDelayMs === 'number' && w.greetingDelayMs > 0) {
+            /* Clamped here as well as server-side: this value becomes a
+               setTimeout, and a widget must not be able to be configured
+               into never greeting anyone. */
+            config.greetingDelayMs = Math.min(w.greetingDelayMs, 10000);
+          }
+          if (w.showTyping === false)   config.showTyping    = false;
+          if (w.showCitations === true) config.showCitations = true;
+        }
         cb(null);
       })
       .catch(cb);
@@ -508,7 +667,11 @@
       body: payload(msg),
     })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (d) { rememberSession(d.sessionId); onReply(d.reply || ''); onDone(); })
+      .then(function (d) {
+        rememberSession(d.sessionId);
+        onReply(d.reply || '', d.citations);
+        onDone();
+      })
       .catch(onError);
   }
 
@@ -521,7 +684,7 @@
    * any text had already been shown: if not, the caller can silently
    * retry on the buffered endpoint.
    */
-  function callChatStream(msg, onDelta, onDone, onError) {
+  function callChatStream(msg, onDelta, onCitations, onDone, onError) {
     var started = false;
 
     fetch(API_BASE + '/v1/chat/stream', {
@@ -552,6 +715,9 @@
             onDelta(parsed.text);
           } else if (evName === 'done') {
             rememberSession(parsed.sessionId);
+            /* Known before the first token, but only meaningful once
+               there is a reply to attach them to. */
+            if (parsed.citations) onCitations(parsed.citations);
           } else if (evName === 'error') {
             throw new Error(parsed.error || 'stream error');
           }
@@ -591,18 +757,54 @@
   }
 
   // ── Init ──────────────────────────────────────────────────────
+  /** The tenant's line, or the one every bot opened with before there
+      was a setting for it. */
+  function greetingText() {
+    return config.greeting ||
+      'Hi there! 👋 I\'m ' + config.name + ', your virtual assistant. How can I help you today?';
+  }
+
+  function applyPosition(root) {
+    if (config.position === 'bottom-left') root.classList.add('ck-left');
+    else root.classList.remove('ck-left');
+  }
+
   function init() {
     var dom = buildDOM();
     document.body.appendChild(dom.root);
-    applyColor(dom.root);
+    applyTheme(dom.root);
+    applyPosition(dom.root);
+
+    watchSystemTheme(dom.root);
+
+    /* Set the moment the visitor sends anything, and read by the
+       delayed greeting to decide whether it is still wanted. */
+    var hasSpoken = false;
 
     fetchConfig(function (err) {
       if (!err) {
-        applyColor(dom.root);
+        applyTheme(dom.root);          // recomputes --ck-color-ink for the surface
+        applyPosition(dom.root);
+        applyLogo(dom);
         dom.botName.textContent = config.name;
       }
-      appendMessage(dom, 'Hi there! 👋 I\'m ' + config.name + ', your virtual assistant. How can I help you today?', 'bot');
-      renderChips(dom, doSend);
+
+      /* The greeting waits, the chips wait with it. Showing suggestions
+         before the message they answer reads as a menu appearing out of
+         nowhere, and a visitor who clicks one during the gap would send
+         a question the bot has not said hello to yet.
+
+         A visitor can also get in first — the delay goes up to ten
+         seconds, which is long enough to open the panel and type. Then
+         the greeting is simply dropped: arriving underneath a question
+         it does not answer is worse than not arriving. */
+      var greet = function () {
+        if (hasSpoken) return;
+        appendMessage(dom, greetingText(), 'bot');
+        renderChips(dom, doSend);
+      };
+      if (config.greetingDelayMs > 0) setTimeout(greet, config.greetingDelayMs);
+      else greet();
     });
 
     function openPanel() {
@@ -657,13 +859,17 @@
 
     function doSend(text) {
       if (!text || isTyping) return;
+      hasSpoken = true;
       dom.chips.style.display = 'none';
       dom.input.value = '';
       dom.input.style.height = 'auto';
       dom.sendBtn.disabled = true;
       appendMessage(dom, text, 'user');
       isTyping = true;
-      dom.typing.classList.add('visible');
+      /* Only the dots are optional. isTyping still guards re-entry, and
+         every remove('visible') below stays unconditional — turning the
+         setting off mid-conversation must not strand a visible one. */
+      if (config.showTyping) dom.typing.classList.add('visible');
       dom.messages.scrollTop = dom.messages.scrollHeight;
 
       var bubble = null;
@@ -692,11 +898,17 @@
         settle();
       }
 
+      function onCitations(titles) {
+        if (!config.showCitations || !bubble) return;
+        bubble.cite(titles);
+      }
+
       function bufferedSend() {
         callChat(text,
-          function (reply) {
+          function (reply, titles) {
             dom.typing.classList.remove('visible');
-            appendMessage(dom, reply, 'bot');
+            var node = appendMessage(dom, reply, 'bot');
+            if (config.showCitations && titles && titles.length) appendCitations(node, titles);
           },
           settle,
           showError
@@ -705,7 +917,7 @@
 
       if (!canStream) { bufferedSend(); return; }
 
-      callChatStream(text, onDelta, settle, function (err, started) {
+      callChatStream(text, onDelta, onCitations, settle, function (err, started) {
         // Nothing rendered yet — the visitor never saw the failure, so
         // retry quietly on the buffered endpoint.
         if (!started) { bufferedSend(); return; }
