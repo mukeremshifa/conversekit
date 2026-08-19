@@ -21,7 +21,10 @@ import { WorkersAiChatProvider, WorkersAiEmbeddingProvider, type AiBinding } fro
 
 export * from './types';
 export * from './errors';
-export { VENDORS, getPreset, embeddingCapableVendors } from './catalog';
+export {
+  VENDORS, getPreset, embeddingCapableVendors,
+  similarityFloorFor, resolveSimilarityFloor, DEFAULT_SIMILARITY_FLOOR,
+} from './catalog';
 export type { VendorPreset, AdapterKind, CostTier } from './catalog';
 
 /** Used when neither the tenant nor the env expresses a preference. */

@@ -55,7 +55,7 @@ import {
   ORG_STORAGE_CAP_BYTES,
   SNIFF_BYTES,
 } from './rag/files';
-import { retrieve, renderContext, type RetrievedChunk } from './rag/retrieve';
+import { retrieve, renderContext, selectContext, type RetrievedChunk } from './rag/retrieve';
 import { parseFaqText } from './rag/chunk';
 import {
   validateWidgetConfig, validateBehaviorConfig, validateLeadConfig, validateFaqItem,
@@ -397,24 +397,36 @@ async function preflight(
   // bot could not answer — everything in behavior_config is built on it.
   let context = '';
   let hasCorpus = false;
-  let chunks: RetrievedChunk[] = [];
+  // The chunks that were actually RENDERED, in the order they were
+  // numbered — not everything retrieval returned. The context budget
+  // can drop a low-ranked chunk, and a citation list built from the
+  // full result set would then name a document the model never saw.
+  // Everything downstream reads this one. See docs/rag-hardening.md B6.
+  let rendered: RetrievedChunk[] = [];
   try {
     hasCorpus = await hasChunks(db, botId);
     if (hasCorpus) {
       // `retrieve` already tried the lexical fallback by the time it
-      // returns, so `chunks` is the final answer for this turn. That
+      // returns, so its outcome is the final answer for this turn. That
       // ordering is load-bearing: computing the miss from the vector
       // search alone would count every lexical save as a miss, and the
       // escalation below would then fire on questions the bot has just
       // answered correctly.
       const outcome = await retrieve(c.env, db, bot, userMessage);
-      chunks = outcome.chunks;
-      context = renderContext(chunks, ragConfigFor(bot).context_chars);
+      const budget = ragConfigFor(bot).context_chars;
+      rendered = selectContext(outcome.chunks, budget);
+      // Already selected, so this re-budgets nothing.
+      context = renderContext(rendered, budget);
     }
   } catch (err) {
     console.error('[rag] skipped (non-fatal):', err);
   }
-  const missedRetrieval = hasCorpus && chunks.length === 0;
+  // "The model was shown nothing from this business's own material" —
+  // which is what the fallback message and the escalation below both
+  // mean by a miss, and which is now reachable: before B1 the floor sat
+  // below the embedder's noise floor and never rejected anything, so
+  // this was permanently false and all three features were dead.
+  const missedRetrieval = hasCorpus && rendered.length === 0;
 
   const behavior = behaviorConfigFor(bot);
   const widget = widgetConfigFor(bot);
@@ -497,12 +509,20 @@ async function preflight(
 
   // ── Citations ──────────────────────────────────────────────────
   // Off by default. Titles are looked up rather than carried by
-  // match_chunks, which returns document_id only.
+  // match_chunks, which returns document_id only — folding them into
+  // the RPC would drop this round trip, but that means changing the
+  // signature of a versioned SQL function, so it waits for the next
+  // migration rather than riding along here.
   let citations: string[] = [];
-  if (widget.show_citations && chunks.length) {
+  if (widget.show_citations && rendered.length) {
     try {
-      const titles = await getDocumentTitles(db, [...new Set(chunks.map((ch) => ch.document_id))]);
-      citations = [...new Set([...titles.values()].filter(Boolean))];
+      const titles = await getDocumentTitles(db, [...new Set(rendered.map((ch) => ch.document_id))]);
+      // ONE ENTRY PER RENDERED EXCERPT, in marker order: citations[n-1]
+      // is what the model's "[n]" refers to. Duplicates are kept on
+      // purpose — three chunks from one document are three markers
+      // pointing at that document, and collapsing them would renumber
+      // the list out of step with the prompt the model was given.
+      citations = rendered.map((ch) => titles.get(ch.document_id) ?? '');
     } catch (err) { console.error('[citations] title lookup failed (non-fatal):', err); }
   }
 
@@ -1655,11 +1675,23 @@ app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
       error: outcome.error ?? null,
       settings: {
         top_k: cfg.top_k,
-        min_similarity: cfg.min_similarity,
+        // The floor THAT RAN, from the outcome — not a second guess at
+        // it. It depends on the resolved embedding model, so a config
+        // rebuilt here without one would report a different number from
+        // the one the query was filtered by, which is exactly the kind
+        // of plausible-looking wrong reading this inspector exists to
+        // prevent. Falls back to the model-less config only when
+        // retrieval never got as far as resolving an embedder.
+        min_similarity: outcome.effective?.min_similarity ?? cfg.min_similarity,
         priority_boost: cfg.priority_boost,
         lexical_fallback: cfg.lexical_fallback,
         context_chars: cfg.context_chars,
       },
+      // Which embedding model ran, and where its floor came from:
+      // 'tenant' an explicit override, 'model' a value calibrated for
+      // that model, 'default' the unmeasured fallback. A tenant
+      // debugging "why did it find nothing" needs all three.
+      effective: outcome.effective ?? null,
       chunks: outcome.chunks.map((ch) => ({
         id: ch.id,
         document_id: ch.document_id,
@@ -1677,6 +1709,10 @@ app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
       })),
       // What the model would actually be handed, budget applied.
       context: renderContext(outcome.chunks, cfg.context_chars),
+      // How many of the chunks above survive that budget — i.e. how
+      // many markers the model actually sees, and therefore how many
+      // citations the widget would show.
+      rendered_count: selectContext(outcome.chunks, cfg.context_chars).length,
     });
   } catch (err) {
     console.error(err);

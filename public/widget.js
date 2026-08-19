@@ -553,11 +553,43 @@
      — or, for an uploaded file, whatever the FILENAME was — so it is
      untrusted text that happens to arrive over a trusted channel. The
      one job here is to display it verbatim. */
+  /* POSITIONAL, not a set: titles[n - 1] is the source behind the "[n]"
+     the model wrote in its reply. The two numbering schemes used to be
+     unrelated — the prompt numbered excerpts in rank order while this
+     list showed deduplicated titles in database order — so a reply
+     saying "according to [2]" pointed at a source list where nothing
+     was 2. See docs/rag-hardening.md, B6.
+
+     Repeats are expected and are not a bug: several excerpts often come
+     from one document. They are grouped so the row reads "[1,3] Pricing"
+     rather than naming the same file twice, which keeps the markers
+     intact while staying short enough for a chat bubble. */
   function appendCitations(node, titles) {
     if (!node || !titles || !titles.length) return;
 
+    var groups = [];
+    var byTitle = {};
+    for (var i = 0; i < titles.length; i++) {
+      var title = titles[i];
+      /* A document that vanished between the answer and the lookup. Its
+         marker is dropped rather than shown as an empty source, and the
+         remaining numbers keep the values the model used. */
+      if (!title) continue;
+      var key = '#' + title;
+      if (!byTitle[key]) {
+        byTitle[key] = { title: title, marks: [] };
+        groups.push(byTitle[key]);
+      }
+      byTitle[key].marks.push(i + 1);
+    }
+    if (!groups.length) return;
+
+    var shown = groups.slice(0, 3).map(function (g) {
+      return '[' + g.marks.join(',') + '] ' + g.title;
+    });
+
     var row = el('div', { className: 'ck-cite' });
-    row.textContent = (titles.length === 1 ? 'Source: ' : 'Sources: ') + titles.slice(0, 3).join(' · ');
+    row.textContent = (groups.length === 1 ? 'Source: ' : 'Sources: ') + shown.join(' · ');
     node.appendChild(row);
   }
 

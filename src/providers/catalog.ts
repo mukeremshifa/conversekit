@@ -28,6 +28,12 @@ export interface VendorPreset {
   defaultChatModel: string;
   defaultEmbedModel?: string;
   embedDimensions?: number;
+  /**
+   * Cosine similarity below which a retrieved chunk is noise, for this
+   * vendor's default embedding model. See similarityFloorFor — this is
+   * the second resolution step, after the model-name patterns.
+   */
+  similarityFloor?: number;
 
   /**
    * `stream_options: {include_usage: true}` yields token counts on the
@@ -140,6 +146,7 @@ export const VENDORS: Record<string, VendorPreset> = {
     defaultChatModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
     defaultEmbedModel: 'BAAI/bge-base-en-v1.5',
     embedDimensions: 768,
+    similarityFloor: 0.60,
     supportsStreamUsage: true,
   },
 
@@ -153,6 +160,7 @@ export const VENDORS: Record<string, VendorPreset> = {
     defaultChatModel: '@cf/meta/llama-3.1-8b-instruct',
     defaultEmbedModel: '@cf/baai/bge-base-en-v1.5',
     embedDimensions: 768,
+    similarityFloor: 0.60,
   },
 
   // ── Local ───────────────────────────────────────────────────────
@@ -204,4 +212,79 @@ export function getPreset(vendor: string): VendorPreset | null {
 /** Vendors that can serve embeddings — i.e. everything except Anthropic. */
 export function embeddingCapableVendors(): VendorPreset[] {
   return Object.values(VENDORS).filter((v) => !!v.defaultEmbedModel);
+}
+
+
+// ----------------------------------------------------------------
+// Similarity floors
+//
+// The cosine score below which a retrieved chunk is noise. This is a
+// property of the EMBEDDING MODEL, not of the platform, and treating it
+// as universal is what made retrieval unable to reject anything: the
+// old hardcoded 0.30 was calibrated for an OpenAI-like distribution
+// that spreads toward 0, while bge-base-en-v1.5 — the platform default,
+// via EMBEDDING_VENDOR in wrangler.toml — compresses into roughly
+// 0.4–0.9 and scores two completely unrelated businesses' documents at
+// 0.476 to 0.557. A 0.30 floor sits below that model's noise floor, so
+// match_chunks returned top_k rows for every query ever asked, and the
+// three features gated on "retrieval found nothing" never fired.
+// See docs/rag-hardening.md, B1.
+// ----------------------------------------------------------------
+
+/** Applied when neither the model nor the vendor is known to us.
+ *  Calibrated for OpenAI-style embeddings, which is what the old
+ *  universal default assumed. */
+export const DEFAULT_SIMILARITY_FLOOR = 0.30;
+
+/**
+ * Model-name patterns, checked BEFORE the vendor preset.
+ *
+ * Order matters here, not because the same model appears twice, but
+ * because the same model appears under different vendors: Workers AI
+ * and Together both serve bge-base-en-v1.5, and a tenant may point any
+ * openai-compat vendor at it via embedding_config.model. Keying the
+ * floor to the model rather than to whoever is hosting it is what makes
+ * that case come out right.
+ */
+const MODEL_FLOORS: Array<{ pattern: RegExp; floor: number }> = [
+  // MEASURED against the live corpus, 2026-08-19. Unrelated-bot pairs
+  // topped out at 0.557; genuinely related same-bot pairs bottomed out
+  // at 0.617. 0.60 sits in that gap.
+  { pattern: /bge-/i, floor: 0.60 },
+];
+
+/**
+ * The similarity floor for a resolved embedder.
+ *
+ * Resolution order: model pattern, then vendor preset, then the
+ * default. Takes the shape of an EmbeddingProvider rather than the
+ * provider itself so it stays pure and testable without an Env.
+ *
+ * EVERY floor other than the bge one is currently the unmeasured
+ * fallback. That is deliberate — `npm run eval:rag` is what produces
+ * the rest, and a guessed number that looks like a measurement is
+ * worse than an honest default. See docs/rag-hardening.md, M2.
+ */
+export function similarityFloorFor(embedder: { vendor: string; model: string }): number {
+  return resolveSimilarityFloor(embedder).floor;
+}
+
+/**
+ * The floor plus where it came from.
+ *
+ * The provenance is not decoration: it is what the retrieval preview
+ * shows a tenant, and "this number is the unmeasured fallback" is a
+ * materially different statement from "this number was measured for the
+ * model you are running". A floor that cannot say which it is, is how
+ * B1 survived for four months.
+ */
+export function resolveSimilarityFloor(
+  embedder: { vendor: string; model: string },
+): { floor: number; source: 'model' | 'default' } {
+  for (const { pattern, floor } of MODEL_FLOORS) {
+    if (pattern.test(embedder.model)) return { floor, source: 'model' };
+  }
+  const preset = getPreset(embedder.vendor)?.similarityFloor;
+  if (preset !== undefined) return { floor: preset, source: 'model' };
+  return { floor: DEFAULT_SIMILARITY_FLOOR, source: 'default' };
 }

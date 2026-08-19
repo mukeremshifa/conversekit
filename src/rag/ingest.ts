@@ -19,7 +19,7 @@ import {
   getDocumentForChat, updateDocument, replaceChunks,
   listFaqItemsForIngest, getFaqDocument,
 } from '../supabase';
-import { resolveEmbeddingProvider, ProviderError } from '../providers';
+import { resolveEmbeddingProvider, ProviderError, DEFAULT_SIMILARITY_FLOOR } from '../providers';
 import { chunkText, chunkQA, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP } from './chunk';
 import { fetchUrl, markdownToText, ExtractError } from './extract';
 import { storedFileToText } from './files';
@@ -47,12 +47,22 @@ export const DEFAULT_CONTEXT_CHARS = 6000;
  *  purpose: it decides near-ties, it does not overrule relevance. */
 export const DEFAULT_PRIORITY_BOOST = 0.05;
 
-export function ragConfigFor(bot: Bot): Required<RagConfig> {
+/**
+ * @param floor Default similarity floor for the embedding model that
+ *   will actually run this query, from similarityFloorFor. Omitted by
+ *   the callers that only want chunk sizes or the context budget —
+ *   they get DEFAULT_SIMILARITY_FLOOR, which they never read.
+ *
+ *   A tenant's own min_similarity still wins over both. That is the
+ *   whole contract: the floor became model-relative, an explicit
+ *   override kept its meaning.
+ */
+export function ragConfigFor(bot: Bot, floor?: number): Required<RagConfig> {
   const c = bot.rag_config ?? {};
   return {
     enabled:        c.enabled ?? true,
     top_k:          clamp(c.top_k ?? 5, 1, 20),
-    min_similarity: clamp(c.min_similarity ?? 0.3, 0, 1),
+    min_similarity: clamp(c.min_similarity ?? floor ?? DEFAULT_SIMILARITY_FLOOR, 0, 1),
     chunk_size:     clamp(c.chunk_size ?? DEFAULT_CHUNK_SIZE, 200, 4000),
     chunk_overlap:  clamp(c.chunk_overlap ?? DEFAULT_CHUNK_OVERLAP, 0, 1000),
     // The floor is 1000, not 0: a budget small enough to render nothing

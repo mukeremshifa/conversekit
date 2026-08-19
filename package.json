@@ -25,7 +25,8 @@
     "test:stats": "node scripts/test-stats-units.mjs",
     "test:config": "node scripts/test-config-units.mjs",
     "test:widget-theme": "node scripts/test-widget-theme.mjs",
-    "test:leads": "node scripts/test-lead-capture.mjs"
+    "test:leads": "node scripts/test-lead-capture.mjs",
+    "eval:rag": "node scripts/eval-rag.mjs"
   },
   "dependencies": {
     "hono": "^4.13.1",

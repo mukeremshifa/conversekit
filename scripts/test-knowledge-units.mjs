@@ -22,6 +22,12 @@
  *   4. THE CONTEXT BUDGET. Retrieved chunks compete with conversation
  *      history for the window, and until 011 nothing bounded them.
  *
+ *   5. THE RETRIEVAL CONTRACT (added with the B1 hardening). Which
+ *      channel answered, what counts as too short to embed, and where
+ *      the similarity floor came from. None of it had a test, which is
+ *      how a floor below the embedder's noise floor survived four
+ *      months of looking like it worked. See docs/rag-hardening.md.
+ *
  * No network, no database.
  *
  *   npm run test:knowledge
@@ -39,6 +45,8 @@ await build({
   entryPoints: [
     join(ROOT, 'src/rag/chunk.ts'),
     join(ROOT, 'src/rag/retrieve.ts'),
+    join(ROOT, 'src/rag/ingest.ts'),
+    join(ROOT, 'src/providers/catalog.ts'),
     join(ROOT, 'src/prompt.ts'),
     join(ROOT, 'src/config.ts'),
   ],
@@ -46,7 +54,11 @@ await build({
 });
 
 const { chunkQA, parseFaqText } = await import(`file://${OUT}/rag/chunk.js`);
-const { renderContext } = await import(`file://${OUT}/rag/retrieve.js`);
+const { renderContext, selectContext, retrieve, isTooShortToRetrieve } =
+  await import(`file://${OUT}/rag/retrieve.js`);
+const { ragConfigFor } = await import(`file://${OUT}/rag/ingest.js`);
+const { similarityFloorFor, resolveSimilarityFloor, DEFAULT_SIMILARITY_FLOOR } =
+  await import(`file://${OUT}/providers/catalog.js`);
 const { buildSystemPrompt } = await import(`file://${OUT}/prompt.js`);
 const { capPromptText, validateFaqItem, LIMITS } = await import(`file://${OUT}/config.js`);
 
@@ -277,6 +289,258 @@ const chunk = (i, len) => ({
 eq('no chunks renders nothing', renderContext([], 6000), '');
 eq('a whitespace-only chunk renders nothing',
    renderContext([{ ...chunk(0, 1), content: ' \n\t ' }], 6000), '');
+
+// ── The short-query gate ─────────────────────────────────────────
+//
+// "ok" and "hi" retrieve noise and are rightly skipped. The measure
+// used to be four UTF-16 code units, which is a Latin word-length
+// heuristic on a platform that answers in the visitor's own language.
+console.log('\nShort-query gate');
+check('an empty query is skipped', isTooShortToRetrieve('   '));
+check('a two-letter greeting is skipped', isTooShortToRetrieve('hi'));
+check('a three-letter word is skipped', isTooShortToRetrieve('ok?'));
+check('four Latin characters pass', !isTooShortToRetrieve('cost'));
+check('a three-character Chinese question passes', !isTooShortToRetrieve('多少钱'));
+check('a four-character Chinese question passes', !isTooShortToRetrieve('天气如何'));
+check('a two-character Japanese question passes', !isTooShortToRetrieve('料金'));
+check('a two-syllable Korean word passes', !isTooShortToRetrieve('가격'));
+check('a two-character Thai word passes', !isTooShortToRetrieve('ราคา'));
+check('a single Chinese character is still skipped', isTooShortToRetrieve('钱'));
+// .length would report 2 for one astral character and let it through.
+check('one emoji is counted as one character, not two', isTooShortToRetrieve('😀'));
+
+// ── The similarity floor ─────────────────────────────────────────
+//
+// The headline of the B1 hardening: the floor is a property of the
+// embedding MODEL, and treating it as a platform constant is what made
+// retrieval unable to reject anything.
+console.log('\nSimilarity floor resolution');
+eq('the platform default embedder gets its measured floor',
+   similarityFloorFor({ vendor: 'workers-ai', model: '@cf/baai/bge-base-en-v1.5' }), 0.60);
+eq('the same model on another vendor gets the same floor',
+   similarityFloorFor({ vendor: 'together', model: 'BAAI/bge-base-en-v1.5' }), 0.60);
+// The case the vendor preset alone would get wrong.
+eq('a bge model behind a custom endpoint still gets it',
+   similarityFloorFor({ vendor: 'custom', model: 'bge-large-en-v1.5' }), 0.60);
+eq('an unknown model falls back to the documented default',
+   similarityFloorFor({ vendor: 'openai', model: 'text-embedding-3-small' }),
+   DEFAULT_SIMILARITY_FLOOR);
+eq('an unknown vendor falls back too',
+   similarityFloorFor({ vendor: 'nonesuch', model: 'whatever' }), DEFAULT_SIMILARITY_FLOOR);
+eq('a measured floor reports itself as measured',
+   resolveSimilarityFloor({ vendor: 'workers-ai', model: '@cf/baai/bge-base-en-v1.5' }).source, 'model');
+eq('an unmeasured one says so',
+   resolveSimilarityFloor({ vendor: 'openai', model: 'text-embedding-3-small' }).source, 'default');
+
+console.log('\nrag_config resolution');
+{
+  const bot = { rag_config: null };
+  eq('with no config and no model, the default floor applies',
+     ragConfigFor(bot).min_similarity, DEFAULT_SIMILARITY_FLOOR);
+  eq('a model floor overrides the default', ragConfigFor(bot, 0.6).min_similarity, 0.6);
+}
+{
+  // The contract the rollout depends on: a tenant who set this keeps it.
+  const bot = { rag_config: { min_similarity: 0.42 } };
+  eq('an explicit tenant floor beats the model floor',
+     ragConfigFor(bot, 0.6).min_similarity, 0.42);
+}
+{
+  const bot = { rag_config: { min_similarity: 0 } };
+  eq('an explicit zero is honoured, not treated as absent',
+     ragConfigFor(bot, 0.6).min_similarity, 0);
+}
+{
+  const bot = { rag_config: { top_k: 500, min_similarity: 9, chunk_size: 10, context_chars: 5, priority_boost: 3 } };
+  const cfg = ragConfigFor(bot, 0.6);
+  eq('top_k is clamped', cfg.top_k, 20);
+  eq('min_similarity is clamped to 1', cfg.min_similarity, 1);
+  eq('chunk_size is clamped up to the floor', cfg.chunk_size, 200);
+  eq('context_chars is clamped up to the floor', cfg.context_chars, 1000);
+  eq('priority_boost is clamped below 1', cfg.priority_boost, 0.5);
+}
+
+// ── Which channel answered ───────────────────────────────────────
+//
+// Exercised through the real wiring rather than a reimplementation:
+// the fetch stub answers the embeddings endpoint and both RPCs, so
+// provider resolution, the floor, the RPC payloads and the fallback
+// decision all run exactly as they do in the Worker.
+console.log('\nRetrieval channels');
+
+const DB = { url: 'http://db.test', headers: {} };
+const ENV = {};
+
+/** A bot whose embedder is a local OpenAI-compatible server, so the
+ *  stub can answer it without a key or a binding. */
+const evalBot = (rag = {}) => ({
+  id: 'bot-1',
+  rag_config: rag,
+  embedding_config: { vendor: 'custom', model: 'stub-embed', baseUrl: 'http://embed.test/v1' },
+});
+
+const row = (i) => ({
+  id: `c${i}`, document_id: 'd1', ordinal: i,
+  content: `chunk ${i}`, similarity: 0.9 - i / 100, kind: 'prose', priority: 0,
+});
+
+/** Records what each endpoint was asked, and answers with whatever the
+ *  case under test wants back. */
+function stubFetch({ vector = [1, 2, 3], match = [], lexical = [] }) {
+  const seen = { embeddings: 0, match: 0, lexical: 0, payloads: [] };
+  globalThis.fetch = async (url, init) => {
+    const body = init?.body ? JSON.parse(init.body) : null;
+    const json = (data) => new Response(JSON.stringify(data), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+
+    if (String(url).endsWith('/embeddings')) {
+      seen.embeddings++;
+      return json({ data: [{ index: 0, embedding: vector }], model: 'stub-embed' });
+    }
+    if (String(url).includes('/rpc/match_chunks_lexical')) {
+      seen.lexical++; seen.payloads.push(body);
+      return json(lexical);
+    }
+    if (String(url).includes('/rpc/match_chunks')) {
+      seen.match++; seen.payloads.push(body);
+      return json(match);
+    }
+    throw new Error(`unexpected fetch: ${url}`);
+  };
+  return seen;
+}
+
+const realFetch = globalThis.fetch;
+
+{
+  const seen = stubFetch({ match: [row(0), row(1)] });
+  const out = await retrieve(ENV, DB, evalBot(), 'how much does whitening cost');
+  eq('a vector hit reports the vector channel', out.channel, 'vector');
+  eq('and returns its rows', out.chunks.length, 2);
+  eq('every chunk is stamped with the channel', out.chunks[0].channel, 'vector');
+  eq('the lexical index is not consulted on the happy path', seen.lexical, 0);
+}
+{
+  const seen = stubFetch({ match: [], lexical: [row(0)] });
+  const out = await retrieve(ENV, DB, evalBot(), 'do u take insurance');
+  eq('an empty vector result falls through to lexical', out.channel, 'lexical');
+  eq('and returns its rows', out.chunks.length, 1);
+  eq('stamped as lexical', out.chunks[0].channel, 'lexical');
+  eq('the fallback cost exactly one extra query', seen.lexical, 1);
+}
+{
+  const seen = stubFetch({ match: [], lexical: [row(0)] });
+  const out = await retrieve(ENV, DB, evalBot({ lexical_fallback: false }), 'do u take insurance');
+  eq('the fallback can be switched off', out.chunks.length, 0);
+  eq('and then never runs', seen.lexical, 0);
+  eq('with no channel to report', out.channel, undefined);
+}
+{
+  stubFetch({ match: [], lexical: [] });
+  const out = await retrieve(ENV, DB, evalBot(), 'what is the weather in Oslo');
+  // The state that was unreachable before B1, and that three shipped
+  // features are gated on.
+  eq('both channels empty is a clean miss', out.chunks.length, 0);
+  eq('reported without an error', out.error, undefined);
+}
+{
+  const seen = stubFetch({ match: [row(0)] });
+  const out = await retrieve(ENV, DB, evalBot({ enabled: false }), 'anything at all');
+  eq('a disabled bot skips', out.skipped, 'disabled');
+  eq('without embedding anything', seen.embeddings, 0);
+}
+{
+  const seen = stubFetch({ match: [row(0)] });
+  const out = await retrieve(ENV, DB, evalBot(), 'hi');
+  eq('a too-short query skips', out.skipped, 'empty-query');
+  eq('without embedding anything', seen.embeddings, 0);
+}
+{
+  // A broken embedder must not fail the visitor's turn.
+  globalThis.fetch = async () => new Response('nope', { status: 500 });
+  const out = await retrieve(ENV, DB, evalBot(), 'how much does whitening cost');
+  eq('a vendor failure returns no chunks', out.chunks.length, 0);
+  check('and reports the reason', typeof out.error === 'string' && out.error.length > 0, out.error);
+}
+
+console.log('\nThe floor that actually ran');
+{
+  const seen = stubFetch({ match: [] });
+  const out = await retrieve(ENV, DB, evalBot(), 'how much does whitening cost');
+  const payload = seen.payloads.find((p) => p && 'p_min_similarity' in p);
+  eq('the resolved floor is what match_chunks is asked for',
+     payload.p_min_similarity, out.effective.min_similarity);
+  eq('the model that ran is reported', out.effective.embedding_model, 'stub-embed');
+  eq('an unknown model is flagged as the unmeasured default',
+     out.effective.floor_source, 'default');
+}
+{
+  const seen = stubFetch({ match: [] });
+  const bot = evalBot({ min_similarity: 0.42 });
+  const out = await retrieve(ENV, DB, bot, 'how much does whitening cost');
+  const payload = seen.payloads.find((p) => p && 'p_min_similarity' in p);
+  eq('a tenant override reaches the RPC', payload.p_min_similarity, 0.42);
+  eq('and is attributed to the tenant', out.effective.floor_source, 'tenant');
+}
+{
+  const seen = stubFetch({ match: [] });
+  const bot = evalBot();
+  bot.embedding_config = { vendor: 'custom', model: 'bge-base-en-v1.5', baseUrl: 'http://embed.test/v1' };
+  const out = await retrieve(ENV, DB, bot, 'how much does whitening cost');
+  const payload = seen.payloads.find((p) => p && 'p_min_similarity' in p);
+  eq('a known model brings its measured floor', payload.p_min_similarity, 0.60);
+  eq('attributed to the model', out.effective.floor_source, 'model');
+}
+
+globalThis.fetch = realFetch;
+
+// ── Citation alignment ───────────────────────────────────────────
+//
+// The prompt numbers its excerpts [1] [2] [3]; the citation list has to
+// name those same excerpts in that same order. Building the list from
+// the full result set could name a document the budget had dropped.
+console.log('\nCitation alignment');
+{
+  const chunks = [chunk(0, 300), chunk(1, 300), chunk(2, 300)];
+  const kept = selectContext(chunks, 10_000);
+  eq('an ample budget selects everything', kept.length, 3);
+  check('in rank order', kept.map((c) => c.id).join(',') === 'c0,c1,c2');
+}
+{
+  const chunks = [chunk(0, 400), chunk(1, 400), chunk(2, 400)];
+  const budget = 1000;
+  const kept = selectContext(chunks, budget);
+  const out = renderContext(chunks, budget);
+  const markers = (out.match(/^\[\d+\] /gm) ?? []).length;
+  eq('selection and rendering agree on how many survive', kept.length, markers);
+  check('the dropped chunk is absent from both',
+        !out.includes('2x') && !kept.some((c) => c.id === 'c2'));
+}
+{
+  // The bug B6 fixes, in miniature: a citation list built from the full
+  // result set would have three entries where the prompt has two.
+  const chunks = [chunk(0, 400), chunk(1, 400), chunk(2, 400)];
+  const kept = selectContext(chunks, 1000);
+  check('a citation list built from the selection cannot outrun the markers',
+        kept.length < chunks.length, `${kept.length} of ${chunks.length}`);
+}
+{
+  const blank = { ...chunk(1, 1), content: '   ' };
+  const kept = selectContext([chunk(0, 100), blank, chunk(2, 100)], 10_000);
+  eq('a whitespace-only chunk consumes no marker', kept.length, 2);
+  check('and is not the one kept', !kept.some((c) => c.id === 'c1'));
+}
+{
+  // Re-selecting an already-selected list must be a no-op, because the
+  // chat path renders what it selected.
+  const chunks = [chunk(0, 400), chunk(1, 400), chunk(2, 400)];
+  const once = selectContext(chunks, 1000);
+  const twice = selectContext(once, 1000);
+  eq('selection is idempotent', twice.length, once.length);
+  eq('rendering a selection re-budgets nothing',
+     renderContext(once, 1000), renderContext(chunks, 1000));
+}
 
 // ── Caps ─────────────────────────────────────────────────────────
 console.log('\nPrompt-resident text caps');

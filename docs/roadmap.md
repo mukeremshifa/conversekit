@@ -174,6 +174,31 @@ byte-identical to what shipped before — asserted as a string comparison in
 Full reasoning, decisions and rejected alternatives:
 [knowledge-pipeline.md](knowledge-pipeline.md).
 
+## Phase 2d — RAG hardening ◐ phase 1 shipped
+
+An audit of the pipeline 2c left behind found six correctness bugs, two that
+only appear at scale, and eight things production grade would add. The headline
+one is worth repeating here because of what it implies about the two mechanisms
+above: **the default similarity floor sat below the embedding model's noise
+floor**, so `match_chunks` returned rows for every query ever asked. The
+lexical channel is gated on the vector channel returning nothing, so it never
+ran — and neither did `fallback_message` or `escalate_after_misses`. Three
+shipped, documented, tested features were dead in production and nothing logged
+it.
+
+Shipped: a model-relative similarity floor resolved from the embedder
+(`resolveSimilarityFloor` in `src/providers/catalog.ts`), a code-point and
+script-aware short-query gate, citations aligned to the `[n]` markers the model
+actually sees, and `npm run eval:rag` — a golden-set harness whose off-topic
+queries are the assertion that a floor discriminates at all. No migration.
+
+Still open, and each has a written brief: embedding-model drift detection,
+a re-index lock, ingest retry with backoff, `hnsw.ef_search` before real scale,
+retrieval logging and the tenant-facing miss report built on it, hybrid
+retrieval, re-ranking, and heading context in prose chunks.
+
+Full audit, measurements and remaining work: [rag-hardening.md](rag-hardening.md).
+
 ## Phase 2 — original scope (reference)
 
 **Scope discipline:** ship *one* opinionated pipeline with a few knobs. Not a

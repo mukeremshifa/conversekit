@@ -1,0 +1,69 @@
+{
+  "_comment": [
+    "Golden set for npm run eval:rag. See docs/rag-hardening.md, M2.",
+    "",
+    "expect_doc is a document TITLE and expect_contains is a distinctive",
+    "substring of the expected passage. Neither is a chunk id, on purpose:",
+    "replaceChunks is delete-then-insert, so every chunk gets a new id on",
+    "every re-index, and an id-keyed fixture would rot the first time",
+    "anyone changed chunk_size.",
+    "",
+    "NEGATIVES ARE THE POINT. Recall@k alone cannot catch a floor that is",
+    "too low — a floor of 0.0 scores perfect recall while injecting five",
+    "irrelevant excerpts into every off-topic answer. Each negative must",
+    "return nothing at all."
+  ],
+
+  "positives": [
+    { "query": "how much does teeth whitening cost",
+      "expect_doc": "Pricing", "expect_contains": "199 pounds" },
+    { "query": "what is the price of a dental implant",
+      "expect_doc": "Pricing", "expect_contains": "1200 pounds" },
+    { "query": "do you offer payment plans",
+      "expect_doc": "Pricing", "expect_contains": "interest-free" },
+    { "query": "how much is a check up and a clean together",
+      "expect_doc": "Pricing", "expect_contains": "110 pounds" },
+    { "query": "root canal price molar",
+      "expect_doc": "Pricing", "expect_contains": "550 pounds" },
+
+    { "query": "are you open on saturdays",
+      "expect_doc": "Hours", "expect_contains": "first Saturday" },
+    { "query": "what time do you close on friday",
+      "expect_doc": "Hours", "expect_contains": "8am to 4pm" },
+    { "query": "where can I park",
+      "expect_doc": "Hours", "expect_contains": "Cardigan Street" },
+    { "query": "is the practice wheelchair accessible",
+      "expect_doc": "Hours", "expect_contains": "step-free" },
+    { "query": "I have a dental emergency tonight what do I do",
+      "expect_doc": "Hours", "expect_contains": "out-of-hours" },
+
+    { "query": "do u take insurance",
+      "expect_doc": "Policies", "expect_contains": "dental insurance providers" },
+    { "query": "what happens if I miss my appointment",
+      "expect_doc": "Policies", "expect_contains": "30 pounds" },
+    { "query": "can I pay by cheque",
+      "expect_doc": "Policies", "expect_contains": "do not accept cheques" },
+    { "query": "are you taking on new patients",
+      "expect_doc": "Policies", "expect_contains": "no waiting list" },
+    { "query": "how young do you see kids",
+      "expect_doc": "Policies", "expect_contains": "age of two" },
+    { "query": "I want to make a complaint",
+      "expect_doc": "Policies", "expect_contains": "practice manager" }
+  ],
+
+  "negatives": [
+    { "query": "what is the weather in Oslo tomorrow" },
+    { "query": "who won the world cup in 1998" },
+    { "query": "write me a python function that reverses a linked list" },
+    { "query": "what is the capital city of Mongolia" },
+    { "query": "how do I change the oil in a diesel engine" },
+    { "query": "recommend a good science fiction novel" },
+    { "query": "what are your thoughts on quantum entanglement" },
+    { "query": "book me a flight to Lisbon next tuesday" }
+  ],
+
+  "thresholds": {
+    "recall_at_k": 0.9,
+    "negative_rejection": 1.0
+  }
+}
