@@ -420,7 +420,18 @@ async function preflight(
   let rendered: RetrievedChunk[] = [];
   let outcome: RetrievalOutcome | null = null;
   try {
-    hasCorpus = await hasChunks(db, botId);
+    // S2: a field read, not a round trip. `chunk_count` is maintained
+    // by a statement-level trigger on `chunks` (013), and the bot row
+    // was already fetched above — so the "does this bot have a corpus"
+    // query that ran before every single turn is now free.
+    //
+    // UNDEFINED IS UNKNOWN, NOT ZERO. A Worker running ahead of 013
+    // gets no column back, and reading that as "no corpus" would switch
+    // retrieval off for every bot on the platform. It falls back to the
+    // query, which is exactly the pre-013 behaviour.
+    hasCorpus = typeof bot.chunk_count === 'number'
+      ? bot.chunk_count > 0
+      : await hasChunks(db, botId);
     if (hasCorpus) {
       // `retrieve` already tried the lexical fallback by the time it
       // returns, so its outcome is the final answer for this turn. That
@@ -1846,6 +1857,13 @@ app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
         priority_boost: cfg.priority_boost,
         lexical_fallback: cfg.lexical_fallback,
         context_chars: cfg.context_chars,
+        // Both added by 013. The mode is what decides whether the
+        // `channel` above can read 'hybrid' at all, and re-rank is the
+        // one setting that changes the ORDER of what came back without
+        // changing what came back — so an inspector that omitted them
+        // would be showing a result it could not explain.
+        retrieval_mode: cfg.retrieval_mode,
+        rerank: cfg.rerank,
       },
       // Which embedding model ran, and where its floor came from:
       // 'tenant' an explicit override, 'model' a value calibrated for

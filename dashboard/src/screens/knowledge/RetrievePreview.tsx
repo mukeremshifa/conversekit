@@ -143,11 +143,22 @@ function Outcome({ result }: { result: Result }) {
         </span>
         {result.channel === 'lexical' ? (
           <Badge tone="wait"><Type className="mr-1 h-3 w-3" /> keyword fallback</Badge>
+        ) : result.channel === 'hybrid' ? (
+          <Badge tone="ok"><Sparkles className="mr-1 h-3 w-3" /> meaning + keywords</Badge>
         ) : (
           <Badge tone="ok"><Sparkles className="mr-1 h-3 w-3" /> meaning</Badge>
         )}
+        {result.settings.rerank && <Badge tone="ok">re-ranked</Badge>}
         <span>· {result.context.length} characters of {result.settings.context_chars} budget</span>
       </div>
+
+      {result.channel === 'hybrid' && (
+        <Muted className="text-xs leading-relaxed">
+          Both searches ran and their results were merged by rank. A passage each one found
+          separately outranks a passage only one of them put first — which is the point, and is
+          also why the per-passage scores below are not comparable with each other.
+        </Muted>
+      )}
 
       {result.channel === 'lexical' && (
         <Muted className="text-xs leading-relaxed">

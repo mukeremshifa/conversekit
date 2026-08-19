@@ -9,13 +9,19 @@
 // prompt, the FAQ boost, and the keyword fallback. Each is here rather
 // than hardcoded because each is a judgement call a tenant can be
 // wrong about in either direction.
+//
+// 013 added two more, and both default to today's behaviour rather than
+// to the better-sounding one. Hybrid search changes what every message
+// retrieves and can quietly stop the bot ever saying "I don't know";
+// re-ranking costs a model call on the visitor's hot path. Neither is a
+// setting the platform should make on a tenant's behalf.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { endpoints, type Bot, type EffectiveRetrieval, type RagConfig } from '@/lib/api';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  Field, Input, Switch,
+  Field, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
@@ -42,6 +48,8 @@ const DEFAULTS: Omit<Required<RagConfig>, 'min_similarity'> = {
   context_chars: 6000,
   priority_boost: 0.05,
   lexical_fallback: true,
+  retrieval_mode: 'fallback',
+  rerank: false,
 };
 
 /** `min_similarity` absent means "no override" — the resolved floor
@@ -217,6 +225,74 @@ export function Retrieval({
             aria-label="Keyword fallback"
           />
         </CardHeader>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>How search runs</CardTitle>
+            <CardDescription>
+              Two ways to find a passage: by meaning, and by the words in it. This is when each
+              one runs.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Field label="Search mode">
+            <Select
+              value={cfg.retrieval_mode}
+              onValueChange={(v) => set({ retrieval_mode: v as Draft['retrieval_mode'] })}
+            >
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="fallback">Meaning, then keywords if nothing lands</SelectItem>
+                <SelectItem value="hybrid">Both every time, merged</SelectItem>
+                <SelectItem value="vector">Meaning only</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+          <p className="text-xs leading-relaxed text-muted">
+            The default runs the keyword search only when nothing at all was close enough by
+            meaning, and only over your FAQ. <strong className="text-ink">Both every time</strong>{' '}
+            runs it over every source on every message and merges the two rankings, which finds
+            names, codes and part numbers that meaning-based search reads straight past — at the
+            cost of a second query per message.
+          </p>
+          {cfg.retrieval_mode === 'hybrid' && (
+            <p className="rounded-md border border-warning/25 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-ink">
+              Worth knowing before you leave this on: keyword search almost always finds{' '}
+              <em>something</em>, so the bot will rarely conclude it has no answer. If you rely on
+              the &ldquo;can&rsquo;t answer&rdquo; message or on handing off after repeated misses,
+              check the questions report after a day — a miss rate that drops to near zero means
+              those have stopped firing rather than that the bot got better.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Second-pass ranking</CardTitle>
+            <CardDescription>
+              Read the question and each passage together, and reorder them. Slower and more
+              accurate than the first pass, which compares them separately.
+            </CardDescription>
+          </div>
+          <Switch
+            checked={cfg.rerank}
+            onCheckedChange={(v) => set({ rerank: v })}
+            aria-label="Second-pass ranking"
+          />
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs leading-relaxed text-muted">
+            It costs one extra model call per message, so it shows up as latency the visitor can
+            feel. It can only reorder passages that already cleared the minimum similarity — it
+            never brings back one that was rejected, so it is not a substitute for lowering the
+            threshold.
+          </p>
+        </CardContent>
       </Card>
 
       <Card>

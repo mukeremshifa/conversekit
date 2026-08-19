@@ -181,6 +181,21 @@ export interface Bot {
    * docs/rag-hardening.md.
    */
   embedding_model_indexed?: string | null;
+
+  /**
+   * Indexed chunks for this bot (supabase/013).
+   *
+   * Maintained by a statement-level trigger on `chunks`, never by the
+   * application. The chat path reads it instead of asking PostgREST
+   * "does this bot have a corpus" before every single turn.
+   *
+   * UNDEFINED MEANS UNKNOWN, not zero — a Worker running ahead of the
+   * migration gets no column back, and reading that as "no corpus"
+   * would switch retrieval off for every bot on the platform. The
+   * caller falls back to the query in that case. See S2 in
+   * docs/rag-hardening.md.
+   */
+  chunk_count?: number;
 }
 
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
@@ -324,8 +339,50 @@ export interface RagConfig {
    * Whether to fall back to lexical search when the vector search
    * returns nothing at all. Costs one query on the miss path and
    * nothing on the happy path.
+   *
+   * Read only in `retrieval_mode: 'fallback'`. Deliberately NOT
+   * overloaded into a tri-state alongside the mode below — one setting
+   * that means "off", "fallback" and "hybrid" depending on another
+   * setting is the kind of knob nobody can reason about.
    */
   lexical_fallback?: boolean;
+
+  // ── Added by 013 ──
+  /**
+   * How the two search channels are combined (M4).
+   *
+   *   'vector'   — vector search only. Nothing rescues a miss.
+   *   'fallback' — vector, then lexical over curated chunks ONLY when
+   *                vector found nothing. The default, and what every
+   *                bot has been doing since 011.
+   *   'hybrid'   — both channels on every turn, over the whole corpus,
+   *                fused by reciprocal rank.
+   *
+   * DEFAULTS TO 'fallback' SO NOBODY'S BOT CHANGES UNDER THEM. Hybrid
+   * is the one setting on this object that can quietly disable
+   * `fallback_message` and `escalate_after_misses`: lexical running
+   * against every chunk on every turn almost always returns something,
+   * so "the bot could not answer" stops being reachable. See the header
+   * of supabase/013_hybrid.sql, and watch the miss report after
+   * switching a bot to it.
+   */
+  retrieval_mode?: 'vector' | 'fallback' | 'hybrid';
+  /**
+   * Re-rank the retrieved candidates with a cross-encoder before the
+   * context budget is applied (M5).
+   *
+   * Off by default: it is one extra model call and its latency on the
+   * visitor's hot path, which is a tenant's decision rather than the
+   * platform's. Needs a Workers AI binding, which is a property of the
+   * DEPLOYMENT and not of the tenant — absent binding, or a re-rank
+   * call that throws, falls back to cosine order rather than failing
+   * the turn.
+   *
+   * It can only REORDER what the similarity floor already let through.
+   * It never rescues a rejected chunk, and dropping the floor when
+   * re-rank is on would be B1 for the third time.
+   */
+  rerank?: boolean;
 }
 
 export type DocumentSource = 'text' | 'url' | 'markdown' | 'file' | 'faq';

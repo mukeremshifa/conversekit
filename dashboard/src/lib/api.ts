@@ -179,8 +179,18 @@ export interface RagConfig {
    *  chunks index at priority 1. Ordering only — it can never push a
    *  chunk past the minimum similarity. */
   priority_boost?: number;
-  /** Try keyword search when the vector search finds nothing at all. */
+  /** Try keyword search when the vector search finds nothing at all.
+   *  Read only in `retrieval_mode: 'fallback'`. */
   lexical_fallback?: boolean;
+  /** How the two channels combine (013). 'fallback' is the default and
+   *  is what every bot did before this field existed; 'hybrid' runs
+   *  both on every turn over the whole corpus and fuses them by rank. */
+  retrieval_mode?: 'vector' | 'fallback' | 'hybrid';
+  /** Re-rank the candidates with a cross-encoder before the prompt
+   *  budget is applied (013). Off by default: one extra model call per
+   *  message. Degrades to plain similarity order if the deployment has
+   *  no Workers AI binding. */
+  rerank?: boolean;
 }
 
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
@@ -358,6 +368,9 @@ export interface PreviewChunk {
   score: number;
   kind: 'prose' | 'faq';
   priority: number;
+  /** Never 'hybrid': a fused result is a mix, and each chunk keeps the
+   *  channel that actually found it. The outcome-level channel below is
+   *  where 'hybrid' appears. */
   channel: 'vector' | 'lexical' | null;
 }
 
@@ -376,13 +389,14 @@ export interface EffectiveRetrieval {
 
 export interface RetrievePreview {
   query: string;
-  channel: 'vector' | 'lexical' | null;
+  channel: 'vector' | 'lexical' | 'hybrid' | null;
   /** 'stale-index' means the corpus was built with a different
    *  embedding model, so nothing was searched at all. */
   skipped: 'disabled' | 'empty-query' | 'stale-index' | null;
   error: string | null;
   settings: Required<Pick<RagConfig,
-    'top_k' | 'min_similarity' | 'priority_boost' | 'lexical_fallback' | 'context_chars'>>;
+    'top_k' | 'min_similarity' | 'priority_boost' | 'lexical_fallback' | 'context_chars'
+    | 'retrieval_mode' | 'rerank'>>;
   effective: EffectiveRetrieval | null;
   chunks: PreviewChunk[];
   /** Exactly what would be pasted into the system prompt. */
@@ -397,7 +411,7 @@ export interface MissReport {
   range: { days: number; from: string; to: string };
   totals: { queries: number; misses: number; missRate: number | null };
   questions: MissQuestion[];
-  channels: { vector: number; lexical: number; missed: number };
+  channels: { vector: number; lexical: number; hybrid: number; missed: number };
   scores: {
     /** Median cosine score on turns the vector channel answered. */
     hitMedian: number | null;

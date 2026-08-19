@@ -1,14 +1,14 @@
 # RAG hardening — audit and brief
 
-What the retrieval pipeline actually does today, the six places it is broken,
-the two that only break at scale, and what production grade would add.
+What the retrieval pipeline actually does today, the six places it was broken,
+the two that only broke at scale, and what production grade adds.
 
 [← Back to the roadmap](roadmap.md) · [Knowledge model](knowledge.md) ·
 [The 011 brief](knowledge-pipeline.md)
 
 ---
 
-## Status — phases 1 and 2 shipped
+## Status — phases 1, 2 and 3 shipped
 
 Everything below started as analysis against the live schema and the deployed
 code. Measurements were taken read-only against the production project on
@@ -31,8 +31,21 @@ says so instead of poisoning every answer silently, a raced re-index no longer
 marks a working document `failed`, and a rate limit part-way through a batch no
 longer discards the batches before it.
 
-**Still open:** the `hasChunks` half of S2, pgvector 0.8 `iterative_scan`, and
-M3–M8. Each is marked below.
+**Phase 3 shipped**, on [`013_hybrid.sql`](../supabase/013_hybrid.sql) plus
+pure-Worker changes: M8 (near-duplicate suppression), M6 (heading context in
+prose chunks), M4 (real hybrid retrieval), M5 (cross-encoder re-ranking), the
+`hasChunks` half of S2, S1's `iterative_scan`, and the ranking SQL test that was
+the last open housekeeping item.
+
+Phase 3 is also one theme: **every item in it changes what comes back from a
+search**, which is a class of change nothing would notice going wrong. Two of
+them ship switched off — `retrieval_mode` defaults to `'fallback'` and `rerank`
+to `false` — because the alternative is a silent behaviour change on somebody
+else's product.
+
+**Still open:** M3 and M7, both deliberately deferred; the eval sweep, which is
+a run rather than a build; and the 200k-row fixture that would let S1 be
+described as verified rather than as reasoned.
 
 The one thing neither phase has is the measured floor for any embedder other
 than bge. The mechanism resolves per model; only bge-base has a number behind
@@ -343,7 +356,7 @@ the next migration rather than riding along.
 
 ## Breaks at scale, not yet
 
-### S1 — HNSW plus a tenant filter is a recall trap — **MITIGATED**
+### S1 — HNSW plus a tenant filter is a recall trap — **MITIGATED, both halves**
 
 One shared `chunks` table, one global HNSW index over `embedding
 vector_cosine_ops`, and `where c.bot_id = p_bot_id` applied *after* the vector
@@ -389,17 +402,36 @@ Two details, both verified against Postgres rather than assumed:
   every request in its own transaction — so it cannot leak between requests,
   which is the only leak that would change another caller's results.
 
-**Still open:** on pgvector 0.8+, `hnsw.iterative_scan = relaxed_order` is the
-feature built precisely for filtered vector search and is the next step.
+**The second half shipped on 013.** `hnsw.iterative_scan = relaxed_order` is the
+feature built precisely for filtered vector search: instead of walking
+`ef_search` nodes globally and keeping whichever belong to this tenant, the scan
+keeps pulling candidates until the filter has yielded enough rows.
+
+It is **guarded**, and that is not defensive habit — `set_config` on an unknown
+GUC *errors*, and the parameter does not exist before pgvector 0.8. Unguarded,
+this line would turn every search on an older deployment into a 500. The
+alternative (emitting the body conditionally at migration time via `do $$ …
+execute … $$`) is faster by an immeasurable amount and hides the fallback from
+anyone reading the function; the exception block is self-documenting, which is
+the point.
+
+`hnsw.max_scan_tuples` is paired with it deliberately: relaxed order with no
+ceiling can degenerate into scanning most of the index for a tenant whose slice
+is tiny and whose query matches nothing — the pathology being fixed, inverted.
+
 Partitioning `chunks` by tenant is the structural answer and should still not be
 reached for first.
 
-*(I attempted to demonstrate this empirically with a 200k-row rolled-back
-transaction; the test needed a `drop index` to force the plan and was blocked by
-the sandbox. The mechanism is pgvector's documented filtered-search behaviour,
-and the schema conditions for it are all present.)*
+*(**Still unverified against rows, and described that way on purpose.** The
+phase 2 attempt to demonstrate the recall trap empirically used a 200k-row
+rolled-back transaction; it needed a `drop index` to force the plan and was
+blocked. Both mitigations therefore ship in the same state: the mechanism is
+pgvector's documented filtered-search behaviour and every schema condition for
+it is present, but no fixture has shown it happening. Building that fixture
+properly under `scripts/spike/` is what would change this sentence. Do not
+describe it as verified until someone does.)*
 
-### S2 — Two avoidable round trips on every chat turn — **HALF DONE**
+### S2 — Two avoidable round trips on every chat turn — **FIXED**
 
 `hasChunks(db, botId)` runs before retrieval on every turn to decide whether to
 embed at all, and `getDocumentTitles` ran after it when citations are on. Both
@@ -416,13 +448,42 @@ could not take without changing the signature of a versioned SQL function. The
 join is `left`, not inner: a chunk whose document row is mid-delete must still
 be returned rather than silently vanishing from a search.
 
-**The `hasChunks` half is still open.** It can fold into `match_chunks` —
-returning zero rows *is* "no corpus", and since B1 that is a state which
-actually occurs, so the premise holds. It did not ride 012 because the two are
-independent: the title fold is a column on a row shape, and this one changes
-what "no corpus" means to `missedRetrieval`, `fallback_message` and
-`escalate_after_misses` all at once. That deserves its own change and its own
-tests.
+**The `hasChunks` half shipped on 013 — but not as the fold described above,
+and the correction is the interesting part.**
+
+> ~~It can fold into `match_chunks` — returning zero rows *is* "no corpus".~~
+
+**That fold re-opens B1.** `src/index.ts` computes
+
+```ts
+const missedRetrieval = hasCorpus && !staleIndex && rendered.length === 0;
+```
+
+Derive `hasCorpus` from whether `match_chunks` returned rows and this becomes
+`(rows > 0) && (rendered === 0)` — true only in the narrow case where the
+context budget dropped everything. `fallback_message`, `escalate_after_misses`
+and `lexical_fallback` all go dead again: the exact three features B1 disabled,
+by a different mechanism, one phase later. It would also cost an embedding call
+per turn for bots with **no** corpus, which is the one case the probe exists to
+make free — you cannot ask `match_chunks` anything until you have a vector.
+
+**"No corpus" and "nothing cleared the floor" have to stay two distinct
+states.** So 013 adds `bots.chunk_count`, maintained by a **statement-level**
+trigger on `chunks` using transition tables. The bot row is already fetched
+before retrieval, so `hasCorpus` becomes a field read; the embed skip survives;
+and the two states are separate by construction rather than by care.
+
+Statement-level and not row-level because `replaceChunks` is delete-then-insert
+of up to 400 rows and a per-row trigger would fire 800 times per ingest to
+compute a number that only has to be right at the end. The count is recomputed
+rather than incremented, because a delta is a second source of truth that drifts
+the first time a statement does something unexpected.
+
+`hasChunks()` remains in `src/supabase.ts` as the fallback for a Worker running
+ahead of the migration: **`chunk_count` undefined means unknown, not zero**, and
+reading an absent column as "no corpus" would switch retrieval off for every bot
+on the platform. Free side benefit: Sources can show "11 chunks indexed" without
+a query.
 
 ---
 
@@ -536,39 +597,146 @@ standard fix and the chat provider is already resolved on that path.
 Costs one extra model call per turn, so it wants to be conditional: skip it
 when the message has no anaphora and stands alone.
 
-### M4 — Real hybrid retrieval
+### M4 — Real hybrid retrieval — **BUILT, and off by default**
 
-The tsvector column, the GIN index and `match_chunks_lexical` all exist. Today
-lexical runs only when vector returns *nothing*, and only over `priority > 0`
-chunks — so it can rescue a curated FAQ and can never help a question whose
+The tsvector column, the GIN index and `match_chunks_lexical` all existed.
+Lexical ran only when vector returned *nothing*, and only over `priority > 0`
+chunks — so it could rescue a curated FAQ and could never help a question whose
 answer is a proper noun buried in a PDF, which is exactly the case keyword
 search wins.
 
-Running both channels every turn and fusing with reciprocal rank fusion is,
-as the 011 brief predicted, a scoring change rather than a migration. The
-groundwork is done, and **the gate is now open**: B1's floor means the vector
-channel yields, so there is something to fuse with. M2 is what makes the fusion
-weights arguable rather than guessed — the same trap B1 fell into, one layer up.
+**It needed a migration, and this brief said it did not.**
 
-### M5 — Re-ranking
+> ~~Running both channels every turn and fusing with reciprocal rank fusion is,
+> as the 011 brief predicted, a scoring change rather than a migration.~~
 
-`top_k` comes straight off cosine similarity. A cross-encoder re-rank over the
-already-over-fetched candidate set (`match_chunks` fetches `top_k * 4 + 10` and
-throws most away) is the highest-precision-per-token step available, and the
-candidates are already in hand. Workers AI hosts a re-ranker on the same free
-tier as the default embedder.
+[`012_retrieval.sql:433`](../supabase/012_retrieval.sql) has `and c.priority >
+0` hard-coded inside `match_chunks_lexical`. The gate that makes lexical a
+*fallback* is precisely what has to become a parameter, and it lives in SQL. So
+[`013`](../supabase/013_hybrid.sql) drops and recreates the function with
+`p_min_priority smallint default 1` — the drop is not optional, because a
+defaulted fourth parameter beside the existing three-argument function makes the
+three-argument call ambiguous rather than overloaded.
 
-### M6 — Heading context in prose chunks
+**Fusion is by rank, never by score.** `match_chunks` returns a cosine and
+`match_chunks_lexical` returns a `ts_rank_cd`; 012 already warns they are not on
+the same scale, and any weighted sum would need a normalisation nobody has
+measured. Reciprocal rank fusion — `score = Σ 1/(k + rank)` at the conventional
+`k = 60` — only ever compares ranks, which is why it is right here specifically.
+`fuseRRF` is pure and unit-tested directly.
+
+**`RagConfig.retrieval_mode` is `'vector' | 'fallback' | 'hybrid'`, defaulting
+to `'fallback'`**, so nobody's bot changes under them. `lexical_fallback` stays
+as-is for `'fallback'` mode rather than being overloaded into a tri-state: one
+setting that means three things depending on another setting is a knob nobody
+can reason about.
+
+**The risk, stated plainly, because it is why the eval negatives gate this.** In
+hybrid, lexical runs on every turn against every chunk. Any query sharing half
+its lexemes with any chunk returns something, so `rendered.length` is almost
+never zero, so `missedRetrieval` is almost never true, and `fallback_message`
+and `escalate_after_misses` die — **B1's exact failure, reached from the
+opposite direction.** The overlap gate (`ov.hits * 2 >= tq.n`) is the only thing
+standing between hybrid and that outcome, and it was tuned for a fallback
+channel over curated FAQ chunks, not for a primary channel over an entire
+corpus. It is now covered by
+[ranking-test.sql](../scripts/rls/ranking-test.sql), one assertion either side
+of the line.
+
+So: **ship it off, enable it on one bot, read the miss report before making it a
+recommendation.** A miss rate collapsing to near zero after enabling hybrid *is*
+the symptom, and someone has to be watching for it. The Retrieval screen says so
+in the tenant's own words when the mode is selected.
+
+Two M1 surfaces moved with it. `retrieval_log.channel` gains `'hybrid'` — free
+text, so no migration — and `buildMissReport` now pools **only** `channel ===
+'vector'` into `hitMedian`. That was an allow-list change, not a cosmetic one:
+the old test was `!== 'lexical'`, and under fusion the top result of a hybrid
+turn may be the lexical one, whose `similarity` is a `ts_rank_cd`. It would have
+gone straight into the median.
+
+### M5 — Re-ranking — **BUILT, off by default**
+
+`top_k` came straight off cosine similarity. A cross-encoder reads the query and
+the passage *together* rather than comparing two independently-produced vectors,
+which is the highest precision available per token.
+
+**No migration.** `match_chunks` already over-fetches `top_k * 4 + 10`
+internally, but re-ranks and truncates before returning — the candidates never
+leave Postgres. The Worker gets them by asking for more: `matchCount: top_k * 4`
+when re-rank is on, re-rank in the Worker, slice to `top_k`. Model is
+`@cf/baai/bge-reranker-base` over the `AiBinding` already declared in
+`types.ts` and already used by `storedFileToText`.
+
+**It must fail open, and does.** The binding is a property of the *deployment*,
+not of the tenant — a bot on OpenAI embeddings may be running somewhere with no
+Workers AI binding at all. Absent binding, an unrecognised response shape, or a
+call that throws all degrade to cosine order and log. This is a quality
+improvement sitting on the visitor's hot path; it may never fail the turn.
+
+**Interaction with the floor, which is the subtle part.** `min_similarity` is
+applied inside `match_chunks` against cosine, so re-ranking happens *after* the
+floor has already rejected. That ordering is correct and stays — but it means
+the re-ranker can only reorder what survived, never rescue. Do not later "fix"
+that by dropping the floor when re-rank is on: that is B1 for the third time.
+
+`channel` stays the retrieval channel and `top_score` stays the retrieval score.
+The re-rank changed the order, not the retrieval.
+
+### M6 — Heading context in prose chunks — **BUILT**
 
 `chunkQA` repeats the question into every piece of a split answer, and the
 reasoning in its header is exactly right: a fragment without the question is a
-fragment nothing will match. **Prose chunks get no equivalent.** Chunk 14 of a
-pricing page is a bare paragraph with no indication it is about pricing.
+fragment nothing will match. **Prose chunks got no equivalent.** Chunk 14 of a
+pricing page was a bare paragraph with no indication it is about pricing.
 
-Prepending the document title and nearest preceding heading to each prose chunk
-is a small change to `chunkText`, costs a few tokens per chunk, and applies the
-lesson the FAQ chunker already learned to the 90% of the corpus that is prose.
-Probably the best retrieval-quality-per-line change on this list.
+**It could not start in `chunkText`, and this brief said it could.**
+
+> ~~Prepending the document title and nearest preceding heading to each prose
+> chunk is a small change to `chunkText`.~~
+
+By the time `chunkText` runs there are no headings left to find. All three
+extractors destroyed them, each differently:
+
+| Source | Path | What happened to a heading |
+|---|---|---|
+| markdown | `markdownToText` | `#{1,6}` markers **stripped**, text kept as a bare line |
+| url | `htmlToText` | `<h1-6>` was in `BLOCK_TAGS` → replaced with `\n`. Bare line. |
+| file | `storedFileToText` | Workers AI `toMarkdown` output passed through **raw** — `#` markers survived |
+| text | none | no headings existed |
+
+So a heading arrived at the chunker as a short line indistinguishable from a
+sentence — except for file sources, where it arrived as markdown by accident.
+**M6 starts in [`extract.ts`](../src/rag/extract.ts)**, preserving headings in
+one canonical form, ATX markdown, because one of the three sources already
+produces it. `markdownToText` keeps the marker; `htmlToText` maps `<h1>`–`<h6>`
+to `\n\n# `…`\n\n` at their own level *before* the generic tag strip, with
+`h[1-6]` removed from `BLOCK_TAGS`.
+
+Then `chunkText(input, { size, overlap, title })` splits on headings and emits
+each prose chunk as `{title} › {nearest heading}\n\n{chunk text}`, with the
+markers consumed rather than embedded. The prefix is dropped whole — never
+truncated — when it would exceed a quarter of `size`, which is the same failure
+`MIN_ANSWER_BUDGET` guards against in `chunkQA`, reached from the other
+direction. `chunkQA` itself is untouched: it already carries its own header, and
+a second prefix would spend the budget saying the same thing twice.
+
+Three consequences worth stating rather than discovering:
+
+- **The prefix is part of `chunks.content`**, so it appears in rendered
+  excerpts, in the chunk inspector, and in the `search` tsvector — which *helps*
+  the lexical channel, since a heading carries the words a visitor types.
+- **It changes what gets embedded**, so it shifts the similarity distribution
+  the measured floors were taken against. bge's 0.60 is now approximate until
+  the sweep is re-run.
+- **Existing corpora get no benefit until re-indexed.** No migration needed, but
+  the miss report's `hitMedian` will drift as tenants re-index, and someone
+  reading that graph deserves to know why.
+
+A heading with no body of its own folds into the next section's trail
+(`Pricing › Plans`) rather than being dropped, and a trailing heading with
+nothing under it is kept as content — which is exactly what it was before
+headings were markers at all.
 
 ### M7 — URL sources never refresh
 
@@ -582,13 +750,39 @@ and re-indexing only on change would fix it. Needs a `last_fetched_at` and a
 visible "checked 3 days ago" in Sources, because silent staleness is the
 failure mode being fixed.
 
-### M8 — Near-duplicate suppression
+### M8 — Near-duplicate suppression — **FIXED**
 
-Nothing dedupes. The same boilerplate paragraph in three indexed pages returns
-three near-identical excerpts that consume three of five `top_k` slots and most
-of `context_chars`. A similarity check between selected chunks at render time
-(drop anything above ~0.95 against a chunk already kept) costs nothing and is
-worth the most on exactly the corpora that are hardest to curate.
+Nothing deduped. The same boilerplate paragraph in three indexed pages returned
+three near-identical excerpts that consumed three of five `top_k` slots and most
+of `context_chars`.
+
+**It is lexical, not cosine, and that is a constraint rather than a
+preference — record it, or the next reader will "improve" it back into the
+version that cannot run.** The Worker never receives a chunk's vector:
+`MatchedChunk` carries `content`, `similarity`, `kind`, `priority` and
+`document_title`, and nothing else. "Drop anything above ~0.95 cosine against a
+chunk already kept" would need either 768 floats per candidate shipped over
+PostgREST (~60 KB a turn) or the whole check moved into SQL.
+
+The stated failure is *"the same boilerplate paragraph in three indexed
+pages"* — **literal** duplication, which a Jaccard overlap over 5-token shingles
+catches exactly, at zero cost and with no vectors. `dedupe` runs inside
+`selectContext` *before* the budget loop, so a dropped duplicate frees its slot
+**and** its characters for a chunk that says something new.
+
+**The trap, and the test that exists for it.** `chunkText` prepends
+`chunk_overlap` characters of the previous chunk into every chunk, so two
+*adjacent* chunks of one document always share text and must **not** be
+deduped — they are different content. At the shipped defaults the overlap lands
+near 0.15, but that headroom is a fact about the defaults and both `chunk_size`
+and `chunk_overlap` are tenant-configurable. The assertion is taken at the worst
+combination the clamps allow (`size: 200`, `overlap: 100`) rather than at the
+defaults, against a real `chunkText` run.
+
+*(The first draft of that test used one sentence repeated, which makes adjacent
+chunks genuine duplicates — dedupe was right to collapse them and the test was
+wrong. The fixture is varied prose now. Worth knowing, because the same mistake
+reads as a threshold bug.)*
 
 ---
 
@@ -616,11 +810,34 @@ worth the most on exactly the corpora that are hardest to curate.
   have to happen in the right order relative to each other, and a stub of the
   middle proves nothing about the order. `buildMissReport` is pure and lives in
   [test-stats-units.mjs](../scripts/test-stats-units.mjs) with `buildStats`.
-- **No SQL-level test for ranking.** `match_chunks`'s boost and
-  `match_chunks_lexical`'s overlap gate were verified by hand against the live
-  database during the 011 work and are not covered by
-  [knowledge-test.sql](../scripts/rls/knowledge-test.sql), which tests isolation
-  rather than ranking.
+- ~~**No SQL-level test for ranking.**~~ **DONE.**
+  [ranking-test.sql](../scripts/rls/ranking-test.sql), wired into
+  `RAG_MIGRATIONS` beside `retrieval-test.sql`. `match_chunks`'s boost and
+  `match_chunks_lexical`'s overlap gate had been verified by hand against the
+  live database during 011 and were covered nowhere —
+  [knowledge-test.sql](../scripts/rls/knowledge-test.sql) tests isolation, not
+  ranking. It asserts that a boosted chunk with lower cosine outranks an
+  unboosted one at boost 0.5 and does **not** at boost 0 or at the 0.05 default;
+  that the floor tests **raw** similarity rather than the boosted score (012
+  says so and nothing checked it); that the overlap gate rejects one lexeme in
+  five and accepts four; that an apostrophe or a `&` a visitor typed is a
+  literal rather than a tsquery syntax error; that `p_min_priority` is what
+  separates fallback from hybrid and its default changes nothing; and that
+  `bots.chunk_count` stays exact across a delete-then-insert cycle.
+
+  It builds its **own** bot, document and chunks with hand-written embeddings,
+  because ranking assertions need known distances between known vectors —
+  reusing what the earlier files leave behind would make every number depend on
+  what those files happen to insert. It removes the fixture afterwards.
+
+- **A latent blocker found while wiring it up.** No RLS fixture had ever
+  inserted an `embedding`, so `retrieval-test.sql`'s title-fold assertion —
+  `if total = 0 then raise exception` — would have failed the first time anyone
+  ran the RAG block on a Postgres with pgvector, taking `ranking-test.sql` down
+  with it. Those eight assertions have still never executed, which is exactly
+  how it survived. `rag-test.sql` now gives its chunks a uniform vector; the
+  files that test isolation and shape do not care what it is, and
+  `ranking-test.sql` builds its own where distance is the point.
 
 ---
 
@@ -634,26 +851,39 @@ mitigation and the S2 title fold riding
 [012](../supabase/012_retrieval.sql) — everything that needed SQL, in one file,
 deployed before the Worker because both RPCs widen their return type.
 
-**Still a run rather than a build, and still outstanding:** `npm run eval:rag --
---vendor=google --sweep=...` for every embedding vendor with a
-`defaultEmbedModel`, and commit the measured floors. Until then every non-bge
+**Still a run rather than a build, and still outstanding — and it is now a gate,
+not housekeeping:** `npm run eval:rag -- --vendor=google --sweep=...` for every
+embedding vendor with a `defaultEmbedModel`, and commit the measured floors.
+
+**Why it gates M4 specifically.** The eval harness's *negatives* — eight
+off-topic queries that must return nothing — are the only automated test that
+catches a retrieval change which quietly stops rejecting, and M4 is exactly such
+a change. They must run green **before and after** enabling hybrid on anything;
+if off-topic rejection drops, the overlap gate needs raising for hybrid mode
+first. Everything else about M4 can be reviewed by reading. That cannot.
+
+M6 is the other reason to re-run it: the heading prefix changes what gets
+embedded, so it moves the similarity distribution the floors were measured
+against. Until then every non-bge
 vendor is on the unmeasured 0.30 — which is the value B1 was about, still in
 place for anyone who switched away from the platform default. It needs
 `wrangler login`, live Supabase and real embedding quota, and it creates then
 deletes a tenant in the production project, which is why it has not happened as
 a side effect of anything else.
 
-**Then, quality:** M8 and M6 (cheap, no new infrastructure), then M4 (hybrid,
-groundwork already laid), then M5 (re-rank). All three are now measurable
-against the miss report rather than against an opinion.
+**~~Then, quality:~~ DONE**, in that order and for that reason: M8 and M6 are
+pure-function changes with offline tests, then M4 and M5, which change what
+retrieval returns. M4 needed [`013`](../supabase/013_hybrid.sql) after all — see
+its entry — and both it and M5 ship switched off.
 
-**Before real scale:** the rest of S1 (`iterative_scan` on pgvector 0.8+) and
-the `hasChunks` half of S2.
+**~~Before real scale:~~ DONE.** S1's `iterative_scan` and the `hasChunks` half
+of S2 both rode 013. S1 remains documented as unverified; S2 got a counter
+column rather than the row fold, which would have re-opened B1.
 
 **Deferred deliberately:** M3 and M7 both cost recurring calls, and neither pays
 off until the corpus is bigger and the conversations longer than they are today.
-M7's Cron Trigger objection is now weaker — 012 added one for retention — but
-the argument that stands is the deliberately narrow scope of that handler: a
-"daily maintenance" function accretes, and one failure takes down work unrelated
-to the failure. A URL refresh gets its own schedule and its own branch, not
-another line in that one.
+M7's Cron Trigger objection is now gone — 012 added one for retention — but the
+argument that stands is the deliberately narrow scope of that handler: a "daily
+maintenance" function accretes, and one failure takes down work unrelated to the
+failure. A URL refresh gets its own schedule and its own handler, not another
+line in that one.

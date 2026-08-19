@@ -174,7 +174,7 @@ byte-identical to what shipped before — asserted as a string comparison in
 Full reasoning, decisions and rejected alternatives:
 [knowledge-pipeline.md](knowledge-pipeline.md).
 
-## Phase 2d — RAG hardening ◐ phases 1 and 2 shipped
+## Phase 2d — RAG hardening ◐ phases 1, 2 and 3 shipped
 
 An audit of the pipeline 2c left behind found six correctness bugs, two that
 only appear at scale, and eight things production grade would add. The headline
@@ -217,12 +217,54 @@ retries with backoff on a bounded budget instead of discarding every batch
 already embedded. And `hnsw.ef_search` is set before the vector search, which is
 the cheap half of a recall trap that is invisible at today's row counts.
 
-Still open, and each has a written brief: conversational query rewriting, hybrid
-retrieval with RRF, re-ranking, heading context in prose chunks, URL refresh,
-near-duplicate suppression, folding `hasChunks` into `match_chunks`, and
-pgvector 0.8 `iterative_scan`. Also still outstanding, and a run rather than a
-build: `npm run eval:rag --vendor=… --sweep=…` per vendor, so the floors for
-every non-bge embedder stop being the documented guess.
+**Phase 3 is also one theme, and it is the riskier one: every item in it changes
+what comes back from a search.** That is a class of change nothing would notice
+going wrong, which is why phase 2's measurement had to exist first. It is one
+migration, [`013_hybrid.sql`](../supabase/013_hybrid.sql), plus pure-Worker
+work.
+
+Retrieval got two new modes and both ship **off**. `retrieval_mode: 'hybrid'`
+runs the vector and lexical channels on every turn over the whole corpus and
+fuses them by reciprocal rank — by rank, because a cosine and a `ts_rank_cd` are
+not on the same scale and no weighted sum of them means anything. It needed a
+migration after all: the `priority > 0` gate that makes lexical a *fallback*
+lives inside the SQL function, and hybrid is precisely the mode that has to
+reach a `priority = 0` prose chunk. `rerank: true` adds a cross-encoder pass
+over the already-over-fetched candidates, and fails open to cosine order when
+the deployment has no Workers AI binding, because that binding is a property of
+the deployment and not of the tenant.
+
+Both are off by default for the same reason, and it is the same failure B1 was:
+lexical running against every chunk on every turn almost always returns
+*something*, so "the bot could not answer" stops being reachable and
+`fallback_message` and `escalate_after_misses` die again. The overlap gate is
+the only thing standing between hybrid and that, and the miss report is the
+production canary — a miss rate collapsing toward zero after switching a bot to
+hybrid is the symptom, not the win.
+
+Two changes improve every corpus without a setting. Near-duplicate suppression
+drops chunks that repeat something already kept, before the context budget is
+spent, so the same boilerplate paragraph on three indexed pages stops consuming
+three of five slots — done by shingle overlap rather than cosine, because the
+Worker never receives a chunk's vector. And prose chunks now carry their
+document title and nearest heading, the way FAQ chunks have always carried their
+question; that one started in `extract.ts`, because all three extractors were
+destroying headings before the chunker could see them.
+
+Finally the scale items: `hnsw.iterative_scan` (guarded — `set_config` on an
+unknown GUC errors, and the parameter does not exist before pgvector 0.8), and
+`bots.chunk_count`, which replaces a per-turn "does this bot have a corpus"
+query with a field read. That is deliberately **not** the fold the brief
+proposed: deriving "no corpus" from an empty `match_chunks` result would have
+made `missedRetrieval` unreachable, which is B1 again with a different cause.
+
+Still open, and each has a written brief: conversational query rewriting and URL
+refresh, both deferred because they cost recurring calls that do not pay off at
+today's corpus size. Also still outstanding, and a run rather than a build:
+`npm run eval:rag --vendor=… --sweep=…` per vendor, so the floors for every
+non-bge embedder stop being the documented guess. **That run now gates enabling
+hybrid anywhere** — the harness's off-topic negatives are the only automated
+check that a retrieval change did not quietly stop rejecting.
 
 Full audit, measurements and remaining work: [rag-hardening.md](rag-hardening.md).
 Retention and the privacy surface `retrieval_log` adds: [tenancy.md](tenancy.md).

@@ -100,7 +100,15 @@ console.log('\nMarkdown extraction');
 {
   const md = '# Pricing\n\nSee [our page](https://x.com) for `details`.\n\n```\ncode block\n```\n\n- Cleaning\n- Whitening\n\n**Bold** and _italic_.';
   const text = markdownToText(md);
-  check('strips heading markers',  !text.includes('#') && text.includes('Pricing'));
+  // KEEPS them, as of M6. This assertion used to read the other way,
+  // and reversing it is the change: chunkText reads the markers to
+  // build the breadcrumb it prefixes onto each prose chunk, and it
+  // consumes them there — so nothing markdown-shaped reaches an
+  // embedding, but stripping them here would leave a heading as a bare
+  // line the chunker cannot tell from a sentence. See M6 in
+  // docs/rag-hardening.md.
+  check('KEEPS heading markers, at their own level',
+        /^# Pricing$/m.test(text), text.slice(0, 120));
   check('keeps link text only',    text.includes('our page') && !text.includes('https://x.com'));
   check('drops fenced code',       !text.includes('code block'));
   check('keeps list items',        text.includes('Cleaning') && text.includes('Whitening'));

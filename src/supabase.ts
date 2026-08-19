@@ -744,26 +744,45 @@ export async function matchChunks(
 }
 
 /**
- * Lexical search over the boosted chunks. Called only when the vector
- * search returned nothing — see the note in src/rag/retrieve.ts for
- * why that asymmetry is deliberate.
+ * Lexical search.
+ *
+ * `minPriority` is what decides which of the two jobs this does, and it
+ * is a parameter rather than a constant since 013:
+ *
+ *   1 — curated, boosted chunks only. The fallback channel, called only
+ *       when the vector search returned nothing. That asymmetry is
+ *       deliberate; see the note in src/rag/retrieve.ts.
+ *   0 — the whole corpus. What hybrid mode asks for, because the case
+ *       keyword search wins is a proper noun buried in a PDF, which is
+ *       a priority-0 prose chunk by construction.
+ *
+ * Omitted means 1, matching both the SQL default and every caller that
+ * predates hybrid.
  */
 export async function matchChunksLexical(
   db: ServiceDb,
-  args: { botId: string; query: string; matchCount: number },
+  args: { botId: string; query: string; matchCount: number; minPriority?: number },
 ): Promise<MatchedChunk[]> {
   return pgFetch(db, '/rpc/match_chunks_lexical',
     { method: 'POST',
       body: JSON.stringify({
-        p_bot_id:      args.botId,
-        p_query_text:  args.query,
-        p_match_count: args.matchCount,
+        p_bot_id:       args.botId,
+        p_query_text:   args.query,
+        p_match_count:  args.matchCount,
+        p_min_priority: args.minPriority ?? 1,
       }) }
   );
 }
 
-/** Whether a bot has anything indexed — lets the chat path skip the
- *  embedding call entirely for bots with no corpus. */
+/**
+ * Whether a bot has anything indexed — lets the chat path skip the
+ * embedding call entirely for bots with no corpus.
+ *
+ * SUPERSEDED BY `bots.chunk_count` (013, S2), and kept as the fallback
+ * for a Worker running ahead of that migration. Once every deployment
+ * has the column this is one round trip per chat turn that nobody pays.
+ * Do not add new callers.
+ */
 export async function hasChunks(db: ServiceDb, botId: string): Promise<boolean> {
   const rows = await pgFetch<Array<{ id: string }>>(db,
     `/chunks?select=id&bot_id=eq.${encodeURIComponent(botId)}&limit=1`
@@ -962,7 +981,9 @@ export interface RetrievalLogInsert {
   session_id: string | null;
   query: string;
   matched: boolean;
-  channel: 'vector' | 'lexical' | null;
+  /** Free text in the column on purpose (012), so a third channel needs
+   *  no migration — 013 added 'hybrid'. NULL on a miss. */
+  channel: 'vector' | 'lexical' | 'hybrid' | null;
   top_score: number | null;
   chunk_count: number;
   min_similarity: number | null;

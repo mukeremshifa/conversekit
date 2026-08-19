@@ -7,6 +7,86 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Added
 
+- **Hybrid retrieval** (`rag_config.retrieval_mode`, supabase/013) — the vector
+  and lexical channels can now run on **every** turn over the **whole** corpus
+  and be fused by reciprocal rank, instead of lexical being a fallback that only
+  fires when vector finds nothing and only over curated FAQ chunks. That is the
+  case keyword search wins: a part number or a proper noun buried in a PDF,
+  which meaning-based search reads straight past.
+
+  Fused **by rank, never by score** — `match_chunks` returns a cosine and
+  `match_chunks_lexical` returns a `ts_rank_cd`, and any weighted sum of two
+  scales nobody has measured is a guess dressed as arithmetic.
+
+  It needed a migration, contrary to what the brief predicted: `and c.priority >
+  0` was hard-coded inside `match_chunks_lexical`, and that line *is* what makes
+  lexical a fallback. It is `p_min_priority` now.
+
+  **Ships off** (`'fallback'` remains the default), and the reason is written
+  into the setting itself: lexical over every chunk almost always returns
+  something, so "the bot could not answer" stops being reachable and
+  `fallback_message` and `escalate_after_misses` quietly die — the same failure
+  the similarity-floor fix was about, reached from the opposite direction. The
+  miss report is the canary; a miss rate collapsing toward zero after enabling
+  it is the symptom, not the win.
+- **Second-pass ranking** (`rag_config.rerank`) — an optional cross-encoder pass
+  (`@cf/baai/bge-reranker-base`) over the candidates `match_chunks` already
+  over-fetches. Reads the question and the passage together rather than
+  comparing two independently-produced vectors. No migration: the Worker simply
+  asks for more rows.
+
+  **Fails open by design.** The Workers AI binding is a property of the
+  deployment, not of the tenant, so a bot with this on may be running somewhere
+  that cannot do it — absent binding, unrecognised response, or a call that
+  throws all degrade to similarity order. It is a quality improvement sitting on
+  the visitor's hot path and may never fail the turn. It runs *after* the
+  similarity floor, so it reorders what survived and never rescues what did not.
+- **Prose chunks now carry their document title and nearest heading.** The FAQ
+  chunker has always repeated the question into every piece of a split answer,
+  for the reason its header gives: a fragment without its question is a fragment
+  nothing matches. Chunk 14 of a pricing page had no equivalent — a bare
+  paragraph with nothing in it saying it was about pricing.
+
+  This could not be a change to the chunker alone, because **all three
+  extractors were destroying headings before the chunker could see them** — the
+  markdown path stripped the `#` markers, the HTML path replaced `<h2>` with a
+  newline, and only a converted file arrived as markdown by accident. So
+  `extract.ts` preserves them in one canonical form first, and the chunker
+  consumes the markers when building the breadcrumb.
+
+  Existing sources keep their current chunks until reindexed. The prefix also
+  feeds the keyword index, which helps it — a heading carries the words a
+  visitor types.
+- **Near-duplicate suppression.** The same boilerplate paragraph indexed on
+  three pages returned three near-identical excerpts that took three of five
+  slots and most of the prompt budget to say one thing. Duplicates are dropped
+  **before** the budget is spent, so a dropped copy frees its slot *and* its
+  characters for a passage that says something new.
+
+  Done by shingle overlap rather than by cosine, and that is a constraint rather
+  than a preference: the Worker never receives a chunk's vector, so the obvious
+  implementation would mean shipping 768 floats per candidate over PostgREST.
+  Literal duplication is what the failure actually is.
+- **`bots.chunk_count`** (supabase/013) — replaces the "does this bot have a
+  corpus" query that ran before retrieval on every single chat turn with a read
+  of a column the bot row already carries. Maintained by a statement-level
+  trigger on `chunks`, so a 400-chunk reindex fires it twice rather than 800
+  times.
+
+  Deliberately **not** the fold that was proposed for it. Deriving "no corpus"
+  from an empty `match_chunks` result would have made `missedRetrieval`
+  unreachable — killing `fallback_message`, `escalate_after_misses` and the
+  keyword fallback all over again — and would have cost an embedding call per
+  turn for bots that have no corpus at all, which is the one case the check
+  exists to make free.
+- **`scripts/rls/ranking-test.sql`** — the last open housekeeping item. The
+  priority boost and the keyword overlap gate had been verified by hand against
+  the live database and were covered by no test: it asserts that the boost
+  reorders at 0.5 and does *not* at the 0.05 default, that the similarity floor
+  tests raw similarity rather than the boosted score, that the overlap gate
+  rejects one term in five and accepts four, that an apostrophe a visitor typed
+  is a literal rather than a query syntax error, and that `chunk_count` survives
+  a delete-then-insert cycle.
 - **Retrieval logging, and the report a tenant actually wants** (`retrieval_log`,
   supabase/012) — nothing recorded what visitors asked or whether the bot could
   answer, so every question about this pipeline needed a hand-written SQL query
@@ -115,6 +195,25 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Changed
 
+- **`hnsw.iterative_scan` is set before the vector search** on pgvector 0.8+
+  (supabase/013), the second half of the recall mitigation `hnsw.ef_search`
+  started. Guarded by an exception block, because setting an unknown parameter
+  *errors* and this one does not exist before 0.8 — unguarded it would turn
+  every search on an older deployment into a 500. Paired with
+  `hnsw.max_scan_tuples` so relaxed ordering cannot degenerate into scanning the
+  index. **Still not verified against a large-row fixture**, and documented that
+  way.
+- **The miss report counts a `hybrid` channel, and pools only vector scores into
+  its typical-match median.** That was an allow-list change rather than a
+  cosmetic one: the previous test was "not lexical", and under fusion the top
+  result of a hybrid turn may be the lexical one — whose score is a text rank,
+  not a similarity. It would have gone straight into the one continuous
+  measurement the platform has.
+- **The RLS fixtures give their chunks a real embedding.** No fixture ever had
+  one, so `retrieval-test.sql`'s title-fold assertion would have failed the
+  first time anyone ran the RAG block against a Postgres with pgvector — taking
+  every later file with it. Those assertions have still never executed, which is
+  exactly how it went unnoticed.
 - **Ingestion now survives the failure its own header claimed it survived.**
   `embedPieces` looped batches of 32 with no retry and no partial-progress
   record, so one 429 on batch 7 of 13 threw, the catch marked the document

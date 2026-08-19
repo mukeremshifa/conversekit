@@ -252,6 +252,35 @@ console.log('\nMiss report — channels and scores');
   eq('an odd count takes the middle value', r.scores.hitMedian, 0.7);
 }
 {
+  // The 013 channel, and the reason it needed a code change rather than
+  // just a new value. Under fusion the top result of a hybrid turn may
+  // be the LEXICAL one, so its top_score may be a ts_rank_cd — and the
+  // old test for this was `channel !== 'lexical'`, which would have let
+  // every one of them straight into the median. Hybrid has to be
+  // excluded by construction, not by name.
+  const r = report([
+    log({ top_score: 0.9 }),
+    log({ channel: 'hybrid', top_score: 0.03 }),
+    log({ channel: 'hybrid', top_score: 0.02 }),
+    miss('nothing here'),
+  ]);
+  eq('hybrid turns are counted as their own channel', r.channels.hybrid, 2);
+  eq('not folded into vector', r.channels.vector, 1);
+  eq('and their scores never reach the median', r.scores.hitMedian, 0.9);
+  eq('while still counting toward the denominator', r.totals.queries, 4);
+  eq('the four channel counts sum to the queries',
+     r.channels.vector + r.channels.lexical + r.channels.hybrid + r.channels.missed,
+     r.totals.queries);
+}
+{
+  // An allow-list, not a deny-list: a channel written by a future
+  // Worker must not silently corrupt the one continuous measurement
+  // the platform has.
+  const r = report([log({ top_score: 0.9 }), log({ channel: 'something-new', top_score: 0.01 })]);
+  eq('an unrecognised channel is excluded from the median', r.scores.hitMedian, 0.9);
+  eq('but still counted as a query', r.totals.queries, 2);
+}
+{
   // Chunks came back and the model was still shown nothing — a budget
   // problem rather than a retrieval one, and worth seeing as such.
   const r = report([miss('x y z', 0, { top_score: 0.82, chunk_count: 0 })]);

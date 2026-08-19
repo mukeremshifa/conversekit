@@ -16,8 +16,17 @@ begin;
     (select count(*) from documents d join bots b on b.id = d.bot_id where d.org_id <> b.org_id) = 0,
     'document org_id always matches its bot''s org');
 
-  insert into chunks (document_id, bot_id, ordinal, content)
-  select d.id, d.bot_id, 0, d.content from documents d;
+  -- EVERY CHUNK GETS AN EMBEDDING, and it is not decoration. Three
+  -- later files (knowledge-test, retrieval-test, ranking-test) ask
+  -- match_chunks for real rows, and match_chunks skips `embedding is
+  -- null` — so without this they all search an empty candidate set and
+  -- assert against nothing. The vector itself is arbitrary and uniform:
+  -- these files test isolation and shape, not distance. ranking-test
+  -- builds its own vectors where distance is the point.
+  insert into chunks (document_id, bot_id, ordinal, content, embedding)
+  select d.id, d.bot_id, 0, d.content,
+         ('[1' || repeat(',0', 767) || ']')::vector
+    from documents d;
 
   select assert(
     (select count(*) from chunks c join bots b on b.id = c.bot_id where c.org_id <> b.org_id) = 0,

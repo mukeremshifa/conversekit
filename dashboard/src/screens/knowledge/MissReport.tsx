@@ -159,6 +159,16 @@ function Summary({ report }: { report: Report }) {
           keyword fallback
         </span>
       )}
+      {/* Its own count, not folded into either channel: a merged search
+          was answered by both at once, and the typical-match figure
+          below deliberately excludes these — a keyword rank averaged
+          into a similarity median is not a measurement. */}
+      {channels.hybrid > 0 && (
+        <span>
+          <strong className="text-ink tabular-nums">{channels.hybrid}</strong> answered by the
+          merged search
+        </span>
+      )}
       {scores.hitMedian !== null && (
         <span className="tabular-nums">
           typical match {scores.hitMedian.toFixed(2)}

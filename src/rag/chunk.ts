@@ -17,6 +17,10 @@ export interface ChunkOptions {
   size?: number;
   /** Characters of trailing context repeated into the next chunk. */
   overlap?: number;
+  /** The document's own title. Prefixed to every prose chunk together
+   *  with the nearest preceding heading — see chunkText (M6). Absent
+   *  means the breadcrumb is the heading alone, or nothing. */
+  title?: string;
 }
 
 export const DEFAULT_CHUNK_SIZE = 800;
@@ -186,25 +190,153 @@ export function parseFaqText(input: string): ParsedFaq {
   return { items, unparsed: loose.join('\n').replace(/\n{3,}/g, '\n\n').trim() };
 }
 
+// ----------------------------------------------------------------
+// Heading context (M6)
+//
+// chunkQA repeats the question into every piece of a split answer, and
+// the reasoning in its header is exactly right: a fragment without its
+// question is a fragment nothing will ever match. PROSE GOT NO
+// EQUIVALENT. Chunk 14 of a pricing page is a bare paragraph with
+// nothing in it saying it is about pricing, and that is ~90% of a
+// corpus.
+//
+// THIS COULD NOT START HERE, which is the part worth recording. By the
+// time text reaches this file its headings are already gone: markdown
+// extraction stripped the `#` markers, HTML extraction replaced
+// `<h2>` with a newline, and only a converted file arrived as markdown
+// by accident. src/rag/extract.ts now preserves all three as ATX, so
+// the splitter below has something to find.
+// ----------------------------------------------------------------
+
+/** An ATX heading line. The text is optional so `##` alone is consumed
+ *  as a marker rather than embedded as two literal hashes. */
+const HEADING = /^(#{1,6})(?:[ \t]+(.*))?$/;
+
+/** Separator between the document title and the heading trail. Not a
+ *  character a heading is likely to contain, and it reads as a path. */
+const CRUMB = ' › ';
+
+/**
+ * Fraction of `size` the breadcrumb may consume.
+ *
+ * Past this the chunk is mostly header and the text it was supposed to
+ * introduce no longer fits — the same failure MIN_ANSWER_BUDGET guards
+ * against in chunkQA, reached from the other direction: there a long
+ * question, here a long title against a small tenant-configured
+ * chunk_size. Over the line the prefix is dropped whole rather than
+ * truncated, because half a breadcrumb names the wrong section.
+ */
+const MAX_PREFIX_FRACTION = 0.25;
+
+interface Section {
+  /** The heading trail above this text, joined, or null at the top of
+   *  a document. */
+  heading: string | null;
+  text: string;
+}
+
+/**
+ * Split normalised text into (heading trail, prose) pairs.
+ *
+ * A heading with no body of its own does not lose its words: it is
+ * carried into the next section's trail, so `# Pricing` immediately
+ * followed by `## Plans` yields `Pricing › Plans` rather than dropping
+ * `Pricing` on the floor. A trailing heading with nothing after it
+ * becomes a section of its own text, which is exactly what this
+ * function returned for it before headings were markers at all.
+ */
+function sections(normalized: string): Section[] {
+  const out: Section[] = [];
+  let trail: string[] = [];
+  let buf: string[] = [];
+
+  const flush = () => {
+    const text = buf.join('\n').trim();
+    buf = [];
+    if (!text) return false;
+    out.push({ heading: trail.join(CRUMB) || null, text });
+    trail = [];
+    return true;
+  };
+
+  for (const line of normalized.split('\n')) {
+    const m = HEADING.exec(line.trim());
+    if (!m) { buf.push(line); continue; }
+    flush();
+    const heading = (m[2] ?? '').trim();
+    if (heading) trail.push(heading);
+  }
+
+  // Headings at the very end with no prose under them. Kept as content
+  // rather than discarded — they are still the only words on that part
+  // of the page.
+  if (!flush() && trail.length) out.push({ heading: null, text: trail.join('\n') });
+
+  return out;
+}
+
+/**
+ * Split prose into chunks, each carrying where in the document it came
+ * from.
+ *
+ * Every piece is emitted as
+ *
+ *     {title} › {nearest heading}
+ *
+ *     {chunk text}
+ *
+ * with the `#` markers consumed rather than embedded. The prefix is
+ * part of `chunks.content`, so it is embedded, it appears in rendered
+ * excerpts and in the chunk inspector, and it feeds the `search`
+ * tsvector — which helps the lexical channel rather than hurting it,
+ * since the heading carries the words a visitor is most likely to type.
+ *
+ * TWO CONSEQUENCES WORTH STATING OUT LOUD. It changes what gets
+ * embedded, so it shifts the similarity distribution the measured
+ * floors in catalog.ts were taken against. And an existing corpus gets
+ * none of it until re-indexed, so the miss report's hitMedian will
+ * drift as tenants re-index — which is a migration in progress, not a
+ * regression.
+ *
+ * Overlap is applied WITHIN a section, not across one. A heading is a
+ * genuine topic boundary, and carrying the tail of the pricing section
+ * into the first chunk of the refunds section is the mid-sentence split
+ * this file exists to avoid. With no headings there is exactly one
+ * section, so the behaviour is byte-identical to the pre-M6 chunker.
+ */
 export function chunkText(input: string, opts: ChunkOptions = {}): string[] {
   const size    = Math.max(opts.size ?? DEFAULT_CHUNK_SIZE, 100);
   const overlap = Math.max(Math.min(opts.overlap ?? DEFAULT_CHUNK_OVERLAP, Math.floor(size / 2)), 0);
+  const title   = (opts.title ?? '').trim().replace(/\s+/g, ' ');
 
   const normalized = normalizeText(input);
   if (!normalized) return [];
 
-  const pieces = split(normalized, size)
-    .map((p) => p.trim())
-    .filter(Boolean);
+  const out: string[] = [];
 
-  if (overlap === 0 || pieces.length < 2) return pieces;
+  for (const section of sections(normalized)) {
+    const crumbs = [title, section.heading].filter(Boolean).join(CRUMB);
+    const full   = crumbs ? `${crumbs}\n\n` : '';
+    const prefix = full.length <= size * MAX_PREFIX_FRACTION ? full : '';
+    // What is left for the text itself. Floored so a pathological
+    // prefix cannot drive the budget to zero.
+    const budget = Math.max(size - prefix.length, 100);
 
-  // Prepend the tail of the previous chunk so a fact spanning a
-  // boundary is retrievable from either side.
-  return pieces.map((piece, i) => {
-    if (i === 0) return piece;
-    const prev = pieces[i - 1];
-    const carry = prev.slice(Math.max(0, prev.length - overlap));
-    return `${carry.trimStart()} ${piece}`.trim();
-  });
+    const pieces = split(section.text, budget)
+      .map((p) => p.trim())
+      .filter(Boolean);
+
+    for (let i = 0; i < pieces.length; i++) {
+      if (i === 0 || overlap === 0) { out.push(`${prefix}${pieces[i]}`); continue; }
+      // Prepend the tail of the previous chunk so a fact spanning a
+      // boundary is retrievable from either side. Carried from the
+      // previous piece's TEXT, never from its prefix — repeating the
+      // breadcrumb twice would spend the budget saying the same thing.
+      const prev  = pieces[i - 1];
+      const carry = prev.slice(Math.max(0, prev.length - overlap));
+      out.push(`${prefix}${`${carry.trimStart()} ${pieces[i]}`.trim()}`);
+    }
+  }
+
+  return out;
 }

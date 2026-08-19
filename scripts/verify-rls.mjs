@@ -62,6 +62,15 @@ const RAG_MIGRATIONS = [
   // prune_retrieval_log clamps its window rather than truncating.
   join(ROOT, 'supabase', '012_retrieval.sql'),
   join(HERE, 'rls', 'retrieval-test.sql'),
+  // 013 recreates both RPCs again (a lexical priority parameter and
+  // hnsw.iterative_scan) and adds bots.chunk_count, so it is gated for
+  // the same reason. ranking-test.sql is the one open housekeeping item
+  // from the phase 1 audit: the priority boost and the lexical overlap
+  // gate were verified by hand against the live database during 011 and
+  // were covered nowhere. It builds its own fixture with hand-written
+  // embeddings, because ranking needs known distances.
+  join(ROOT, 'supabase', '013_hybrid.sql'),
+  join(HERE, 'rls', 'ranking-test.sql'),
 ];
 
 /**

@@ -209,12 +209,20 @@ export interface MissReport {
   };
   /** Misses only, grouped and ranked. The list a tenant acts on. */
   questions: MissQuestion[];
-  /** What actually answered. `missed` is the complement of the other
-   *  two, so the three sum to `totals.queries`. */
-  channels: { vector: number; lexical: number; missed: number };
+  /** What actually answered. `missed` is the complement of the others,
+   *  so the four sum to `totals.queries`.
+   *
+   *  `hybrid` (013) is its own count rather than folded into `vector`:
+   *  a fused turn was answered by both channels at once, and reporting
+   *  it as either would misdescribe what ran. A bot on the default mode
+   *  never records one. */
+  channels: { vector: number; lexical: number; hybrid: number; missed: number };
   scores: {
-    /** Median top score on turns the vector channel answered. Cosine,
-     *  so it is comparable with `floor` below and with nothing else. */
+    /** Median top score on turns the VECTOR channel answered. Cosine,
+     *  so it is comparable with `floor` below and with nothing else —
+     *  the lexical and hybrid channels are both excluded, because a
+     *  ts_rank_cd pooled into this would corrupt the one continuous
+     *  measurement the platform has. See buildMissReport. */
     hitMedian: number | null;
     /**
      * Highest score recorded on a turn that still counted as a miss.
@@ -282,6 +290,7 @@ export function buildMissReport(opts: {
   let misses = 0;
   let vector = 0;
   let lexical = 0;
+  let hybrid = 0;
   let missMax: number | null = null;
   let floor: number | null = null;
 
@@ -298,12 +307,17 @@ export function buildMissReport(opts: {
 
     if (r.matched) {
       if (r.channel === 'lexical') lexical++;
+      else if (r.channel === 'hybrid') hybrid++;
       else vector++;
-      // Only the vector channel's scores are pooled: a ts_rank_cd from
-      // the lexical channel is not on the cosine scale, and averaging
-      // the two would produce a number that reads like a measurement
-      // and is not one.
-      if (r.channel !== 'lexical' && typeof r.top_score === 'number') hitScores.push(r.top_score);
+      // ONLY the vector channel's scores are pooled, and this is an
+      // allow-list rather than a deny-list on purpose. A ts_rank_cd is
+      // not on the cosine scale, so mixing it in produces a number that
+      // reads like a measurement and is not one — and under fusion the
+      // top result of a 'hybrid' turn may be the lexical one, which
+      // `!== 'lexical'` would have let straight through. A channel this
+      // does not recognise is counted as a turn and excluded from the
+      // median, which is the safe direction.
+      if (r.channel === 'vector' && typeof r.top_score === 'number') hitScores.push(r.top_score);
       continue;
     }
 
@@ -333,7 +347,7 @@ export function buildMissReport(opts: {
     questions: [...questions.values()]
       .sort((a, b) => b.count - a.count || b.lastAsked.localeCompare(a.lastAsked))
       .slice(0, limit),
-    channels: { vector, lexical, missed: misses },
+    channels: { vector, lexical, hybrid, missed: misses },
     scores: { hitMedian: median(hitScores), missMax, floor },
     truncated: rows.length >= cap,
   };

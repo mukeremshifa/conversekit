@@ -44,6 +44,7 @@ const OUT = mkdtempSync(join(tmpdir(), 'ck-knowledge-'));
 await build({
   entryPoints: [
     join(ROOT, 'src/rag/chunk.ts'),
+    join(ROOT, 'src/rag/extract.ts'),
     join(ROOT, 'src/rag/retrieve.ts'),
     join(ROOT, 'src/rag/ingest.ts'),
     join(ROOT, 'src/supabase.ts'),
@@ -55,9 +56,12 @@ await build({
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });
 
-const { chunkQA, parseFaqText } = await import(`file://${OUT}/rag/chunk.js`);
-const { renderContext, selectContext, retrieve, isTooShortToRetrieve, retrievalLogRow } =
-  await import(`file://${OUT}/rag/retrieve.js`);
+const { chunkQA, chunkText, parseFaqText } = await import(`file://${OUT}/rag/chunk.js`);
+const { htmlToText, markdownToText } = await import(`file://${OUT}/rag/extract.js`);
+const {
+  renderContext, selectContext, retrieve, isTooShortToRetrieve, retrievalLogRow,
+  dedupe, shingleOverlap, fuseRRF, rerankOrder,
+} = await import(`file://${OUT}/rag/retrieve.js`);
 const { ragConfigFor, retryDelayMs, ingestDocument } = await import(`file://${OUT}/rag/ingest.js`);
 const { claimDocument } = await import(`file://${OUT}/supabase.js`);
 const { parseRetryAfter } = await import(`file://${OUT}/providers/errors.js`);
@@ -202,6 +206,97 @@ eq('an empty answer yields nothing', chunkQA('A question?', '   ').length, 0);
   const out = chunkQA('x'.repeat(300), 'y'.repeat(900), { size: 200 });
   check('a long question still leaves the answer room',
         out.every((c) => c.split('\nA: ')[1].length > 0), JSON.stringify(out.map((c) => c.length)));
+}
+
+// ── Heading context (M6) ─────────────────────────────────────────
+//
+// The prefix is only reachable if a heading survives extraction, and
+// all three extractors used to destroy headings differently. So this
+// tests the whole path rather than the chunker alone — a chunkText that
+// looks for `#` markers nothing produces is a feature that ships
+// looking correct and does nothing.
+console.log('\nHeading context');
+{
+  const md = markdownToText('# Pricing\n\nWhitening costs 199.\n\n## Plans\n\nMonthly or annual.');
+  check('markdown extraction KEEPS the heading marker', /^# Pricing$/m.test(md), md);
+  check('at its own level', /^## Plans$/m.test(md), md);
+}
+{
+  const md = markdownToText('   ### Indented heading\n\nBody.');
+  check('leading whitespace is normalised away', /^### Indented heading$/m.test(md), md);
+}
+{
+  const html = htmlToText('<html><body><h1>Pricing</h1><p>Whitening costs 199.</p>'
+                        + '<h2>Plans</h2><p>Monthly or annual.</p></body></html>');
+  check('HTML extraction produces an ATX h1', /^# Pricing$/m.test(html), html);
+  check('and preserves the level of an h2', /^## Plans$/m.test(html), html);
+  check('the body text is still there', html.includes('Whitening costs 199.'));
+}
+{
+  const text = '# Pricing\n\n' + 'Whitening costs one hundred and ninety nine pounds. '.repeat(30);
+  const out = chunkText(text, { size: 400, overlap: 60, title: 'Clinic handbook' });
+  check('the text splits into several chunks', out.length > 2, `got ${out.length}`);
+  check('EVERY chunk carries the breadcrumb, not just the first',
+        out.every((c) => c.startsWith('Clinic handbook › Pricing\n\n')),
+        JSON.stringify(out.map((c) => c.slice(0, 40))));
+  check('the marker itself is consumed, never embedded',
+        out.every((c) => !c.includes('#')), JSON.stringify(out.map((c) => c.slice(0, 40))));
+}
+{
+  // The point of the whole item: chunk N of a section, not just chunk 1,
+  // has to say what section it is in.
+  const text = '# Pricing\n\n' + 'x'.repeat(2000);
+  const out = chunkText(text, { size: 300, overlap: 0, title: 'Handbook' });
+  check('the second chunk under a heading is prefixed too',
+        out[1]?.startsWith('Handbook › Pricing\n\n'), out[1]?.slice(0, 40));
+}
+{
+  const text = '# Pricing\n\nWhitening costs 199.\n\n# Refunds\n\nWithin 14 days.';
+  const out = chunkText(text, { size: 800, overlap: 0, title: 'Handbook' });
+  eq('two headings produce two chunks', out.length, 2);
+  check('each names its OWN section',
+        out[0].startsWith('Handbook › Pricing') && out[1].startsWith('Handbook › Refunds'),
+        JSON.stringify(out));
+}
+{
+  // A heading with no body of its own must not take its words with it.
+  const out = chunkText('# Pricing\n\n## Plans\n\nMonthly or annual.', { size: 800, title: 'Handbook' });
+  eq('a bodyless heading folds into the trail', out.length, 1);
+  check('keeping both levels', out[0].startsWith('Handbook › Pricing › Plans\n\n'), out[0]);
+}
+{
+  const out = chunkText('# Contact us', { size: 800, title: 'Handbook' });
+  check('a trailing heading with no body keeps its words',
+        out.length === 1 && out[0].includes('Contact us'), JSON.stringify(out));
+}
+{
+  // The MIN_ANSWER_BUDGET failure, reached from the other direction: a
+  // long title against a small chunk_size would otherwise produce a
+  // chunk that is all header.
+  const long = 'The Complete Clinic Handbook, Revised Second Edition, 2026';
+  const out = chunkText('# Pricing\n\nWhitening costs 199.', { size: 200, title: long });
+  check('a breadcrumb that would eat the budget is dropped whole',
+        !out[0].includes('›') && !out[0].startsWith(long), out[0]);
+  check('and the text is still there', out[0].includes('Whitening costs 199.'), out[0]);
+}
+{
+  // The regression net. With no headings and no title the chunker must
+  // behave exactly as it did before M6 — there is one section, so
+  // nothing about the split or the overlap may change.
+  const text = 'Sentence one. '.repeat(200);
+  const before = chunkText(text, { size: 400, overlap: 60 });
+  check('no headings, no title: chunks are unprefixed',
+        before.every((c) => !c.includes('›')), JSON.stringify(before.map((c) => c.slice(0, 20))));
+  check('and overlap still carries between them',
+        before.length > 1 && before[1].startsWith(before[0].slice(-60).trimStart().split(' ')[0]),
+        JSON.stringify(before.slice(0, 2).map((c) => c.slice(0, 40))));
+}
+{
+  // chunkQA is deliberately untouched: it already carries its own
+  // header, and a second prefix would spend the budget twice.
+  const out = chunkQA('Do you accept insurance?', 'Yes.', { size: 800, title: 'Handbook' });
+  eq('chunkQA output is unchanged by M6', out[0],
+     'Q: Do you accept insurance?\nA: Yes.');
 }
 
 // ── The legacy parser ────────────────────────────────────────────
@@ -535,6 +630,153 @@ console.log('\nEmbedding-model drift');
   eq('embedding the query as usual', seen.embeddings, 1);
 }
 
+// ── Hybrid retrieval (M4) ────────────────────────────────────────
+//
+// RRF is pure, so it is tested directly rather than inferred from a
+// stubbed search. The whole reason to fuse by RANK is that the two
+// channels' scores are on different scales, so a test that asserted on
+// scores would be testing the thing the design refuses to do.
+console.log('\nReciprocal rank fusion');
+{
+  const c = (id) => ({ id, document_id: 'd1', ordinal: 0, content: id, similarity: 0.5 });
+  // `b` is third in both channels; `a` is first in one and absent from
+  // the other. Agreement has to win — that is what hybrid is for.
+  const fused = fuseRRF([
+    [c('a'), c('x'), c('b')],
+    [c('y'), c('z'), c('b')],
+  ]);
+  eq('a chunk ranked mid-table by BOTH beats one ranked first by one', fused[0].id, 'b');
+}
+{
+  const c = (id) => ({ id, document_id: 'd1', ordinal: 0, content: id, similarity: 0.5 });
+  const only = [c('a'), c('b'), c('c')];
+  const fused = fuseRRF([only]);
+  eq('a single-channel input returns that channel unchanged',
+     fused.map((x) => x.id).join(','), 'a,b,c');
+}
+{
+  const c = (id) => ({ id, document_id: 'd1', ordinal: 0, content: id, similarity: 0.5 });
+  // Two chunks each ranked first in one channel score identically.
+  const fused = fuseRRF([[c('a'), c('b')], [c('b'), c('a')]]);
+  eq('ties are broken by first appearance, so fusion is stable',
+     fused.map((x) => x.id).join(','), 'a,b');
+}
+{
+  const vector  = { id: 'a', document_id: 'd1', ordinal: 0, content: 'a', similarity: 0.81, channel: 'vector' };
+  const lexical = { id: 'a', document_id: 'd1', ordinal: 0, content: 'a', similarity: 0.04, channel: 'lexical' };
+  const fused = fuseRRF([[vector], [lexical]]);
+  eq('the EARLIEST list wins the row, so a cosine survives fusion',
+     fused[0].similarity, 0.81);
+  eq('and the channel it came from with it', fused[0].channel, 'vector');
+}
+eq('fusing nothing yields nothing', fuseRRF([[], []]).length, 0);
+
+console.log('\nHybrid mode');
+{
+  const seen = stubFetch({ match: [row(0), row(1)], lexical: [row(2)] });
+  const out = await retrieve(ENV, DB, evalBot({ retrieval_mode: 'hybrid' }), 'how much does whitening cost');
+  eq('both channels run on the same turn', `${seen.match},${seen.lexical}`, '1,1');
+  eq('and the outcome reports the fused channel', out.channel, 'hybrid');
+  eq('every chunk appears once', out.chunks.length, 3);
+  check('each chunk still records the channel that FOUND it',
+        out.chunks.every((c) => c.channel === 'vector' || c.channel === 'lexical'),
+        JSON.stringify(out.chunks.map((c) => c.channel)));
+}
+{
+  const seen = stubFetch({ match: [row(0)], lexical: [row(1)] });
+  await retrieve(ENV, DB, evalBot({ retrieval_mode: 'hybrid' }), 'how much does whitening cost');
+  const lex = seen.payloads.find((p) => p && 'p_query_text' in p);
+  // The migration exists for this one number. At 1 the lexical channel
+  // cannot reach a prose chunk, which is the entire case hybrid is for.
+  eq('hybrid asks the lexical index for the WHOLE corpus', lex.p_min_priority, 0);
+}
+{
+  const seen = stubFetch({ match: [], lexical: [row(0)] });
+  await retrieve(ENV, DB, evalBot(), 'do u take insurance');
+  const lex = seen.payloads.find((p) => p && 'p_query_text' in p);
+  eq('the fallback still asks for curated chunks only', lex.p_min_priority, 1);
+}
+{
+  const seen = stubFetch({ match: [], lexical: [row(0)] });
+  const out = await retrieve(ENV, DB, evalBot({ retrieval_mode: 'vector' }), 'do u take insurance');
+  eq('vector-only mode never consults the lexical index', seen.lexical, 0);
+  eq('and a miss stays a miss', out.chunks.length, 0);
+}
+{
+  const seen = stubFetch({ match: [], lexical: [] });
+  const out = await retrieve(ENV, DB, evalBot({ retrieval_mode: 'hybrid' }), 'what is the weather in Oslo');
+  // The state three shipped features are gated on. Hybrid makes it
+  // rarer; it must not make it unreachable.
+  eq('hybrid with nothing in either channel is still a clean miss', out.chunks.length, 0);
+  eq('with no channel to report', out.channel, undefined);
+  eq('and no error', out.error, undefined);
+}
+{
+  const seen = stubFetch({ match: [row(0)], lexical: [row(1)] });
+  await retrieve(ENV, DB, evalBot({ retrieval_mode: 'nonsense' }), 'how much does whitening cost');
+  eq('an unrecognised mode decays to the default rather than throwing', seen.lexical, 0);
+}
+
+// ── Cross-encoder re-ranking (M5) ────────────────────────────────
+//
+// Two properties, and the second matters more than the first: the
+// binding is a property of the DEPLOYMENT, not of the tenant, so a bot
+// with rerank on may be running somewhere that cannot do it. It may
+// never fail the visitor's turn.
+console.log('\nRe-ranking');
+{
+  eq('the response is read as candidate indices, best first',
+     rerankOrder({ response: [{ id: 2, score: 0.9 }, { id: 0, score: 0.4 }] }, 3).join(','), '2,0');
+  eq('an out-of-range index is dropped, not thrown',
+     rerankOrder({ response: [{ id: 9 }, { id: 1 }] }, 3).join(','), '1');
+  eq('a repeated index is dropped, so no excerpt is duplicated',
+     rerankOrder({ response: [{ id: 1 }, { id: 1 }, { id: 0 }] }, 3).join(','), '1,0');
+  eq('a shape nothing recognises reads as "keep cosine order"',
+     rerankOrder({ nope: true }, 3).length, 0);
+  eq('and so does a non-object', rerankOrder(null, 3).length, 0);
+}
+{
+  const seen = stubFetch({ match: [row(0), row(1), row(2)] });
+  const env = { AI: { run: async () => ({ response: [{ id: 2 }, { id: 0 }, { id: 1 }] }) } };
+  const out = await retrieve(env, DB, evalBot({ rerank: true }), 'how much does whitening cost');
+  eq('the re-ranker decides the order', out.chunks.map((c) => c.id).join(','), 'c2,c0,c1');
+  const payload = seen.payloads.find((p) => p && 'p_match_count' in p);
+  // match_chunks over-fetches internally and truncates before
+  // returning, so the only way to give a cross-encoder candidates is
+  // to ask for more rows. Nothing in SQL changes for this.
+  eq('and candidates are over-fetched to give it something to reorder',
+     payload.p_match_count, 20);
+}
+{
+  stubFetch({ match: [row(0), row(1), row(2)] });
+  // No AI binding: the deployment cannot re-rank, and that is not the
+  // tenant's fault and not a reason to fail the turn.
+  const out = await retrieve({}, DB, evalBot({ rerank: true }), 'how much does whitening cost');
+  eq('an absent binding falls back to cosine order',
+     out.chunks.map((c) => c.id).join(','), 'c0,c1,c2');
+  eq('without an error', out.error, undefined);
+}
+{
+  stubFetch({ match: [row(0), row(1), row(2)] });
+  const env = { AI: { run: async () => { throw new Error('model unavailable'); } } };
+  const out = await retrieve(env, DB, evalBot({ rerank: true }), 'how much does whitening cost');
+  eq('a re-rank that throws falls back to cosine order',
+     out.chunks.map((c) => c.id).join(','), 'c0,c1,c2');
+  eq('and the turn still succeeds', out.channel, 'vector');
+}
+{
+  stubFetch({ match: [row(0), row(1), row(2)] });
+  const env = { AI: { run: async () => ({ response: [{ id: 2 }, { id: 1 }] }) } };
+  const out = await retrieve(env, DB, evalBot({ rerank: true, top_k: 2 }), 'how much does whitening cost');
+  eq('the result is cut to top_k, never left at the over-fetch', out.chunks.length, 2);
+}
+{
+  const seen = stubFetch({ match: [row(0)] });
+  await retrieve(ENV, DB, evalBot(), 'how much does whitening cost');
+  const payload = seen.payloads.find((p) => p && 'p_match_count' in p);
+  eq('with re-rank off, nothing is over-fetched', payload.p_match_count, 5);
+}
+
 // ── What gets logged (M1) ────────────────────────────────────────
 //
 // Pure, so it is checked directly rather than through the chat handler.
@@ -814,6 +1056,93 @@ console.log('\nCitation alignment');
   eq('selection is idempotent', twice.length, once.length);
   eq('rendering a selection re-budgets nothing',
      renderContext(once, 1000), renderContext(chunks, 1000));
+}
+
+// ── Near-duplicate suppression (M8) ──────────────────────────────
+//
+// THE ADJACENT-CHUNK CASE IS THE ONE THAT MATTERS. chunkText prepends
+// chunk_overlap characters of the previous chunk into every chunk, so
+// two consecutive chunks of one document ALWAYS share text and must
+// not be deduped — they are different content. The headroom at the
+// shipped defaults is comfortable, but chunk_size and chunk_overlap
+// are both tenant-configurable, so the assertion is taken at the worst
+// combination the clamps allow rather than at the defaults.
+console.log('\nNear-duplicate suppression');
+const dup = (id, content, similarity) => ({ id, document_id: 'd1', ordinal: 0, content, similarity });
+const BOILERPLATE =
+  'All treatments are subject to a clinical assessment and our standard terms of business, '
+  + 'which are available on request from reception or from any member of our clinical team.';
+{
+  const out = dedupe([
+    dup('a', BOILERPLATE, 0.81),
+    dup('b', BOILERPLATE, 0.79),
+    dup('c', 'Whitening costs one hundred and ninety nine pounds per session.', 0.77),
+  ]);
+  eq('the same paragraph twice survives once', out.length, 2);
+  eq('and it is the HIGHER-ranked copy that is kept', out[0].id, 'a');
+  eq('the distinct chunk is untouched', out[1].id, 'c');
+}
+{
+  // The same boilerplate with a different sentence bolted on is not a
+  // duplicate — it says something the first copy does not.
+  const out = dedupe([
+    dup('a', BOILERPLATE, 0.81),
+    dup('b', `${BOILERPLATE} Emergency appointments are exempt and are seen the same day, `
+           + 'with a separate out-of-hours charge that is quoted before any work begins.', 0.79),
+  ]);
+  eq('a longer passage that merely contains the boilerplate survives', out.length, 2);
+}
+{
+  // A real chunkText run at the WORST tenant-configurable combination:
+  // chunk_size clamped to its 200 floor, chunk_overlap clamped to
+  // size/2. Every chunk after the first is then ~1/3 carried text —
+  // the most overlap this platform can be configured to produce.
+  //
+  // THE PROSE HAS TO BE GENUINELY VARIED, and the first draft of this
+  // test got that wrong: one sentence repeated makes adjacent chunks
+  // real duplicates, and dedupe was right to collapse them. What is
+  // being asserted is that CARRIED overlap does not read as duplication.
+  const prose = Array.from({ length: 40 }, (_, i) =>
+    `Section ${i} covers ${['whitening', 'implants', 'hygiene', 'orthodontics', 'emergency care'][i % 5]} `
+    + `and was last reviewed in ${2000 + i} by the ${['clinical', 'reception', 'billing'][i % 3]} team, `
+    + `who recorded ${i * 7} separate observations about it. `).join('');
+  const pieces = chunkText(prose, { size: 200, overlap: 100 });
+  check('the fixture actually produced adjacent chunks', pieces.length > 3, `got ${pieces.length}`);
+  const worst = Math.max(...pieces.slice(1).map((p, i) => shingleOverlap(p, pieces[i])));
+  check('adjacent chunks stay well below the threshold', worst < 0.8, `worst overlap ${worst.toFixed(3)}`);
+  const kept = dedupe(pieces.map((content, i) => dup(`p${i}`, content, 1 - i / 100)));
+  eq('so a real chunked document loses nothing to dedupe', kept.length, pieces.length);
+}
+{
+  const out = dedupe([dup('a', BOILERPLATE, 0.81), dup('b', BOILERPLATE, 0.79)]);
+  check('dedupe never empties a non-empty result', out.length >= 1, JSON.stringify(out));
+}
+eq('deduping nothing yields nothing', dedupe([]).length, 0);
+eq('a single chunk is returned as-is', dedupe([dup('a', BOILERPLATE, 0.8)]).length, 1);
+{
+  eq('a chunk is identical to itself', shingleOverlap(BOILERPLATE, BOILERPLATE), 1);
+  eq('unrelated prose overlaps not at all',
+     shingleOverlap('Whitening costs 199 pounds.', 'Our car park is behind the building.'), 0);
+  check('punctuation and case are not differences',
+        shingleOverlap('Whitening costs one nine nine pounds', 'whitening COSTS one, nine, nine pounds!') === 1);
+}
+{
+  // The dedupe has to happen BEFORE the budget is spent, or a dropped
+  // duplicate frees its slot and not its characters.
+  const long = BOILERPLATE.padEnd(900, ' filler words repeated here again and again');
+  const kept = selectContext([
+    dup('a', long, 0.9),
+    dup('b', long, 0.85),
+    dup('c', 'Whitening costs one hundred and ninety nine pounds per session.', 0.8),
+  ], 1000);
+  eq('a dropped duplicate frees its characters, not just its slot', kept.length, 2);
+  eq('so the distinct chunk reaches the prompt', kept[1].id, 'c');
+}
+{
+  const chunks = [dup('a', BOILERPLATE, 0.9), dup('b', BOILERPLATE, 0.85)];
+  const once = selectContext(chunks, 10_000);
+  eq('selection is still idempotent with dedupe in it',
+     selectContext(once, 10_000).length, once.length);
 }
 
 // ── Caps ─────────────────────────────────────────────────────────

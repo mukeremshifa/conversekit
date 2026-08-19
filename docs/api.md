@@ -125,10 +125,48 @@ belongs where.
 | `POST` | `/v1/admin/bots/:id/knowledge/migrate` | Move `services` and `faq` into the corpus. `?dry_run=1` reports the plan without writing |
 | `POST` | `/v1/admin/bots/:id/knowledge/revert` | Put them back in the prompt |
 
-`retrieve-preview` runs the **real** retrieval path, keyword fallback included —
-a preview that is only approximately what production does is worse than none,
-because it is trusted. Nothing is sent to the AI model and no conversation is
-recorded.
+`retrieve-preview` runs the **real** retrieval path — keyword fallback, hybrid
+fusion and the re-rank pass included. A preview that is only approximately what
+production does is worse than none, because it is trusted. Nothing is sent to
+the chat model and no conversation is recorded.
+
+Its `channel` reads `"hybrid"` when both channels ran and were fused, and each
+returned chunk keeps the channel that actually **found** it — a fused result is
+a mix, so a single label on the whole set would be a lie. `settings` echoes
+`retrieval_mode` and `rerank` alongside the existing knobs, because both change
+what came back and an inspector that omitted them would be showing a result it
+could not explain.
+
+**Two `rag_config` fields were added by
+[`013_hybrid.sql`](../supabase/013_hybrid.sql)**, and both default to the
+behaviour that shipped before them:
+
+| Field | Values | Default | What it does |
+|---|---|---|---|
+| `retrieval_mode` | `'vector'` \| `'fallback'` \| `'hybrid'` | `'fallback'` | When the lexical channel runs |
+| `rerank` | boolean | `false` | Cross-encoder second pass over the candidates |
+
+`'fallback'` is what every bot has done since 011: vector search, then lexical
+over curated (`priority > 0`) chunks **only** when vector found nothing.
+`'hybrid'` runs both channels on every turn over the **whole** corpus and fuses
+them by reciprocal rank — `Σ 1/(60 + rank)`, by rank rather than by score,
+because `match_chunks` returns a cosine and `match_chunks_lexical` returns a
+`ts_rank_cd` and the two are not on the same scale. `'vector'` disables the
+lexical channel entirely. `lexical_fallback` is read only in `'fallback'` mode;
+it was deliberately not overloaded into a tri-state.
+
+**Enabling `'hybrid'` can silently disable `fallback_message` and
+`escalate_after_misses`.** Lexical over every chunk almost always returns
+something, so "the bot could not answer" stops being reachable — the same
+failure B1 was, reached from the opposite direction. Watch
+`GET /v1/admin/bots/:id/retrieval` after switching a bot: a miss rate collapsing
+toward zero is the symptom, not the win.
+
+`rerank` costs one extra model call per turn on the visitor's hot path. It
+**fails open** — no Workers AI binding on the deployment, or a re-rank call that
+throws, degrades to similarity order rather than failing the turn — and it can
+only reorder passages that already cleared `min_similarity`, never rescue a
+rejected one.
 
 **`GET /v1/admin/bots/:id/documents` returns an `embedding` block** alongside the
 list: `{ documents, embedding: { vendor, model } | null }`. Each document already
@@ -156,9 +194,15 @@ distribution against the floor in force:
   "range":    { "days": 30, "from": "…", "to": "…" },
   "totals":   { "queries": 412, "misses": 57, "missRate": 0.138 },
   "questions": [{ "text": "Do you do implants?", "count": 9, "lastAsked": "…" }],
-  "channels": { "vector": 341, "lexical": 14, "missed": 57 },
+  // `hybrid` is its own count, not folded into either channel: a fused
+  // turn was answered by both at once. It is 0 unless a bot is on
+  // retrieval_mode: 'hybrid'.
+  "channels": { "vector": 341, "lexical": 14, "hybrid": 0, "missed": 57 },
   // hitMedian against floor is the eval sweep's measurement, taken
   // continuously against real traffic instead of a fixture corpus.
+  // ONLY vector-channel scores are pooled into it — a ts_rank_cd from
+  // the lexical or hybrid channel is not on the cosine scale, and
+  // mixing them produces a number that reads like a measurement.
   "scores":   { "hitMedian": 0.71, "missMax": null, "floor": 0.6 },
   "truncated": false
 }

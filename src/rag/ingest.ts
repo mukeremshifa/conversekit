@@ -143,6 +143,16 @@ export function ragConfigFor(bot: Bot, floor?: number): Required<RagConfig> {
     // different feature with different failure modes.
     priority_boost: clamp(c.priority_boost ?? DEFAULT_PRIORITY_BOOST, 0, 0.5),
     lexical_fallback: c.lexical_fallback ?? true,
+    // 'fallback' is what every bot has been doing since 011, and the
+    // default has to stay that: hybrid changes what comes back from
+    // every search, and a mode that switched itself on would be a
+    // silent behaviour change on somebody else's product. An
+    // unrecognised value decays to the default rather than throwing —
+    // this runs on the visitor's hot path.
+    retrieval_mode: c.retrieval_mode === 'vector' || c.retrieval_mode === 'hybrid'
+      ? c.retrieval_mode
+      : 'fallback',
+    rerank: c.rerank ?? false,
   };
 }
 
@@ -290,7 +300,15 @@ export async function ingestDocument(
 
     const { text, title } = await extractText(env, doc);
 
-    const pieces = chunkText(text, { size: cfg.chunk_size, overlap: cfg.chunk_overlap });
+    // The title goes to the chunker (M6), which prefixes it and the
+    // nearest heading onto every prose chunk. A URL source whose title
+    // is still the URL passes nothing rather than stamping a link on
+    // every chunk — the extracted <title>, when there is one, is the
+    // better name and is already in hand.
+    const chunkTitle = title ?? (doc.title === doc.url ? '' : doc.title);
+    const pieces = chunkText(text, {
+      size: cfg.chunk_size, overlap: cfg.chunk_overlap, title: chunkTitle,
+    });
     if (pieces.length === 0) throw new ExtractError('Nothing left to index after extraction');
     if (pieces.length > MAX_CHUNKS) {
       throw new ExtractError(`Document produces ${pieces.length} chunks, over the ${MAX_CHUNKS} limit. Split it up.`);

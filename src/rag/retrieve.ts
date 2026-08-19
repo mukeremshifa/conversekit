@@ -14,9 +14,14 @@
 // while converting "the embedding rolled badly on *do u take
 // insurance*" from a miss into a hit.
 //
-// That fallback is also the seed of hybrid retrieval: once the tsvector
-// and the lexical RPC exist, running both channels on every turn and
-// fusing their ranks is a scoring change rather than a migration.
+// SINCE 013 THAT IS ONE OF THREE MODES, and it is still the default.
+// `retrieval_mode: 'hybrid'` runs both channels on every turn over the
+// whole corpus and fuses them by reciprocal rank — which needed a
+// migration after all, because the `priority > 0` gate that makes
+// lexical a fallback lives in SQL. Hybrid ships OFF, because it can
+// disable the same three features B1 disabled: lexical over every chunk
+// almost always returns something, so "the bot could not answer" stops
+// being reachable. See fuseRRF below and supabase/013_hybrid.sql.
 //
 // THE SIMILARITY FLOOR IS RESOLVED FROM THE EMBEDDER, not from a
 // platform constant. Every guarantee above depends on the floor being
@@ -40,8 +45,15 @@ import { resolveEmbeddingProvider, resolveSimilarityFloor } from '../providers';
 import { ragConfigFor, DEFAULT_CONTEXT_CHARS } from './ingest';
 
 /** Which search found this chunk. Reported by the retrieval preview,
- *  and read by the chat path to decide what counts as a miss. */
-export type RetrievalChannel = 'vector' | 'lexical';
+ *  and read by the chat path to decide what counts as a miss.
+ *
+ *  'hybrid' appears on the OUTCOME, never on an individual chunk: a
+ *  fused result is a mix, and each chunk still records the channel that
+ *  actually found it. `retrieval_log.channel` is free text precisely so
+ *  a third value needs no migration — but buildMissReport pools only
+ *  'vector' scores into its median, because a ts_rank_cd averaged with
+ *  a cosine is a number that reads like a measurement and is not one. */
+export type RetrievalChannel = 'vector' | 'lexical' | 'hybrid';
 
 export interface RetrievedChunk {
   id: string;
@@ -179,37 +191,78 @@ export async function retrieve(
     const vector = vectors[0];
     if (!vector?.length) return { chunks: [], error: 'empty query embedding', effective };
 
-    const hits = await matchChunks(db, {
+    // Over-fetch when the re-ranker will run (M5). match_chunks already
+    // over-fetches internally and truncates before returning, so the
+    // only way to give a cross-encoder something to reorder is to ask
+    // for more rows. Nothing in SQL changes for this.
+    const fetchCount = cfg.rerank ? cfg.top_k * RERANK_OVERFETCH : cfg.top_k;
+
+    const searchVector = () => matchChunks(db, {
       botId: bot.id,
       embedding: vector,
-      matchCount: cfg.top_k,
+      matchCount: fetchCount,
       minSimilarity: cfg.min_similarity,
       priorityBoost: cfg.priority_boost,
     });
 
+    const searchLexical = (minPriority: number) => matchChunksLexical(db, {
+      botId: bot.id,
+      query: q,
+      matchCount: fetchCount,
+      minPriority,
+    });
+
+    // ── Hybrid (M4) ────────────────────────────────────────────────
+    //
+    // Both channels, in parallel, over the whole corpus, fused by rank.
+    // The two searches are independent, so the second costs latency
+    // only if it is slower than the first.
+    if (cfg.retrieval_mode === 'hybrid') {
+      const [vectorHits, lexicalHits] = await Promise.all([
+        searchVector(),
+        // priority 0: prose included. The gate that makes lexical a
+        // fallback is exactly what hybrid exists to remove.
+        searchLexical(0),
+      ]);
+
+      const fused = fuseRRF([
+        vectorHits.map((c) => ({ ...c, channel: 'vector' as const })),
+        lexicalHits.map((c) => ({ ...c, channel: 'lexical' as const })),
+      ]);
+
+      if (!fused.length) return { chunks: [], effective };
+      return {
+        chunks: await finish(env, bot, q, fused, cfg),
+        // The OUTCOME is hybrid even when every fused chunk came from
+        // one channel: what varies is the result, not what ran.
+        channel: 'hybrid',
+        effective,
+      };
+    }
+
+    const hits = await searchVector();
+
     if (hits.length) {
       return {
-        chunks: hits.map((c) => ({ ...c, channel: 'vector' as const })),
+        chunks: await finish(env, bot, q, hits.map((c) => ({ ...c, channel: 'vector' as const })), cfg),
         channel: 'vector',
         effective,
       };
     }
 
-    if (!cfg.lexical_fallback) return { chunks: [], effective };
+    if (cfg.retrieval_mode === 'vector' || !cfg.lexical_fallback) {
+      return { chunks: [], effective };
+    }
 
     // Nothing cleared the similarity floor. Before giving up, ask the
     // lexical index — restricted to boosted chunks, so this rescues the
     // FAQ answers a tenant curated by hand and does not drag arbitrary
     // keyword matches out of a hundred-page PDF.
-    const lexical = await matchChunksLexical(db, {
-      botId: bot.id,
-      query: q,
-      matchCount: cfg.top_k,
-    });
+    const lexical = await searchLexical(1);
 
     if (!lexical.length) return { chunks: [], effective };
     return {
-      chunks: lexical.map((c) => ({ ...c, channel: 'lexical' as const })),
+      chunks: await finish(env, bot, q, lexical.map((c) => ({ ...c, channel: 'lexical' as const })), cfg),
       channel: 'lexical',
       effective,
     };
@@ -219,6 +272,160 @@ export async function retrieve(
     console.error('[rag] retrieval failed (non-fatal):', message);
     return { chunks: [], error: message };
   }
+}
+
+// ----------------------------------------------------------------
+// Reciprocal rank fusion (M4)
+//
+// RRF IS RIGHT HERE SPECIFICALLY BECAUSE THE TWO CHANNELS' SCORES ARE
+// NOT COMPARABLE. `match_chunks` returns a cosine similarity and
+// `match_chunks_lexical` returns a ts_rank_cd, on different scales with
+// different distributions — 012 says so in as many words. Any weighted
+// sum of the two would need a normalisation nobody has measured. RRF
+// only ever compares RANKS, so it needs no such thing.
+//
+//     score(d) = sum over channels of 1 / (k + rank(d))
+//
+// with k = 60, the conventional value from the original paper. The
+// constant is what makes the curve flat enough that being second in two
+// channels beats being first in one — which is exactly the behaviour
+// hybrid retrieval is for.
+// ----------------------------------------------------------------
+
+/** The RRF damping constant. 60 is conventional, not measured here —
+ *  and a k this large is what makes agreement between channels count
+ *  for more than a single first place. */
+const RRF_K = 60;
+
+/**
+ * Fuse ranked lists into one, best first.
+ *
+ * The chunk OBJECT kept for a document present in several lists is the
+ * one from the EARLIEST list, so callers control which channel's
+ * `similarity` and `channel` survive by argument order — retrieve()
+ * passes vector first, because a cosine is the score the miss report
+ * can actually interpret.
+ *
+ * Ties are broken by first appearance, so the result is stable: a
+ * single-channel input comes back in exactly its own order.
+ */
+export function fuseRRF(channels: RetrievedChunk[][], k = RRF_K): RetrievedChunk[] {
+  const scores = new Map<string, number>();
+  const first  = new Map<string, RetrievedChunk>();
+  const seen: string[] = [];
+
+  for (const list of channels) {
+    list.forEach((chunk, index) => {
+      const prior = scores.get(chunk.id);
+      if (prior === undefined) { first.set(chunk.id, chunk); seen.push(chunk.id); }
+      scores.set(chunk.id, (prior ?? 0) + 1 / (k + index + 1));
+    });
+  }
+
+  return seen
+    .map((id, order) => ({ chunk: first.get(id)!, score: scores.get(id)!, order }))
+    .sort((a, b) => b.score - a.score || a.order - b.order)
+    .map((entry) => entry.chunk);
+}
+
+// ----------------------------------------------------------------
+// Cross-encoder re-ranking (M5)
+//
+// `top_k` otherwise comes straight off cosine similarity. A
+// cross-encoder reads the query and the passage TOGETHER rather than
+// comparing two independently-produced vectors, which is the highest
+// precision available per token — and the candidates are already in
+// hand, because retrieve() asks for RERANK_OVERFETCH times as many rows
+// when this is on.
+//
+// IT RUNS AFTER THE FLOOR, AND THAT ORDERING IS DELIBERATE.
+// `min_similarity` is applied inside match_chunks against cosine, so
+// the re-ranker can only reorder what already survived — it can never
+// rescue a rejected chunk. Do not "fix" that by dropping the floor when
+// re-rank is on: that is B1 for the third time.
+//
+// IT MUST FAIL OPEN. The Workers AI binding is a property of the
+// DEPLOYMENT, not of the tenant — a bot on OpenAI embeddings may be
+// running somewhere with no AI binding at all. No binding, an
+// unrecognised response, or a call that throws all degrade to cosine
+// order. This is a quality improvement sitting on the visitor's hot
+// path; it may never fail the turn.
+// ----------------------------------------------------------------
+
+/** Candidates fetched per `top_k` when re-rank is on. Four gives the
+ *  cross-encoder something to actually reorder without turning one
+ *  search into a page of them. */
+const RERANK_OVERFETCH = 4;
+
+/** Workers AI's cross-encoder, on the same free tier as the default
+ *  embedder and the same binding storedFileToText already uses. */
+const RERANK_MODEL = '@cf/baai/bge-reranker-base';
+
+/**
+ * Apply the re-ranker if the tenant asked for it and the deployment can
+ * do it, then cut to `top_k`.
+ *
+ * Always truncates, re-rank or not — the over-fetch above is for the
+ * cross-encoder, and returning it raw would quietly hand the context
+ * budget four times the chunks the tenant configured.
+ */
+async function finish(
+  env: Env,
+  bot: Bot,
+  query: string,
+  chunks: RetrievedChunk[],
+  cfg: { top_k: number; rerank: boolean },
+): Promise<RetrievedChunk[]> {
+  if (!cfg.rerank || chunks.length < 2) return chunks.slice(0, cfg.top_k);
+
+  const ai = env.AI;
+  if (!ai) {
+    console.warn(`[rag] rerank is on for bot ${bot.id} but this deployment has no AI binding`);
+    return chunks.slice(0, cfg.top_k);
+  }
+
+  try {
+    const raw = await ai.run(RERANK_MODEL, {
+      query,
+      contexts: chunks.map((c) => ({ text: c.content })),
+      top_k: cfg.top_k,
+    });
+
+    const ranked = rerankOrder(raw, chunks.length);
+    // An empty or unparseable response is not an error to propagate.
+    // Cosine order is a correct answer; it is merely the worse one.
+    if (!ranked.length) return chunks.slice(0, cfg.top_k);
+
+    return ranked.slice(0, cfg.top_k).map((i) => chunks[i]);
+  } catch (err) {
+    console.error('[rag] rerank failed (non-fatal), falling back to cosine order:',
+                  err instanceof Error ? err.message : String(err));
+    return chunks.slice(0, cfg.top_k);
+  }
+}
+
+/**
+ * The candidate indices a re-ranker response asks for, best first.
+ *
+ * Exported because it is the part worth testing without a binding: the
+ * response shape is the vendor's, and reading it wrong would silently
+ * reorder retrieval by array position. Anything unrecognised comes back
+ * empty, which the caller reads as "keep cosine order".
+ */
+export function rerankOrder(raw: unknown, candidates: number): number[] {
+  const rows = (raw as { response?: unknown })?.response;
+  if (!Array.isArray(rows)) return [];
+
+  const out: number[] = [];
+  for (const row of rows) {
+    const id = (row as { id?: unknown })?.id;
+    // Integer, in range, and not already claimed — a duplicated index
+    // would repeat one excerpt and drop another.
+    if (typeof id !== 'number' || !Number.isInteger(id)) continue;
+    if (id < 0 || id >= candidates || out.includes(id)) continue;
+    out.push(id);
+  }
+  return out;
 }
 
 /**
@@ -271,6 +478,95 @@ export function retrievalLogRow(
   };
 }
 
+// ----------------------------------------------------------------
+// Near-duplicate suppression (M8)
+//
+// The same boilerplate paragraph indexed on three pages returns three
+// near-identical excerpts, which consume three of five top_k slots and
+// most of context_chars while saying one thing.
+//
+// DONE LEXICALLY, NOT BY COSINE, and that is a constraint rather than a
+// preference. The Worker never receives a chunk's vector: MatchedChunk
+// carries content, similarity, kind, priority and document_title, and
+// nothing else. "Drop anything above ~0.95 cosine against a chunk
+// already kept" would need either 768 floats per candidate shipped over
+// PostgREST (~60 KB a turn) or the whole check moved into SQL. The
+// failure being fixed is *literal* duplication, which a Jaccard overlap
+// over token shingles catches exactly, at zero cost and with no
+// vectors. Do not "improve" this back into the version that cannot run.
+// ----------------------------------------------------------------
+
+/** Tokens per shingle. Five is long enough that two chunks sharing it
+ *  are sharing a phrase rather than a common word. */
+const SHINGLE = 5;
+
+/** Jaccard over 5-token shingles. Near-1.0 means the same prose. */
+export function shingleOverlap(a: string, b: string): number {
+  const sa = shingles(a);
+  const sb = shingles(b);
+  if (sa.size === 0 || sb.size === 0) return 0;
+
+  let shared = 0;
+  // Iterate the smaller set: the union is |a| + |b| - shared either way.
+  const [small, large] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
+  for (const s of small) if (large.has(s)) shared++;
+
+  return shared / (sa.size + sb.size - shared);
+}
+
+function shingles(text: string): Set<string> {
+  // Case- and punctuation-insensitive, so "Pricing." and "pricing"
+  // are the same token — otherwise the same paragraph rendered by two
+  // different extractors reads as two different paragraphs.
+  const tokens = text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const out = new Set<string>();
+  // Shorter than one shingle: compare it as a single unit rather than
+  // reporting no overlap, or two identical five-word chunks would
+  // survive deduplication.
+  if (tokens.length < SHINGLE) {
+    if (tokens.length) out.add(tokens.join(' '));
+    return out;
+  }
+  for (let i = 0; i + SHINGLE <= tokens.length; i++) {
+    out.add(tokens.slice(i, i + SHINGLE).join(' '));
+  }
+  return out;
+}
+
+/**
+ * Drop chunks that repeat something already kept.
+ *
+ * Rank order is preserved and the HIGHEST-ranked member of a duplicate
+ * pair is the one that survives — dropping the earlier one would let
+ * the context budget spend its first slot on the worse copy.
+ *
+ * THE THRESHOLD HAS TO CLEAR chunkText's OVERLAP, and that is the trap
+ * this function has to be tested against rather than reasoned about.
+ * Every chunk after the first carries `chunk_overlap` characters of its
+ * predecessor, so two ADJACENT chunks of one document always share
+ * text and must not be deduped — they are different content. At the
+ * shipped defaults the overlap lands around 0.15; at the worst
+ * tenant-configurable combination (chunk_size at its 200 floor,
+ * chunk_overlap at its size/2 cap) it is still well under 0.5. 0.8 is
+ * chosen to sit above that headroom rather than beside it.
+ */
+export function dedupe(chunks: RetrievedChunk[], threshold = DEDUPE_THRESHOLD): RetrievedChunk[] {
+  if (chunks.length < 2) return chunks;
+
+  const kept: RetrievedChunk[] = [];
+  for (const chunk of chunks) {
+    const text = chunk.content.trim();
+    // Empty content is selectContext's business, not this one's: it is
+    // passed through so exactly one place decides what to skip.
+    if (text && kept.some((k) => shingleOverlap(text, k.content.trim()) >= threshold)) continue;
+    kept.push(chunk);
+  }
+  return kept;
+}
+
+/** Jaccard above which two chunks are the same prose. See dedupe. */
+export const DEDUPE_THRESHOLD = 0.8;
+
 /**
  * The chunks that will actually be rendered, in rank order.
  *
@@ -293,6 +589,11 @@ export function retrievalLogRow(
  *
  * Empty-content chunks are skipped here rather than at render time, so
  * they consume no marker and appear in no citation list.
+ *
+ * Near-duplicates are dropped first (M8), so the budget is spent on
+ * distinct material rather than on the same boilerplate paragraph
+ * returned from three indexed pages. Idempotent either way: deduping an
+ * already-deduped list removes nothing.
  */
 export function selectContext(
   chunks: RetrievedChunk[],
@@ -300,7 +601,10 @@ export function selectContext(
 ): RetrievedChunk[] {
   const kept: RetrievedChunk[] = [];
   let spent = 0;
-  for (const chunk of chunks) {
+  // BEFORE the budget loop, not after (M8). A duplicate dropped here
+  // frees its slot AND its characters for a chunk that says something
+  // new; dropped afterwards it would already have spent both.
+  for (const chunk of dedupe(chunks)) {
     const text = chunk.content.trim();
     if (!text) continue;
     // `[n] ` plus the blank line between excerpts.
