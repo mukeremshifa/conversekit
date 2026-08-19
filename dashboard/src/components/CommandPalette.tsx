@@ -59,10 +59,15 @@ export function buildCommands(opts: {
   onSelectBot: (id: string) => void;
   onNewBot: () => void;
   onCycleTheme: () => void;
+  /** Routes that are a tab of another screen rather than a nav entry.
+   *  Without these, folding three screens into one would have taken
+   *  two of them out of the palette — which is where anyone who knows
+   *  the product reaches first. */
+  extra?: { id: string; label: string; icon?: NavItem['icon'] }[];
 }): Command[] {
-  const { nav, route, bots, botId, onNavigate, onSelectBot, onNewBot, onCycleTheme } = opts;
+  const { nav, route, bots, botId, onNavigate, onSelectBot, onNewBot, onCycleTheme, extra = [] } = opts;
   return [
-    ...nav.map((n): Command => ({
+    ...[...nav, ...extra].map((n): Command => ({
       id: `go:${n.id}`, group: 'Go to', label: n.label, icon: n.icon,
       active: route === n.id, run: () => onNavigate(n.id),
     })),

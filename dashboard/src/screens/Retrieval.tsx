@@ -1,9 +1,14 @@
 // ----------------------------------------------------------------
 // Retrieval settings — the RAG knobs that had no UI until now.
 //
-// Four knobs, deliberately. "Configurable RAG" expands without limit
+// Deliberately few. "Configurable RAG" expands without limit
 // (rerankers, hybrid search, query rewriting) and every knob is a
 // support surface; these are the ones that actually change answers.
+//
+// 011 added three: a character budget on what retrieval may put in the
+// prompt, the FAQ boost, and the keyword fallback. Each is here rather
+// than hardcoded because each is a judgement call a tenant can be
+// wrong about in either direction.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -14,15 +19,26 @@ import {
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
+/** Mirrors ragConfigFor in src/rag/ingest.ts. */
 const DEFAULTS: Required<RagConfig> = {
   enabled: true,
   top_k: 5,
   min_similarity: 0.3,
   chunk_size: 800,
   chunk_overlap: 120,
+  context_chars: 6000,
+  priority_boost: 0.05,
+  lexical_fallback: true,
 };
 
-export function Retrieval({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => void }) {
+export function Retrieval({
+  bot, onSaved, embedded = false,
+}: {
+  bot: Bot;
+  onSaved: (b: Bot) => void;
+  /** Rendered inside the Knowledge screen, which owns the page header. */
+  embedded?: boolean;
+}) {
   const [cfg, setCfg] = useState<Required<RagConfig>>({ ...DEFAULTS, ...(bot.rag_config ?? {}) });
   const [busy, setBusy] = useState(false);
 
@@ -45,20 +61,29 @@ export function Retrieval({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => voi
 
   const set = (patch: Partial<RagConfig>) => setCfg({ ...cfg, ...patch });
 
+  const saveButton = (
+    <Button onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Button>
+  );
+
   return (
     <>
-      <Header
-        title="Retrieval"
-        subtitle="How the bot searches your knowledge sources before answering."
-        action={<Button onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Button>}
-      />
+      {embedded ? (
+        <div className="flex justify-end">{saveButton}</div>
+      ) : (
+        <Header
+          title="Retrieval"
+          subtitle="How the bot searches your knowledge sources before answering."
+          action={saveButton}
+        />
+      )}
 
       <Card>
         <CardHeader>
           <div>
             <CardTitle>Enabled</CardTitle>
             <CardDescription>
-              When off, the bot answers only from its Knowledge Base fields and ignores every indexed source.
+              When off, the bot ignores every indexed source and answers only from its own business
+              details and instructions.
             </CardDescription>
           </div>
           <Switch
@@ -98,6 +123,61 @@ export function Retrieval({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => voi
             &ldquo;I don&rsquo;t know&rdquo; about things you know are indexed.
           </p>
         </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Making sure your FAQ still lands</CardTitle>
+            <CardDescription>
+              Searching by meaning is usually right and occasionally unlucky. These two exist so the
+              answers you wrote by hand are not left to chance.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="FAQ boost" hint="0–0.5, added to similarity when ranking">
+              <Input
+                type="number" step="0.01" min={0} max={0.5}
+                value={cfg.priority_boost}
+                onChange={(e) => set({ priority_boost: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="Prompt budget" hint="characters, 1000–40000">
+              <Input
+                type="number" min={1000} max={40000} step={500}
+                value={cfg.context_chars}
+                onChange={(e) => set({ context_chars: Number(e.target.value) })}
+              />
+            </Field>
+          </div>
+          <p className="text-xs leading-relaxed text-muted">
+            The boost breaks near-ties in favour of an FAQ answer. It cannot push a passage past the
+            minimum similarity — an irrelevant FAQ item stays out however high you set it.
+            The budget caps how much retrieved text may go into one message, so a long answer can
+            never crowd out the conversation itself.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Keyword fallback</CardTitle>
+            <CardDescription>
+              When nothing at all is close enough by meaning, try matching words against your FAQ
+              before giving up. It runs only on that miss, so it costs nothing on a normal message —
+              and it is what catches &ldquo;do u take insurance&rdquo; against &ldquo;Do you accept
+              insurance?&rdquo;. It covers FAQ items only, not documents.
+            </CardDescription>
+          </div>
+          <Switch
+            checked={cfg.lexical_fallback}
+            onCheckedChange={(v) => set({ lexical_fallback: v })}
+            aria-label="Keyword fallback"
+          />
+        </CardHeader>
       </Card>
 
       <Card>

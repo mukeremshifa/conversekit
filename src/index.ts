@@ -26,6 +26,15 @@ import {
   orgStorageBytes,
   listChunks,
   hasChunks,
+  listFaqItems,
+  getFaqItem,
+  createFaqItem,
+  updateFaqItem,
+  deleteFaqItem,
+  reorderFaqItems,
+  getFaqDocument,
+  ensureFaqDocument,
+  setKnowledgeMigrated,
   countSessionMessages,
   countTrailingMisses,
   getDocumentTitles,
@@ -37,7 +46,7 @@ import {
   type ServiceDb,
   type UserDb,
 } from './supabase';
-import { ingestDocument } from './rag/ingest';
+import { ingestDocument, ingestFaq, ragConfigFor } from './rag/ingest';
 import {
   detectFileType,
   objectKeyFor,
@@ -47,9 +56,11 @@ import {
   SNIFF_BYTES,
 } from './rag/files';
 import { retrieve, renderContext, type RetrievedChunk } from './rag/retrieve';
+import { parseFaqText } from './rag/chunk';
 import {
-  validateWidgetConfig, validateBehaviorConfig, validateLeadConfig,
+  validateWidgetConfig, validateBehaviorConfig, validateLeadConfig, validateFaqItem,
   behaviorConfigFor, widgetConfigFor, widgetPublicConfig, leadConfigFor,
+  capPromptText, LIMITS,
 } from './config';
 import {
   detectLogoType,
@@ -390,9 +401,15 @@ async function preflight(
   try {
     hasCorpus = await hasChunks(db, botId);
     if (hasCorpus) {
+      // `retrieve` already tried the lexical fallback by the time it
+      // returns, so `chunks` is the final answer for this turn. That
+      // ordering is load-bearing: computing the miss from the vector
+      // search alone would count every lexical save as a miss, and the
+      // escalation below would then fire on questions the bot has just
+      // answered correctly.
       const outcome = await retrieve(c.env, db, bot, userMessage);
       chunks = outcome.chunks;
-      context = renderContext(chunks);
+      context = renderContext(chunks, ragConfigFor(bot).context_chars);
     }
   } catch (err) {
     console.error('[rag] skipped (non-fatal):', err);
@@ -850,12 +867,22 @@ app.put('/v1/admin/bots/:id', async (c) => {
     payload.lead_config = lead.value;
   }
 
+  // The two text fields still inlined into every system prompt. Trimmed
+  // and truncated rather than rejected — a settings save that fails on
+  // length takes every other edit in the form down with it — but the
+  // truncation is reported, because storing something other than what
+  // was sent and saying nothing is the worse half of that trade.
+  const truncated = capPromptText(payload as unknown as Record<string, unknown>);
+
   try {
     // Masked/absent apiKeys are reconciled against what is stored inside
     // updateBot, so a settings save can never wipe a tenant's BYOK key.
     const updated = await updateBot(c.get('db'), c.req.param('id'), payload);
     if (!updated) return c.json({ error: 'Bot not found' }, 404);
-    return c.json(redactBotSecrets(updated, origin(c)));
+    return c.json({
+      ...redactBotSecrets(updated, origin(c)),
+      ...(truncated.length && { truncated }),
+    });
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
@@ -1311,6 +1338,350 @@ app.delete('/v1/admin/documents/:docId', async (c) => {
   }
 
   return c.body(null, 204);
+});
+
+// ================================================================
+// FAQ items
+//
+// A curated Q&A list, stored as rows and indexed like any other
+// source. The items hang off one synthetic `documents` row per bot
+// (source='faq'), which is what lets them reuse status, reindex, the
+// chunk inspector, citations and the delete cascade unchanged.
+//
+// Every mutation below re-indexes THAT BOT'S FAQ DOCUMENT and nothing
+// else. Chunks are replaced per document, so one edit re-embeds the
+// bot's items — a handful of batched calls under the 200-item cap, and
+// the price of not running a second ingestion state machine.
+// ================================================================
+
+/** Re-embed a bot's FAQ in the background. Never awaited on a request:
+ *  embedding takes seconds and the editor must stay responsive. */
+function reindexFaq(c: { env: Env; executionCtx: ExecutionContext }, botId: string, bot: Bot): void {
+  c.executionCtx.waitUntil(
+    ingestFaq(c.env, serviceDb(c.env), botId, bot)
+      .catch((err) => console.error('[rag] FAQ ingest failed:', err)),
+  );
+}
+
+app.get('/v1/admin/bots/:id/faq', async (c) => {
+  const botId = c.req.param('id');
+  try {
+    // The document may not exist yet — a bot with no FAQ has never had
+    // one created. That is not an error, it is an empty list.
+    const [items, document] = await Promise.all([
+      listFaqItems(c.get('db'), botId),
+      getFaqDocument(c.get('db'), botId),
+    ]);
+    return c.json({ items, document, limits: {
+      items: LIMITS.faqItems, question: LIMITS.faqQuestion, answer: LIMITS.faqAnswer,
+    } });
+  } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+});
+
+app.post('/v1/admin/bots/:id/faq', async (c) => {
+  const botId = c.req.param('id');
+
+  let body: unknown;
+  try { body = await c.req.json(); }
+  catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const parsed = validateFaqItem(body);
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  try {
+    const existing = await listFaqItems(c.get('db'), botId);
+    if (existing.length >= LIMITS.faqItems) {
+      return c.json({ error: `A bot can have at most ${LIMITS.faqItems} FAQ items.` }, 400);
+    }
+
+    const doc = await ensureFaqDocument(c.get('db'), botId);
+    const item = await createFaqItem(c.get('db'), {
+      botId,
+      documentId: doc.id,
+      question: parsed.value.question!,
+      answer: parsed.value.answer!,
+      // Appended, not inserted. Reordering is its own endpoint.
+      position: parsed.value.position ?? (existing.at(-1)?.position ?? -1) + 1,
+      enabled: parsed.value.enabled,
+    });
+
+    reindexFaq(c, botId, bot);
+    return c.json(item, 201);
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: 'Could not add that FAQ item' }, 403);
+  }
+});
+
+app.put('/v1/admin/faq/:itemId', async (c) => {
+  const itemId = c.req.param('itemId');
+
+  let body: unknown;
+  try { body = await c.req.json(); }
+  catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const parsed = validateFaqItem(body, { partial: true });
+  if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+
+  // Read first: RLS makes this a 404 for another tenant's item, which
+  // is a clearer answer than a PATCH that silently updates no rows.
+  const current = await getFaqItem(c.get('db'), itemId).catch(() => null);
+  if (!current) return c.json({ error: 'FAQ item not found' }, 404);
+
+  const bot = await getBotForAdmin(c.get('db'), current.bot_id).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  try {
+    const item = await updateFaqItem(c.get('db'), itemId, parsed.value);
+    if (!item) return c.json({ error: 'FAQ item not found' }, 404);
+    reindexFaq(c, current.bot_id, bot);
+    return c.json(item);
+  } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+});
+
+app.delete('/v1/admin/faq/:itemId', async (c) => {
+  const itemId = c.req.param('itemId');
+
+  let removed;
+  try { removed = await deleteFaqItem(c.get('db'), itemId); }
+  catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+
+  if (!removed) return c.json({ error: 'FAQ item not found' }, 404);
+
+  const bot = await getBotForAdmin(c.get('db'), removed.bot_id).catch(() => null);
+  // The row is already gone. A missing bot here would mean it was
+  // deleted underneath us, in which case its chunks cascaded too and
+  // there is nothing left to re-index.
+  if (bot) reindexFaq(c, removed.bot_id, bot);
+
+  return c.body(null, 204);
+});
+
+app.post('/v1/admin/bots/:id/faq/reorder', async (c) => {
+  const botId = c.req.param('id');
+
+  let body: { order?: unknown };
+  try { body = await c.req.json(); }
+  catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  if (!Array.isArray(body.order) || body.order.some((id) => typeof id !== 'string')) {
+    return c.json({ error: '`order` must be an array of FAQ item ids' }, 400);
+  }
+  if (body.order.length > LIMITS.faqItems) {
+    return c.json({ error: `At most ${LIMITS.faqItems} FAQ items` }, 400);
+  }
+
+  try {
+    const items = await reorderFaqItems(c.get('db'), botId, body.order as string[]);
+    // No re-index: position decides the order chunks are written in and
+    // nothing else. Retrieval ranks by relevance, so re-embedding here
+    // would spend a vendor call to change nothing an answer can see.
+    return c.json({ items });
+  } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+});
+
+// ================================================================
+// Knowledge cutover
+//
+// Moves a bot's `services` and `faq` columns into the corpus and, only
+// once that has actually succeeded, stamps knowledge_migrated_at — at
+// which point buildSystemPrompt stops inlining them and retrieval
+// takes over.
+//
+// The ORDER is the whole safety property. Rows are created, then
+// embedded, then the flag is set. A failure anywhere before the last
+// step leaves the flag NULL and therefore leaves the bot answering
+// exactly as it did this morning, with some unreferenced chunks in the
+// corpus that the next attempt replaces.
+//
+// Ingestion is AWAITED here rather than pushed to waitUntil, unlike
+// every other ingest in this file. That is the point: "did it work" is
+// the question the flag answers, and waitUntil cannot report back.
+// ================================================================
+app.post('/v1/admin/bots/:id/knowledge/migrate', async (c) => {
+  const botId = c.req.param('id');
+  const dryRun = c.req.query('dry_run') === '1' || c.req.query('dry_run') === 'true';
+
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  if (bot.knowledge_migrated_at) {
+    return c.json({
+      error: 'This bot has already been migrated. Reindex its sources instead, or revert first.',
+      migrated_at: bot.knowledge_migrated_at,
+    }, 409);
+  }
+
+  const db = c.get('db');
+
+  try {
+    const existingItems = await listFaqItems(db, botId);
+
+    // Only parse the legacy blob when there is nothing to lose by it.
+    // A bot whose tenant has already used the new editor keeps what
+    // they typed; re-parsing would duplicate every answer.
+    const parsed = existingItems.length === 0
+      ? parseFaqText(bot.faq ?? '')
+      : { items: [], unparsed: '' };
+
+    const plan = {
+      faq_items_existing: existingItems.length,
+      faq_items_to_create: parsed.items.length,
+      // Prose that belonged to no Q/A pair. It becomes an ordinary text
+      // document rather than one enormous FAQ item — an item is capped
+      // at 2000 characters, and unstructured prose is what the
+      // recursive splitter is for.
+      faq_notes: parsed.unparsed ? parsed.unparsed.length : 0,
+      services: bot.services?.trim() ? bot.services.trim().length : 0,
+    };
+
+    if (dryRun) return c.json({ dry_run: true, plan });
+
+    const faqDoc = await ensureFaqDocument(db, botId);
+
+    for (const [index, draft] of parsed.items.entries()) {
+      await createFaqItem(db, {
+        botId,
+        documentId: faqDoc.id,
+        // Truncated rather than skipped: a question over the cap is
+        // still the tenant's content, and losing it silently during a
+        // migration is the failure this whole endpoint exists to avoid.
+        question: draft.question.slice(0, LIMITS.faqQuestion),
+        answer:   draft.answer.slice(0, LIMITS.faqAnswer),
+        position: index,
+      });
+    }
+
+    const extraDocs: Document[] = [];
+    if (parsed.unparsed) {
+      extraDocs.push(await createDocument(db, {
+        bot_id: botId, source: 'text', title: 'FAQ notes', content: parsed.unparsed,
+      }));
+    }
+    if (bot.services?.trim()) {
+      extraDocs.push(await createDocument(db, {
+        bot_id: botId, source: 'text', title: 'Services', content: bot.services.trim(),
+      }));
+    }
+
+    // Embed everything before committing to the cutover.
+    const service = serviceDb(c.env);
+    const faqResult = await ingestFaq(c.env, service, botId, bot);
+    for (const doc of extraDocs) await ingestDocument(c.env, service, doc.id, bot);
+
+    const updated = await setKnowledgeMigrated(db, botId, new Date().toISOString());
+
+    return c.json({
+      bot: updated ? redactBotSecrets(updated, origin(c)) : null,
+      plan,
+      faq_chunks: faqResult.chunkCount,
+      documents: extraDocs.map((d) => ({ id: d.id, title: d.title })),
+    });
+  } catch (err) {
+    console.error('[knowledge] migrate failed:', err);
+    // The flag is untouched, so the bot is still answering from its
+    // prompt. Say that, because "migration failed" on its own reads
+    // like the bot is now broken.
+    return c.json({
+      error: err instanceof Error ? err.message : 'Migration failed',
+      detail: 'Nothing was cut over — this bot still answers from its Knowledge Base fields.',
+    }, 502);
+  }
+});
+
+/** Undo the cutover. The chunks stay — harmless, and there if the
+ *  tenant tries again — and the prompt goes back to inlining the two
+ *  columns, which were never deleted. */
+app.post('/v1/admin/bots/:id/knowledge/revert', async (c) => {
+  try {
+    const updated = await setKnowledgeMigrated(c.get('db'), c.req.param('id'), null);
+    if (!updated) return c.json({ error: 'Bot not found' }, 404);
+    return c.json(redactBotSecrets(updated, origin(c)));
+  } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+});
+
+// ================================================================
+// POST /v1/admin/bots/:id/retrieve-preview
+//
+// "What would this retrieve?" — the query side of the chunk inspector.
+//
+// The roadmap's note that the chunk inspector matters more than it
+// sounds applies double here: when a bot answers badly the first
+// question is always what it retrieved, and until now the only way to
+// find out was to read the Worker's logs. It is also what makes the
+// knowledge cutover safe to perform — a tenant can prove their bot
+// still finds its FAQ answers BEFORE flipping the flag that stops
+// inlining them.
+//
+// Runs the real retrieval path, fallback and all, rather than a
+// reimplementation of it. A preview that is only approximately what
+// happens in production is worse than none.
+// ================================================================
+app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
+  const botId = c.req.param('id');
+
+  let body: { query?: string };
+  try { body = await c.req.json(); }
+  catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const query = (body.query ?? '').trim();
+  if (!query) return c.json({ error: '`query` is required' }, 400);
+  if (query.length > 1000) return c.json({ error: '`query` must be 1000 characters or fewer' }, 400);
+
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  const cfg = ragConfigFor(bot);
+
+  try {
+    // service_role for the search itself, exactly as the chat path
+    // does. The tenant check already happened: getBotForAdmin ran under
+    // RLS, so reaching this line proves they own the bot.
+    const db = serviceDb(c.env);
+    const outcome = await retrieve(c.env, db, bot, query);
+
+    const titles = outcome.chunks.length
+      ? await getDocumentTitles(db, [...new Set(outcome.chunks.map((ch) => ch.document_id))])
+          .catch(() => new Map<string, string>())
+      : new Map<string, string>();
+
+    return c.json({
+      query,
+      channel: outcome.channel ?? null,
+      skipped: outcome.skipped ?? null,
+      error: outcome.error ?? null,
+      settings: {
+        top_k: cfg.top_k,
+        min_similarity: cfg.min_similarity,
+        priority_boost: cfg.priority_boost,
+        lexical_fallback: cfg.lexical_fallback,
+        context_chars: cfg.context_chars,
+      },
+      chunks: outcome.chunks.map((ch) => ({
+        id: ch.id,
+        document_id: ch.document_id,
+        document_title: titles.get(ch.document_id) ?? null,
+        ordinal: ch.ordinal,
+        content: ch.content,
+        // A cosine score on the vector channel and a ts_rank on the
+        // lexical one. Reported with the channel rather than rescaled,
+        // because a made-up common scale would be a lie that reads
+        // like a measurement.
+        score: ch.similarity,
+        kind: ch.kind ?? 'prose',
+        priority: ch.priority ?? 0,
+        channel: ch.channel ?? outcome.channel ?? null,
+      })),
+      // What the model would actually be handed, budget applied.
+      context: renderContext(outcome.chunks, cfg.context_chars),
+    });
+  } catch (err) {
+    console.error(err);
+    return c.json({ error: err instanceof Error ? err.message : 'Retrieval failed' }, 502);
+  }
 });
 
 app.get('/v1/admin/bots/:id/stats', async (c) => {

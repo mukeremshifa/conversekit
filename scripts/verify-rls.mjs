@@ -52,6 +52,10 @@ const RAG_MIGRATIONS = [
   // pgvector for the same reason.
   join(ROOT, 'supabase', '008_files.sql'),
   join(HERE, 'rls', 'files-test.sql'),
+  // 011 alters chunks (a vector table) and changes match_chunks'
+  // signature, so it is gated the same way.
+  join(ROOT, 'supabase', '011_knowledge.sql'),
+  join(HERE, 'rls', 'knowledge-test.sql'),
 ];
 
 /**

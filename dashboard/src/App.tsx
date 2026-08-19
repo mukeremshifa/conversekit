@@ -2,17 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   LayoutDashboard,
-  BookText, Boxes, Cable, Cpu, MessageSquareText, MessagesSquare, Plug, Settings2, Target, Search,
+  BookText, Boxes, Cable, Cpu, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
 } from 'lucide-react';
 import { clearSession, currentSession } from '@/lib/auth';
 import { endpoints, type Bot, type Me } from '@/lib/api';
 import { SignIn } from '@/screens/SignIn';
 import { Shell, type NavItem } from '@/components/Shell';
 import { BotConfiguration } from '@/screens/BotConfiguration';
-import { KnowledgeBase } from '@/screens/KnowledgeBase';
+import { Knowledge, TAB_ROUTES, knowledgeTabFor } from '@/screens/Knowledge';
 import { Providers } from '@/screens/Providers';
-import { Retrieval } from '@/screens/Retrieval';
-import { Sources } from '@/screens/Sources';
 import { Leads } from '@/screens/Leads';
 import { Conversations } from '@/screens/Conversations';
 import { Install } from '@/screens/Install';
@@ -23,21 +21,35 @@ import { EmptyState, Spinner } from '@/components/ui';
 import { CommandPalette, buildCommands, useCommandPalette } from '@/components/CommandPalette';
 import { readTheme, setTheme } from '@/lib/theme';
 
+/**
+ * Knowledge Base, Knowledge Sources and Retrieval used to be three
+ * entries here. They were split by implementation detail rather than
+ * by what a tenant is trying to do, and they are now three tabs of one
+ * screen — see screens/Knowledge.tsx.
+ */
 const NAV: NavItem[] = [
   { id: 'overview',      label: 'Overview',          icon: LayoutDashboard },
   { id: 'playground',    label: 'Playground',        icon: MessagesSquare },
   { id: 'configuration', label: 'Bot Configuration', icon: Settings2 },
-  { id: 'knowledge',     label: 'Knowledge Base',    icon: BookText },
-  { id: 'sources',       label: 'Knowledge Sources', icon: Boxes },
-  { id: 'retrieval',     label: 'Retrieval',         icon: Search },
+  { id: 'knowledge',     label: 'Knowledge',         icon: BookText },
   { id: 'providers',     label: 'AI Providers',      icon: Cpu },
   { id: 'leads',         label: 'Leads',             icon: Target },
   { id: 'conversations', label: 'Conversations',     icon: MessageSquareText },
   { id: 'install',       label: 'Install',           icon: Plug },
 ];
 
-/** Screens whose content is a table or a chart grid rather than a form. */
-const WIDE_ROUTES = new Set(['overview', 'leads', 'conversations', 'sources']);
+/** The routes Knowledge owns. #sources and #retrieval are not nav
+ *  entries any more but are still working URLs — they select a tab.
+ *  Bookmarks are public surface; a reorganisation is not a reason to
+ *  break someone's link. */
+const KNOWLEDGE_ROUTES = new Set<string>(Object.values(TAB_ROUTES));
+
+/** Screens whose content is a table or a chart grid rather than a form.
+ *  All three Knowledge tabs are wide together: a page that changes
+ *  width as you switch tabs reads as a rendering bug. */
+const WIDE_ROUTES = new Set([
+  'overview', 'leads', 'conversations', ...KNOWLEDGE_ROUTES,
+]);
 
 /** Routes that were renamed. The old id stays a working URL: #settings is
  *  bookmarked, and a rename is not a reason to break someone's link. */
@@ -178,9 +190,14 @@ export default function App() {
             {route === 'overview'      && <Overview bot={bot} onNavigate={navigate} />}
             {route === 'playground'    && <Playground bot={bot} />}
             {route === 'configuration' && <BotConfiguration bot={bot} onSaved={patchBot} />}
-            {route === 'knowledge'     && <KnowledgeBase bot={bot} onSaved={patchBot} />}
-            {route === 'sources'       && <Sources bot={bot} />}
-            {route === 'retrieval'     && <Retrieval bot={bot} onSaved={patchBot} />}
+            {KNOWLEDGE_ROUTES.has(route) && (
+              <Knowledge
+                bot={bot}
+                tab={knowledgeTabFor(route)}
+                onNavigate={navigate}
+                onSaved={patchBot}
+              />
+            )}
             {route === 'providers'     && <Providers bot={bot} onSaved={patchBot} />}
             {route === 'leads'         && <Leads bot={bot} />}
             {route === 'conversations' && <Conversations bot={bot} />}
@@ -194,6 +211,12 @@ export default function App() {
         onOpenChange={palette.setOpen}
         commands={buildCommands({
           nav: NAV, route, bots, botId,
+          // The two Knowledge tabs that are no longer nav entries.
+          // Someone who knows the product still types "sources".
+          extra: [
+            { id: TAB_ROUTES.sources, label: 'Knowledge · Sources', icon: Boxes },
+            { id: TAB_ROUTES.retrieval, label: 'Knowledge · Retrieval', icon: Search },
+          ],
           onNavigate: navigate,
           onSelectBot: setBotId,
           onNewBot: () => navigate('configuration'),

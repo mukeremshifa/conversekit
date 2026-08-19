@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Boxes, FileText, FileUp, Link2, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import { Boxes, FileText, FileUp, HelpCircle, Link2, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { endpoints, uploadDocument, type Bot, type Chunk, type Doc } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import {
@@ -29,7 +29,13 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function Sources({ bot }: { bot: Bot }) {
+export function Sources({
+  bot, embedded = false,
+}: {
+  bot: Bot;
+  /** Rendered inside the Knowledge screen, which owns the page header. */
+  embedded?: boolean;
+}) {
   const [docs, setDocs] = useState<Doc[] | null>(null);
   const [inspect, setInspect] = useState<{ doc: Doc; chunks: Chunk[] | null } | null>(null);
   const timer = useRef<number | null>(null);
@@ -91,10 +97,12 @@ export function Sources({ bot }: { bot: Bot }) {
 
   return (
     <>
-      <Header
-        title="Knowledge Sources"
-        subtitle="Documents the bot searches before answering. Text, markdown, or a web page."
-      />
+      {!embedded && (
+        <Header
+          title="Knowledge Sources"
+          subtitle="Documents the bot searches before answering. Text, markdown, or a web page."
+        />
+      )}
 
       <AddSource botId={bot.id} onAdded={load} />
 
@@ -119,7 +127,7 @@ export function Sources({ bot }: { bot: Bot }) {
             <EmptyState
               icon={Boxes}
               title="No knowledge sources"
-              description="Until you add one, the bot answers from its Knowledge Base fields alone. Paste text or markdown, or point it at a URL."
+              description="Sources are for longer material — a pricing page, a policy PDF, a handbook. They are chunked and searched automatically. For the questions visitors ask over and over, use the FAQ tab instead."
               action={{ label: 'Add a source', onClick: () => document.getElementById('ck-add-source')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}
             />
           ) : (
@@ -141,6 +149,7 @@ export function Sources({ bot }: { bot: Bot }) {
                       <span className="flex items-center gap-1.5 text-muted">
                         {d.source === 'url' ? <Link2 className="h-3.5 w-3.5" />
                           : d.source === 'file' ? <FileUp className="h-3.5 w-3.5" />
+                          : d.source === 'faq' ? <HelpCircle className="h-3.5 w-3.5" />
                           : <FileText className="h-3.5 w-3.5" />}
                         {d.source === 'file'
                           ? `${d.mime_type === 'application/pdf' ? 'PDF' : 'Word'}${d.size_bytes ? ` · ${formatBytes(d.size_bytes)}` : ''}`
@@ -159,9 +168,20 @@ export function Sources({ bot }: { bot: Bot }) {
                       <div className="flex gap-3">
                         <Button variant="link" onClick={() => showChunks(d)}>Chunks</Button>
                         <Button variant="link" onClick={() => reindex(d)}>Reindex</Button>
-                        <Button variant="link" className="text-danger" onClick={() => remove(d)} aria-label={`Delete ${d.title}`}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        {/* The FAQ row is not a source someone added, it
+                            is a view of the FAQ tab. Deleting it would
+                            cascade away every item they wrote, from a
+                            screen that gives no hint of that — so the
+                            action here is a signpost instead. */}
+                        {d.source === 'faq' ? (
+                          <Button variant="link" onClick={() => { window.location.hash = 'knowledge'; }}>
+                            Edit in FAQ
+                          </Button>
+                        ) : (
+                          <Button variant="link" className="text-danger" onClick={() => remove(d)} aria-label={`Delete ${d.title}`}>
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </Td>
                   </tr>
@@ -194,7 +214,15 @@ export function Sources({ bot }: { bot: Bot }) {
                 {inspect.chunks.map((c) => (
                   <div key={c.id} className="flex gap-3 py-3">
                     <span className="w-8 shrink-0 pt-0.5 text-xs font-bold text-muted">#{c.ordinal}</span>
-                    <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">{c.content}</p>
+                    <div className="min-w-0 flex-1">
+                      {(c.kind === 'faq' || (c.priority ?? 0) > 0) && (
+                        <div className="mb-1 flex gap-2">
+                          {c.kind === 'faq' && <Badge tone="ok">FAQ</Badge>}
+                          {(c.priority ?? 0) > 0 && <Badge tone="wait">boosted</Badge>}
+                        </div>
+                      )}
+                      <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed">{c.content}</p>
+                    </div>
                   </div>
                 ))}
               </div>

@@ -20,6 +20,11 @@ const MAX_SUGGESTION_LEN = 80;
 const MAX_ORIGINS = 20;
 const MAX_GREETING = 300;
 const MAX_LEAD_EMAILS = 5;
+// The two fields still pasted into every system prompt (011). The
+// Worker truncates past these; the counters exist so nobody discovers
+// that after the fact.
+const MAX_BUSINESS_DESCRIPTION = 600;
+const MAX_CUSTOM_INSTRUCTIONS = 2000;
 
 /** Curated brand safe colours, taken from the dashboard's own tokens so
  *  the two products stay related. */
@@ -51,6 +56,8 @@ const TIME_ZONES: string[] = (() => {
 
 type Form = {
   name: string; business_name: string; timezone: string;
+  business_description: string;
+  custom_instructions: string;
   allowed_origins: string[];
   suggestions: string[];
   contact_phone: string; contact_email: string; address: string;
@@ -91,6 +98,8 @@ const from = (b: Bot): Form => ({
   // Not stored yet. Defaults to whatever the admin's browser reports so
   // the field is never empty when it does get wired up.
   timezone: BROWSER_TZ,
+  business_description: b.business_description ?? '',
+  custom_instructions: b.custom_instructions ?? '',
   // Falls back to the legacy single origin column for rows predating 006.
   allowed_origins: b.allowed_origins?.length
     ? b.allowed_origins
@@ -166,7 +175,8 @@ function originError(raw: string): string | null {
  * keys overlaid. See saveSection.
  */
 const OWNED = {
-  general:    ['name', 'business_name'],
+  general:    ['name', 'business_name', 'business_description'],
+  instructions: ['custom_instructions'],
   access:     ['allowed_origins'],
   appearance: ['primary_color', 'position', 'theme'],
   greeting:   ['greeting', 'greeting_delay_ms', 'suggestions'],
@@ -345,7 +355,12 @@ export function BotConfiguration({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot)
     for (const k of keys) (merged as Record<string, unknown>)[k] = form[k];
 
     const payload: Record<string, unknown> =
-      id === 'general'    ? { name: merged.name, business_name: merged.business_name }
+      id === 'general'    ? {
+          name: merged.name,
+          business_name: merged.business_name,
+          business_description: merged.business_description,
+        }
+      : id === 'instructions' ? { custom_instructions: merged.custom_instructions }
       : id === 'access'   ? { allowed_origins: filledOrigins }
       : id === 'appearance' ? { primary_color: merged.primary_color, widget_config: widgetConfig(merged) }
       : id === 'greeting' ? { suggestions, widget_config: widgetConfig(merged) }
@@ -451,6 +466,27 @@ export function BotConfiguration({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot)
 
               <SettingRow label="Business name" description="Used throughout the bot's answers, and in the prompt that keeps it on topic.">
                 <Input value={form.business_name} onChange={(e) => set({ business_name: e.target.value })} />
+              </SettingRow>
+
+              {/* One of only two tenant-written fields still pasted into
+                  every single message, which is why it is capped and why
+                  the counter is visible. Anything longer belongs in
+                  Knowledge, where it is searched rather than always sent. */}
+              <SettingRow
+                label="What the business does"
+                align="start"
+                description="Two or three sentences, included in every message the bot sends. For anything longer, add it under Knowledge instead — that material is searched, not sent every time."
+              >
+                <Textarea
+                  rows={4}
+                  maxLength={MAX_BUSINESS_DESCRIPTION}
+                  value={form.business_description}
+                  onChange={(e) => set({ business_description: e.target.value })}
+                  placeholder="A family dental practice in central Leeds, open six days a week."
+                />
+                <p className="mt-1.5 text-right text-xs text-muted">
+                  {form.business_description.length} / {MAX_BUSINESS_DESCRIPTION}
+                </p>
               </SettingRow>
 
               <SettingRow
@@ -738,6 +774,45 @@ export function BotConfiguration({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot)
             </Rows>
           </CardContent>
           <SaveBar busy={busy === 'behaviour'} dirty={isDirty('behaviour')} onSave={() => void saveSection('behaviour')} />
+        </Card>
+      </Section>
+
+      <Section
+        title="Instructions"
+        description="Standing rules for how this bot behaves. Not knowledge — knowledge goes under Knowledge."
+      >
+        <Card>
+          <CardHeader>
+            <div>
+              <CardTitle>Custom instructions</CardTitle>
+              <CardDescription>
+                Tone, escalation rules, anything the bot must always do. The built-in conversation
+                rules — stay on topic, never invent prices, handle rudeness calmly — always apply on
+                top of these.
+                <br />
+                These stay in the prompt on purpose. Everything the bot reads from your sources is
+                explicitly labelled as facts to use and never as orders to follow, so instructions
+                filed there would be ignored by design.
+              </CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Textarea
+              rows={6}
+              maxLength={MAX_CUSTOM_INSTRUCTIONS}
+              value={form.custom_instructions}
+              onChange={(e) => set({ custom_instructions: e.target.value })}
+              placeholder="Always mention that first consultations are free. Never quote a price without saying it is an estimate."
+            />
+            <p className="mt-1.5 text-right text-xs text-muted">
+              {form.custom_instructions.length} / {MAX_CUSTOM_INSTRUCTIONS}
+            </p>
+          </CardContent>
+          <SaveBar
+            busy={busy === 'instructions'}
+            dirty={isDirty('instructions')}
+            onSave={() => void saveSection('instructions')}
+          />
         </Card>
       </Section>
 

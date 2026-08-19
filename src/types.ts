@@ -155,6 +155,20 @@ export interface Bot {
   // Lead Capture (supabase/010). Same contract: undefined reproduces
   // the hardcoded prompt block byte for byte.
   lead_config?: LeadConfig | null;
+
+  /**
+   * Knowledge unification cutover (supabase/011).
+   *
+   * NULL — including on a Worker running ahead of the migration — means
+   * `services` and `faq` are still inlined into the system prompt
+   * exactly as they were before 011. Stamped only after a successful
+   * ingest of both into the corpus, at which point the prompt drops
+   * those two sections and retrieval takes over.
+   *
+   * Nulling it reverts, with the now-redundant chunks sitting
+   * harmlessly in the corpus. That reversibility is the whole point.
+   */
+  knowledge_migrated_at?: string | null;
 }
 
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
@@ -278,10 +292,38 @@ export interface RagConfig {
   min_similarity?: number;
   chunk_size?: number;
   chunk_overlap?: number;
+
+  // ── Added by 011 ──
+  /**
+   * Ceiling on the rendered `## Retrieved Reference Material` section,
+   * in characters. Chunks are taken in rank order until it is spent.
+   * Without it, top_k × chunk_size is the only bound and 20 × 4000 is
+   * 80 KB of prompt on a single turn.
+   */
+  context_chars?: number;
+  /**
+   * Added to similarity when ORDERING boosted chunks (FAQ items ingest
+   * at priority 1). The min_similarity floor still tests raw
+   * similarity, so this wins near-ties without letting an irrelevant
+   * chunk through. 0 disables it.
+   */
+  priority_boost?: number;
+  /**
+   * Whether to fall back to lexical search when the vector search
+   * returns nothing at all. Costs one query on the miss path and
+   * nothing on the happy path.
+   */
+  lexical_fallback?: boolean;
 }
 
-export type DocumentSource = 'text' | 'url' | 'markdown' | 'file';
+export type DocumentSource = 'text' | 'url' | 'markdown' | 'file' | 'faq';
 export type DocumentStatus = 'pending' | 'processing' | 'ready' | 'failed';
+
+/**
+ * What shape a chunk's text has. Retrieval weights, filters and
+ * explains by this; ingestion sets it and a tenant never can.
+ */
+export type ChunkKind = 'prose' | 'faq';
 
 export interface Document {
   id: string;
@@ -324,6 +366,41 @@ export interface ChunkRow {
   ordinal: number;
   content: string;
   created_at: string;
+  // Added by 011. Optional so a Worker reading a pre-011 row — or a
+  // deploy that lands before the migration — still parses.
+  kind?: ChunkKind;
+  priority?: number;
+  metadata?: Record<string, unknown> | null;
+}
+
+/**
+ * One question and its answer (supabase/011).
+ *
+ * Rows rather than a parsed text blob: per-item edit, reorder and
+ * disable are what a tenant actually does with an FAQ, and every one of
+ * those is string surgery on a blob. They hang off a synthetic
+ * `documents` row with source='faq' so they inherit status, reindex,
+ * the chunk inspector, citations and ON DELETE CASCADE unchanged —
+ * the pipeline stays one pipeline.
+ */
+export interface FaqItem {
+  id: string;
+  bot_id: string;
+  org_id: string;
+  document_id: string;
+  question: string;
+  answer: string;
+  position: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FaqItemPayload {
+  question?: string;
+  answer?: string;
+  position?: number;
+  enabled?: boolean;
 }
 
 export interface Lead {

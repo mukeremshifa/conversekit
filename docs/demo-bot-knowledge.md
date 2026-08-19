@@ -19,13 +19,22 @@ This file exists so replacing it is copy-paste rather than a writing task.
    No trailing slash and no path — the API compares origins exactly, scheme and
    port included, and rejects anything else with a 403.
 3. Set **primary color** to `#EEBA2B` so the widget matches the page.
-4. Paste the sections below into the matching Knowledge Base fields.
+4. Paste the sections below into their homes. Since
+   [011](../supabase/011_knowledge.sql) those are three different places, and
+   the split is the point — see [knowledge.md](knowledge.md):
+   - **Business description**, **hours** and **contact** → Bot Configuration.
+     Small, and always in the prompt, so the bot knows them whatever it is asked.
+   - **Custom instructions** → Bot Configuration → Instructions.
+   - **FAQ** → Knowledge → FAQ, one item per `Q:` / `A:` pair below. Each is
+     indexed on its own.
+   - **Services / features** → Knowledge → Sources, as a `text` source. It is
+     prose, and prose is what the ordinary chunker is for.
 5. Copy the new bot's id into `public/index.html` — the single `data-bot-id`
    on the last script tag, which is commented as the line to change.
 6. Redeploy: `npm run deploy:pages`.
 
-Optionally add this file itself as a **Knowledge Source** (type: text), which
-gives the bot retrieval over its own documentation.
+Optionally add this file itself as a **source** (type: text) under Knowledge →
+Sources, which gives the bot retrieval over its own documentation.
 
 ---
 

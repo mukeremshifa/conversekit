@@ -19,6 +19,7 @@
 import type {
   Bot, BehaviorConfig, WidgetConfig, WidgetPosition, WidgetTheme,
   LeadConfig, LeadFields, LeadTrigger, LeadFieldMode, WebhookFormat,
+  FaqItemPayload,
 } from './types';
 
 export const POSITIONS: WidgetPosition[] = ['bottom-right', 'bottom-left'];
@@ -57,7 +58,68 @@ export const LIMITS = {
   /** A distribution list's worth. Past this a tenant wants a shared
    *  inbox, not more rows in a settings form. */
   emailRecipients: 5,
+
+  // ── Knowledge pipeline (011) ──
+  //
+  // These two are the ONLY tenant-authored text left in the system
+  // prompt, and until now both were uncapped `text` with no limit in
+  // the schema, none here, and none in the UI. A tenant who pasted
+  // 40 KB shipped 40 KB on every message, forever, crowding out the
+  // retrieved chunks and the conversation history alike.
+  //
+  // Truncated rather than rejected, per the clamp-don't-reject rule at
+  // the top of this file: a settings save that fails on length loses
+  // every other edit in the form along with it.
+  /** Three or four sentences. Anything longer is a document, and
+   *  documents belong in the corpus where they are searched. */
+  businessDescription: 600,
+  /** Long enough for a page of standing rules. Past that a tenant is
+   *  writing knowledge, not instructions. */
+  customInstructions: 2000,
+
+  /** FAQ items per bot. Sized against MAX_CHUNKS (400 in rag/ingest.ts)
+   *  so a full FAQ still leaves room for a long answer to split. */
+  faqItems: 200,
+  faqQuestion: 300,
+  faqAnswer: 2000,
 } as const;
+
+/**
+ * The prompt-resident text columns and what each is capped at.
+ *
+ * Named rather than inlined at the call site because the dashboard
+ * mirrors these numbers and the migration's CHECK constraints repeat
+ * them — three copies is already one too many, so at least the Worker's
+ * two agree by construction.
+ */
+export const PROMPT_TEXT_CAPS: Record<string, number> = {
+  business_description: LIMITS.businessDescription,
+  custom_instructions:  LIMITS.customInstructions,
+};
+
+/**
+ * Trim and cap the prompt-resident text fields of a bot update, in
+ * place. Fields the payload does not carry are left alone — a partial
+ * update must never blank a column it did not mention.
+ *
+ * Returns the fields it actually shortened, so the route can say so
+ * rather than silently storing something other than what was sent.
+ */
+export function capPromptText(payload: Record<string, unknown>): string[] {
+  const truncated: string[] = [];
+  for (const [field, max] of Object.entries(PROMPT_TEXT_CAPS)) {
+    const raw = payload[field];
+    if (typeof raw !== 'string') continue;
+    const value = raw.trim();
+    if (value.length > max) {
+      truncated.push(field);
+      payload[field] = value.slice(0, max);
+    } else {
+      payload[field] = value;
+    }
+  }
+  return truncated;
+}
 
 type Ok<T> = { ok: true; value: T };
 type Err = { ok: false; error: string };
@@ -448,6 +510,73 @@ export function validateLeadConfig(input: unknown): Ok<LeadConfig | null> | Err 
   }
 
   return { ok: true, value: orNull(out) };
+}
+
+// ----------------------------------------------------------------
+// FAQ items (011)
+//
+// Unlike the three config blobs above, these are ordinary columns that
+// Postgres can and does check. The validation here exists for the error
+// message: a length CHECK surfaces through PostgREST as an opaque
+// constraint name, and "Question must be 300 characters or fewer" is
+// the difference between a tenant fixing their own typo and filing a
+// ticket.
+//
+// Rejected rather than clamped, breaking the rule at the top of this
+// file — and deliberately. A settings slider that reads 12000 is a UI
+// bug worth swallowing; a question silently cut in half is content the
+// tenant wrote and can see was mangled.
+// ----------------------------------------------------------------
+const FAQ_KEYS = ['question', 'answer', 'enabled', 'position'] as const;
+
+export function validateFaqItem(
+  input: unknown, opts: { partial?: boolean } = {},
+): Ok<FaqItemPayload> | Err {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+    return { ok: false, error: 'A FAQ item must be an object' };
+  }
+  const src = input as Record<string, unknown>;
+  const out: FaqItemPayload = {};
+
+  for (const key of Object.keys(src)) {
+    if (!(FAQ_KEYS as readonly string[]).includes(key)) {
+      return { ok: false, error: `Unknown FAQ field '${key}'` };
+    }
+  }
+
+  for (const [field, max, label] of [
+    ['question', LIMITS.faqQuestion, 'Question'],
+    ['answer',   LIMITS.faqAnswer,   'Answer'],
+  ] as const) {
+    const raw = src[field];
+    if (raw === undefined) {
+      // A create needs both; a patch may carry either.
+      if (!opts.partial) return { ok: false, error: `\`${field}\` is required` };
+      continue;
+    }
+    if (typeof raw !== 'string') return { ok: false, error: `\`${field}\` must be a string` };
+    const value = raw.trim();
+    // An empty question embeds to noise and an empty answer teaches the
+    // bot nothing — both are worse than the item not existing.
+    if (!value) return { ok: false, error: `${label} cannot be empty` };
+    if (value.length > max) return { ok: false, error: `${label} must be ${max} characters or fewer` };
+    out[field] = value;
+  }
+
+  if (src.enabled !== undefined) {
+    const r = bool(src.enabled, 'enabled');
+    if (!r.ok) return r;
+    out.enabled = r.value;
+  }
+
+  if (src.position !== undefined) {
+    if (typeof src.position !== 'number' || !Number.isFinite(src.position)) {
+      return { ok: false, error: '`position` must be a number' };
+    }
+    out.position = clamp(Math.round(src.position), 0, 100_000);
+  }
+
+  return { ok: true, value: out };
 }
 
 // ----------------------------------------------------------------

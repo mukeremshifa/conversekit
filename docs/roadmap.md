@@ -136,6 +136,44 @@ Revisit when PDF ingestion is actually wanted.
 the architecture-deciding spike (`env.AI.toMarkdown()`), the work breakdown, the
 constraints that must not break, and the landmines this project hit the hard way.
 
+## Phase 2c — Knowledge unification ✅ shipped
+
+Until 011 a bot had **two knowledge systems that did not know about each
+other**: four uncapped `text` columns pasted into every system prompt, and a
+`documents → chunks → match_chunks` pipeline that never saw them. A tenant who
+uploaded their FAQ as a PDF *and* filled in the FAQ box shipped it twice, once
+always and once by similarity, with nothing reconciling the two.
+
+Shipped: `supabase/011_knowledge.sql` (`faq_items`, chunk `kind` / `priority` /
+`metadata` / `search`, the lexical RPC, the cutover flag), `chunkQA` and the
+legacy FAQ parser in `src/rag/chunk.ts`, `ingestFaq`, the FAQ CRUD and cutover
+routes, `POST /v1/admin/bots/:id/retrieve-preview`, and one **Knowledge**
+dashboard screen replacing three.
+
+Three items from the original Phase 2 scope below finally landed with it:
+
+- **`chunks.metadata jsonb`** — specified in step 1, never built until now.
+- **"Budget the context window"** — step 4. `renderContext` now spends a
+  `context_chars` budget, and the two prompt-resident text columns are capped.
+- **The chunk inspector's query-side twin.** "What did it retrieve?" was only
+  answerable from the Worker's logs.
+
+**The trade this made, and what pays for it.** Folding the FAQ into retrieval
+turns a guarantee into a search. Two mechanisms pay that back: a priority boost
+applied to *ordering* inside `match_chunks` while the similarity floor still
+tests the raw score, and a lexical channel that runs only when vector search
+returns nothing. Both are deliberately the foundation for hybrid retrieval —
+with the `tsvector`, the `priority` column and the lexical RPC in place, full
+reciprocal-rank fusion becomes a scoring change rather than a migration.
+
+**The cutover is per bot and reversible.** `bots.knowledge_migrated_at` is NULL
+until an ingest has actually succeeded, and while it is NULL the prompt is
+byte-identical to what shipped before — asserted as a string comparison in
+`scripts/test-knowledge-units.mjs`, the convention `test-lead-capture.mjs` set.
+
+Full reasoning, decisions and rejected alternatives:
+[knowledge-pipeline.md](knowledge-pipeline.md).
+
 ## Phase 2 — original scope (reference)
 
 **Scope discipline:** ship *one* opinionated pipeline with a few knobs. Not a

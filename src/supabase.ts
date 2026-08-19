@@ -20,7 +20,8 @@
 // ----------------------------------------------------------------
 import type {
   Env, Bot, ConversationRow, Lead, BotUpdatePayload, BotCreatePayload, Membership, Organization,
-  Document, DocumentCreatePayload, ChunkRow, WidgetConfig,
+  Document, DocumentCreatePayload, ChunkRow, ChunkKind, WidgetConfig,
+  FaqItem, FaqItemPayload,
 } from './types';
 import type { ExtractedLead } from './leads';
 
@@ -587,9 +588,10 @@ export async function updateDocument(
 // ----------------------------------------------------------------
 export async function listChunks(db: UserDb, documentId: string, limit = 200): Promise<ChunkRow[]> {
   // No embedding column: 768 floats per row is megabytes of JSON the
-  // chunk inspector has no use for.
+  // chunk inspector has no use for. No `search` either — it is the
+  // whole content again, tokenised.
   return pgFetch<ChunkRow[]>(db,
-    `/chunks?select=id,document_id,ordinal,content,created_at&document_id=eq.${encodeURIComponent(documentId)}&order=ordinal.asc&limit=${limit}`
+    `/chunks?select=id,document_id,ordinal,content,created_at,kind,priority,metadata&document_id=eq.${encodeURIComponent(documentId)}&order=ordinal.asc&limit=${limit}`
   );
 }
 
@@ -600,9 +602,20 @@ export async function listChunks(db: UserDb, documentId: string, limit = 200): P
  * recoverable by re-running and is preferable to duplicated chunks
  * silently doubling every retrieval score.
  */
+export interface ChunkInsert {
+  ordinal: number;
+  content: string;
+  embedding: number[];
+  /** Defaults to the column default, 'prose'. */
+  kind?: ChunkKind;
+  /** Defaults to 0. FAQ chunks ingest at 1 — see 011_knowledge.sql. */
+  priority?: number;
+  metadata?: Record<string, unknown> | null;
+}
+
 export async function replaceChunks(
   db: ServiceDb,
-  args: { documentId: string; botId: string; rows: Array<{ ordinal: number; content: string; embedding: number[] }> },
+  args: { documentId: string; botId: string; rows: ChunkInsert[] },
 ): Promise<void> {
   await pgFetch<unknown>(db,
     `/chunks?document_id=eq.${encodeURIComponent(args.documentId)}`,
@@ -612,12 +625,21 @@ export async function replaceChunks(
   if (args.rows.length === 0) return;
 
   // pgvector accepts the '[1,2,3]' text form over PostgREST.
+  //
+  // kind, priority and metadata are omitted rather than defaulted here
+  // when the caller did not set them: PostgREST fills every row in one
+  // insert from the union of the keys present, so a mixed batch would
+  // otherwise send explicit nulls for the rows that left them out and
+  // trip the NOT NULL on kind.
   const payload = args.rows.map((r) => ({
     document_id: args.documentId,
     bot_id:      args.botId,
     ordinal:     r.ordinal,
     content:     r.content,
     embedding:   `[${r.embedding.join(',')}]`,
+    kind:        r.kind ?? 'prose',
+    priority:    r.priority ?? 0,
+    metadata:    r.metadata ?? null,
   }));
 
   // Insert in batches: one request with 400 × 768 floats is large
@@ -632,10 +654,27 @@ export async function replaceChunks(
   }
 }
 
+/** The row shape both retrieval channels return. `similarity` is a
+ *  cosine score from match_chunks and a ts_rank_cd score from
+ *  match_chunks_lexical — the two are NOT on the same scale, which is
+ *  why the caller tracks which channel produced a row. */
+export interface MatchedChunk {
+  id: string;
+  document_id: string;
+  ordinal: number;
+  content: string;
+  similarity: number;
+  kind?: ChunkKind;
+  priority?: number;
+}
+
 export async function matchChunks(
   db: ServiceDb,
-  args: { botId: string; embedding: number[]; matchCount: number; minSimilarity: number },
-): Promise<Array<{ id: string; document_id: string; ordinal: number; content: string; similarity: number }>> {
+  args: {
+    botId: string; embedding: number[]; matchCount: number;
+    minSimilarity: number; priorityBoost?: number;
+  },
+): Promise<MatchedChunk[]> {
   return pgFetch(db, '/rpc/match_chunks',
     { method: 'POST',
       body: JSON.stringify({
@@ -643,6 +682,26 @@ export async function matchChunks(
         p_query:          `[${args.embedding.join(',')}]`,
         p_match_count:    args.matchCount,
         p_min_similarity: args.minSimilarity,
+        p_priority_boost: args.priorityBoost ?? 0,
+      }) }
+  );
+}
+
+/**
+ * Lexical search over the boosted chunks. Called only when the vector
+ * search returned nothing — see the note in src/rag/retrieve.ts for
+ * why that asymmetry is deliberate.
+ */
+export async function matchChunksLexical(
+  db: ServiceDb,
+  args: { botId: string; query: string; matchCount: number },
+): Promise<MatchedChunk[]> {
+  return pgFetch(db, '/rpc/match_chunks_lexical',
+    { method: 'POST',
+      body: JSON.stringify({
+        p_bot_id:      args.botId,
+        p_query_text:  args.query,
+        p_match_count: args.matchCount,
       }) }
   );
 }
@@ -654,6 +713,182 @@ export async function hasChunks(db: ServiceDb, botId: string): Promise<boolean> 
     `/chunks?select=id&bot_id=eq.${encodeURIComponent(botId)}&limit=1`
   );
   return rows.length > 0;
+}
+
+// ----------------------------------------------------------------
+// FAQ items (011)
+//
+// Split by scope like everything else. The editor writes under RLS as
+// the tenant; ingestion reads with the service client, because it runs
+// from waitUntil after the request that triggered it has gone.
+// ----------------------------------------------------------------
+const FAQ_FIELDS = 'id,bot_id,org_id,document_id,question,answer,position,enabled,created_at,updated_at';
+
+/** The title of every bot's FAQ document. Not tenant-editable: it is
+ *  what citations name and what the Sources list shows, and letting it
+ *  drift would make one concept read as two. */
+export const FAQ_DOCUMENT_TITLE = 'Frequently Asked Questions';
+
+export async function listFaqItems(db: UserDb, botId: string): Promise<FaqItem[]> {
+  return pgFetch<FaqItem[]>(db,
+    `/faq_items?select=${FAQ_FIELDS}&bot_id=eq.${encodeURIComponent(botId)}&order=position.asc,created_at.asc`
+  );
+}
+
+/** Only the enabled items, in order — exactly what gets embedded. */
+export async function listFaqItemsForIngest(db: ServiceDb, botId: string): Promise<FaqItem[]> {
+  return pgFetch<FaqItem[]>(db,
+    `/faq_items?select=${FAQ_FIELDS}&bot_id=eq.${encodeURIComponent(botId)}&enabled=is.true&order=position.asc,created_at.asc`
+  );
+}
+
+export async function getFaqItem(db: UserDb, itemId: string): Promise<FaqItem | null> {
+  const rows = await pgFetch<FaqItem[]>(db,
+    `/faq_items?select=${FAQ_FIELDS}&id=eq.${encodeURIComponent(itemId)}&limit=1`
+  );
+  return rows[0] ?? null;
+}
+
+export async function createFaqItem(
+  db: UserDb,
+  args: { botId: string; documentId: string; question: string; answer: string; position: number; enabled?: boolean },
+): Promise<FaqItem> {
+  const rows = await pgFetch<FaqItem[]>(db, '/faq_items', {
+    method: 'POST',
+    body: JSON.stringify({
+      bot_id:      args.botId,
+      document_id: args.documentId,
+      question:    args.question,
+      answer:      args.answer,
+      position:    args.position,
+      ...(args.enabled !== undefined && { enabled: args.enabled }),
+    }),
+  });
+  if (!rows[0]) throw new Error('FAQ item not returned after insert');
+  return rows[0];
+}
+
+export async function updateFaqItem(
+  db: UserDb, itemId: string, patch: FaqItemPayload,
+): Promise<FaqItem | null> {
+  const rows = await pgFetch<FaqItem[]>(db,
+    `/faq_items?id=eq.${encodeURIComponent(itemId)}`,
+    { method: 'PATCH', body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }) }
+  );
+  return rows[0] ?? null;
+}
+
+export async function deleteFaqItem(db: UserDb, itemId: string): Promise<FaqItem | null> {
+  const rows = await pgFetch<FaqItem[]>(db,
+    `/faq_items?id=eq.${encodeURIComponent(itemId)}`,
+    { method: 'DELETE' }
+  );
+  return rows[0] ?? null;
+}
+
+/**
+ * Rewrite `position` across a bot's FAQ in one request.
+ *
+ * The caller sends ids only. Every other column is taken from the
+ * stored row rather than from the request, so the reorder path cannot
+ * be used to edit an answer — an upsert needs the whole row, and the
+ * whole row arriving from a browser is the difference between "move
+ * item 3 up" and "replace item 3".
+ *
+ * Ids the bot does not own are dropped rather than rejected: RLS would
+ * refuse them anyway, and a stale tab that reorders around a deleted
+ * item should still reorder the rest.
+ */
+export async function reorderFaqItems(
+  db: UserDb, botId: string, order: string[],
+): Promise<FaqItem[]> {
+  const stored = await listFaqItems(db, botId);
+  const byId = new Map(stored.map((item) => [item.id, item]));
+
+  const now = new Date().toISOString();
+  const rows = order
+    .map((id, index) => {
+      const item = byId.get(id);
+      if (!item) return null;
+      return {
+        id:          item.id,
+        bot_id:      item.bot_id,
+        document_id: item.document_id,
+        question:    item.question,
+        answer:      item.answer,
+        enabled:     item.enabled,
+        position:    index,
+        updated_at:  now,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  if (rows.length === 0) return stored;
+
+  // org_id is deliberately absent: the BEFORE INSERT trigger derives it,
+  // and leaving it out of the payload keeps it out of the ON CONFLICT
+  // SET list too, so an upsert can never move a row between tenants.
+  await pgFetch<unknown>(db, '/faq_items', {
+    method: 'POST',
+    body: JSON.stringify(rows),
+    headers: { 'Prefer': 'return=minimal,resolution=merge-duplicates' },
+  });
+
+  return listFaqItems(db, botId);
+}
+
+/**
+ * The bot's FAQ document, or null.
+ *
+ * There is at most one — 011 has a partial unique index saying so,
+ * because two would both index and both retrieve, doubling the weight
+ * of every FAQ answer.
+ */
+export async function getFaqDocument(db: AnyDb, botId: string): Promise<Document | null> {
+  const rows = await pgFetch<Document[]>(db,
+    `/documents?select=${DOC_FIELDS}&bot_id=eq.${encodeURIComponent(botId)}&source=eq.faq&limit=1`
+  );
+  return rows[0] ?? null;
+}
+
+/** Get it, or make it. Called before the first item is added, and by
+ *  the cutover. */
+export async function ensureFaqDocument(db: UserDb, botId: string): Promise<Document> {
+  const existing = await getFaqDocument(db, botId);
+  if (existing) return existing;
+
+  try {
+    return await createDocument(db, {
+      bot_id:  botId,
+      source:  'faq',
+      title:   FAQ_DOCUMENT_TITLE,
+      content: null,
+    });
+  } catch (err) {
+    // Two tabs adding their first item at once: one loses the unique
+    // index and re-reads rather than failing the tenant's edit.
+    const found = await getFaqDocument(db, botId);
+    if (found) return found;
+    throw err;
+  }
+}
+
+/**
+ * Stamp — or clear — the knowledge cutover flag.
+ *
+ * Not routed through updateBot and deliberately not in
+ * BotUpdatePayload: this is not a setting a tenant edits, it is a
+ * statement that an ingest succeeded. Passing null reverts the bot to
+ * the pre-011 prompt.
+ */
+export async function setKnowledgeMigrated(
+  db: UserDb, botId: string, at: string | null,
+): Promise<Bot | null> {
+  const rows = await pgFetch<Bot[]>(db,
+    `/bots?id=eq.${encodeURIComponent(botId)}`,
+    { method: 'PATCH', body: JSON.stringify({ knowledge_migrated_at: at }) }
+  );
+  return rows[0] ?? null;
 }
 
 // ── Overview statistics ───────────────────────────────────────────

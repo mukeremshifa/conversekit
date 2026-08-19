@@ -102,6 +102,45 @@ Rows are filtered by RLS, so these only ever return the caller's own orgs.
 
 The old `/admin/*` routes return `410 Gone`.
 
+### Knowledge routes
+
+Documents, chunks and the FAQ. See [knowledge.md](knowledge.md) for what
+belongs where.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/v1/admin/bots/:id/documents` | List indexed sources |
+| `POST` | `/v1/admin/bots/:id/documents` | Add a `text`, `markdown` or `url` source (`202`) |
+| `POST` | `/v1/admin/bots/:id/documents/upload` | Add a file source (multipart `file`). PDF/DOCX, 10 MB |
+| `POST` | `/v1/admin/documents/:docId/reindex` | Re-chunk and re-embed (`202`) |
+| `GET` | `/v1/admin/documents/:docId/chunks` | The chunk inspector's data |
+| `DELETE` | `/v1/admin/documents/:docId` | Delete a source and its chunks (`204`) |
+| `GET` | `/v1/admin/bots/:id/faq` | FAQ items, the indexing status of the FAQ as a whole, and the current limits |
+| `POST` | `/v1/admin/bots/:id/faq` | Add an item (`201`). Re-indexes the FAQ in the background |
+| `PUT` | `/v1/admin/faq/:itemId` | Edit question, answer, or `enabled` |
+| `DELETE` | `/v1/admin/faq/:itemId` | Delete an item (`204`) |
+| `POST` | `/v1/admin/bots/:id/faq/reorder` | `{ "order": ["id", …] }`. Ids only — the reorder path cannot edit content |
+| `POST` | `/v1/admin/bots/:id/retrieve-preview` | `{ "query": "…" }` → the passages the bot would retrieve, which channel found them, and the exact prompt section |
+| `POST` | `/v1/admin/bots/:id/knowledge/migrate` | Move `services` and `faq` into the corpus. `?dry_run=1` reports the plan without writing |
+| `POST` | `/v1/admin/bots/:id/knowledge/revert` | Put them back in the prompt |
+
+`retrieve-preview` runs the **real** retrieval path, keyword fallback included —
+a preview that is only approximately what production does is worse than none,
+because it is trusted. Nothing is sent to the AI model and no conversation is
+recorded.
+
+`knowledge/migrate` embeds everything **before** it stamps
+`bots.knowledge_migrated_at`, and that order is the safety property: a failure
+anywhere earlier leaves the flag NULL and the bot answering exactly as it did
+before. It answers `409` if the bot is already migrated.
+
+**`business_description` and `custom_instructions` are truncated, not
+rejected**, at 600 and 2000 characters. A settings save that failed on length
+would take every other edit in the form with it. The `PUT` response names what
+it shortened in a `truncated` array. FAQ questions and answers are **rejected**
+past their limits instead — that is content a tenant wrote and can see was
+mangled.
+
 `citations` is populated only when the bot has `show_citations` on and the reply
 used retrieved context. Both fields are additive — a widget that predates them
 ignores them.

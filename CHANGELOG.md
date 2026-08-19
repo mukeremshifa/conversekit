@@ -7,6 +7,75 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Added
 
+- **One knowledge pipeline** — `bots.services` and `bots.faq` were pasted into
+  every system prompt by `buildSystemPrompt` while `documents → chunks →
+  match_chunks` ran alongside and never saw them. They are now ingested sources
+  like any other, so a tenant who uploads their FAQ as a PDF *and* fills in the
+  FAQ box no longer ships it twice. The identity card — name, business,
+  description, hours, address, contacts — stays hardcoded, because a bot should
+  know its own opening hours without a vector search rolling the dice. Full
+  brief: [docs/knowledge-pipeline.md](docs/knowledge-pipeline.md).
+- **FAQ items are rows, not a textarea** (`faq_items`) — add, edit, reorder and
+  switch off individual questions. Each enabled item is indexed as exactly one
+  chunk by a Q&A-aware chunker, and when an answer is too long to fit, **the
+  question is repeated into every piece**: the question carries the words a
+  visitor actually types, so a fragment without it is a fragment nothing will
+  match. A character splitter cannot do that, because it cannot tell which part
+  of the text is the question.
+- **Two retrieval guarantees for hand-written answers.** FAQ chunks index at
+  `priority = 1`, and `match_chunks` adds a configurable boost when *ordering*
+  while the similarity floor still tests the raw score — so a boosted chunk wins
+  near-ties but can never smuggle an irrelevant one into the prompt. When the
+  vector search returns nothing at all, `match_chunks_lexical` matches words
+  against the FAQ instead. It runs only on that miss, so it costs nothing on a
+  normal message, and it is what catches "do u take insurance" against "Do you
+  accept insurance?".
+- **`supabase/011_knowledge.sql`** — `faq_items`; `chunks.kind`,
+  `chunks.priority`, `chunks.metadata` (specified in the roadmap's Phase 2 and
+  never built) and a generated `chunks.search` tsvector with a GIN index;
+  `documents.source` gains `'faq'`; `bots.knowledge_migrated_at`. The tsvector
+  uses the `'simple'` config, not `'english'` — this platform is explicitly
+  multilingual, and an English stemmer applied to Turkish or Amharic is worse
+  than no stemmer at all. With these columns in place, hybrid search with
+  reciprocal-rank fusion becomes a scoring change rather than another migration.
+- **A bounded system prompt, for the first time.** `renderContext` spends a
+  `rag_config.context_chars` budget (default 6000) and drops a chunk that does
+  not fit whole rather than cutting it; `business_description` and
+  `custom_instructions` are capped at 600 and 2000 characters. Both were plain
+  unbounded `text` with no limit in the schema, in the Worker or in the UI, so a
+  tenant who pasted 40 KB shipped 40 KB on every message, forever. This closes
+  the roadmap's "budget the context window" item.
+- **"What would this retrieve?"** — `POST /v1/admin/bots/:id/retrieve-preview`
+  and a panel on the Retrieval tab. Runs the real retrieval path, fallback and
+  all, and reports which channel matched. The chunk inspector answers *what is
+  indexed*; this answers *what comes back*, which until now was only visible in
+  the Worker's logs.
+- **A reversible, per-bot cutover.** `POST /v1/admin/bots/:id/knowledge/migrate`
+  parses the legacy FAQ into items, turns services into a document, embeds
+  everything **and only then** stamps `knowledge_migrated_at`. A failure
+  anywhere before that last step leaves the flag NULL and the bot answering
+  exactly as it did before. `…/knowledge/revert` nulls it again. Text that
+  parses as no Q/A pair becomes an ordinary document rather than being
+  discarded.
+
+### Changed
+
+- **Three dashboard screens became one.** Knowledge Base, Knowledge Sources and
+  Retrieval were split by implementation detail rather than by what a tenant is
+  trying to do; they are now the FAQ, Sources and Retrieval tabs of a single
+  **Knowledge** screen. `#knowledge`, `#sources` and `#retrieval` all still
+  resolve — they select a tab. Business description and custom instructions
+  moved to Bot Configuration, with live counters against their new caps.
+- **Custom instructions stay in the prompt, deliberately.** They are the one
+  knowledge-base field that cannot be ingested: `renderContext` frames
+  everything retrieval emits as facts to use and never as orders to follow,
+  because ingested pages are attacker-controlled in the general case — so
+  instructions routed through retrieval would be ignored by design.
+- **A bot whose `knowledge_migrated_at` is NULL produces the pre-011 prompt byte
+  for byte**, and `scripts/test-knowledge-units.mjs` compares the two strings
+  directly rather than trusting the reading — the convention
+  `test-lead-capture.mjs` set.
+
 - **Configurable lead capture** — the `## Lead Capture` prompt block, hardcoded
   since the first release, is now generated from `bots.lead_config`. Capture can
   be switched off entirely, the confirmation wording and a consent line are

@@ -173,6 +173,14 @@ export interface RagConfig {
   min_similarity?: number;
   chunk_size?: number;
   chunk_overlap?: number;
+  /** Ceiling on the rendered retrieval section, in characters (011). */
+  context_chars?: number;
+  /** Similarity points added per priority level when ordering. FAQ
+   *  chunks index at priority 1. Ordering only — it can never push a
+   *  chunk past the minimum similarity. */
+  priority_boost?: number;
+  /** Try keyword search when the vector search finds nothing at all. */
+  lexical_fallback?: boolean;
 }
 
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
@@ -265,6 +273,13 @@ export interface Bot {
   /** Served by the Worker from R2; null when no logo is set. Read-only —
    *  it is derived from a key the dashboard never sees. */
   logo_url: string | null;
+  /**
+   * NULL until this bot's services and FAQ have been moved into the
+   * corpus (011). While it is NULL both are still pasted into every
+   * system prompt, which is what the migration banner is about.
+   * Read-only: the cutover endpoints set it, never a settings save.
+   */
+  knowledge_migrated_at?: string | null;
 }
 
 export interface Vendor {
@@ -283,7 +298,7 @@ export interface Vendor {
 export interface Doc {
   id: string;
   bot_id: string;
-  source: 'text' | 'url' | 'markdown' | 'file';
+  source: 'text' | 'url' | 'markdown' | 'file' | 'faq';
   title: string;
   url: string | null;
   status: 'pending' | 'processing' | 'ready' | 'failed';
@@ -298,7 +313,79 @@ export interface Doc {
   size_bytes?: number | null;
 }
 
-export interface Chunk { id: string; ordinal: number; content: string }
+export interface Chunk {
+  id: string;
+  ordinal: number;
+  content: string;
+  /** 011. Absent on a chunk indexed before the migration. */
+  kind?: 'prose' | 'faq';
+  priority?: number;
+  metadata?: Record<string, unknown> | null;
+}
+
+/** One question and its answer (011). Indexed as its own chunk. */
+export interface FaqItem {
+  id: string;
+  bot_id: string;
+  document_id: string;
+  question: string;
+  answer: string;
+  position: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FaqResponse {
+  items: FaqItem[];
+  /** The synthetic document the items are indexed through. Null until
+   *  the first item is added. Its `status` is the indexing state for
+   *  the whole FAQ. */
+  document: Doc | null;
+  limits: { items: number; question: number; answer: number };
+}
+
+/** One row of the "what would this retrieve?" preview. */
+export interface PreviewChunk {
+  id: string;
+  document_id: string;
+  document_title: string | null;
+  ordinal: number;
+  content: string;
+  /** A cosine similarity on the vector channel, a text rank on the
+   *  lexical one. Not comparable across channels, which is why the
+   *  channel is reported alongside it rather than the two rescaled. */
+  score: number;
+  kind: 'prose' | 'faq';
+  priority: number;
+  channel: 'vector' | 'lexical' | null;
+}
+
+export interface RetrievePreview {
+  query: string;
+  channel: 'vector' | 'lexical' | null;
+  skipped: 'disabled' | 'empty-query' | null;
+  error: string | null;
+  settings: Required<Pick<RagConfig,
+    'top_k' | 'min_similarity' | 'priority_boost' | 'lexical_fallback' | 'context_chars'>>;
+  chunks: PreviewChunk[];
+  /** Exactly what would be pasted into the system prompt. */
+  context: string;
+}
+
+export interface MigrateResult {
+  bot: Bot | null;
+  plan: {
+    faq_items_existing: number;
+    faq_items_to_create: number;
+    faq_notes: number;
+    services: number;
+  };
+  faq_chunks: number;
+  documents: { id: string; title: string }[];
+}
+
+export interface MigratePlan { dry_run: true; plan: MigrateResult['plan'] }
 
 export interface PreviewTurn { role: 'user' | 'assistant'; content: string }
 export interface PreviewReply {
@@ -377,4 +464,20 @@ export const endpoints = {
   stats:         (id: string, days = 30) => api.get<Stats>(`/v1/admin/bots/${id}/stats?days=${days}`),
   preview:       (id: string, body: { message: string; history: PreviewTurn[] }) =>
                    api.post<PreviewReply>(`/v1/admin/bots/${id}/preview`, body),
+
+  // ── Knowledge pipeline (011) ──
+  faq:           (id: string) => api.get<FaqResponse>(`/v1/admin/bots/${id}/faq`),
+  addFaqItem:    (id: string, b: { question: string; answer: string; enabled?: boolean }) =>
+                   api.post<FaqItem>(`/v1/admin/bots/${id}/faq`, b),
+  updateFaqItem: (itemId: string, b: Partial<Pick<FaqItem, 'question' | 'answer' | 'enabled'>>) =>
+                   api.put<FaqItem>(`/v1/admin/faq/${itemId}`, b),
+  deleteFaqItem: (itemId: string) => api.del<null>(`/v1/admin/faq/${itemId}`),
+  reorderFaq:    (id: string, order: string[]) =>
+                   api.post<{ items: FaqItem[] }>(`/v1/admin/bots/${id}/faq/reorder`, { order }),
+  retrievePreview: (id: string, query: string) =>
+                   api.post<RetrievePreview>(`/v1/admin/bots/${id}/retrieve-preview`, { query }),
+  migratePlan:   (id: string) =>
+                   api.post<MigratePlan>(`/v1/admin/bots/${id}/knowledge/migrate?dry_run=1`),
+  migrate:       (id: string) => api.post<MigrateResult>(`/v1/admin/bots/${id}/knowledge/migrate`),
+  revertMigrate: (id: string) => api.post<Bot>(`/v1/admin/bots/${id}/knowledge/revert`),
 };
