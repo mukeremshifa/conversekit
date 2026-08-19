@@ -48,5 +48,15 @@ type = "ratelimit"
 namespace_id = "1001"
 simple = { limit = 30, period = 60 }
 
+# Retention for retrieval_log (supabase/012). One job, deliberately:
+# see the scheduled handler in src/index.ts for why this must not grow
+# into a general maintenance hook.
+#
+# 03:17 UTC — off the hour on purpose. Every cron on every platform
+# fires at :00, and this one is competing for the same Supabase
+# connection pool as real traffic.
+[triggers]
+crons = ["17 3 * * *"]
+
 [observability]
 enabled = true

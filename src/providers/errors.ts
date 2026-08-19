@@ -22,6 +22,17 @@ export class ProviderError extends Error {
   readonly vendor: string;
   readonly status: number | null;
   readonly retryable: boolean;
+  /**
+   * Seconds the vendor asked us to wait, from its `Retry-After` header.
+   * Null when it did not say — which is most of the time, and is why
+   * the caller still needs a backoff schedule of its own.
+   *
+   * `retryable` answers "should I try again"; this answers "when". The
+   * first was already modelled and the second was the piece missing,
+   * which is how the ingest retry in src/rag/ingest.ts could not be
+   * written without guessing at a number the vendor had already sent.
+   */
+  readonly retryAfter: number | null;
 
   constructor(opts: {
     kind: ProviderErrorKind;
@@ -29,14 +40,37 @@ export class ProviderError extends Error {
     message: string;
     status?: number | null;
     retryable?: boolean;
+    retryAfter?: number | null;
   }) {
     super(`[${opts.vendor}] ${opts.message}`);
-    this.name      = 'ProviderError';
-    this.kind      = opts.kind;
-    this.vendor    = opts.vendor;
-    this.status    = opts.status ?? null;
-    this.retryable = opts.retryable ?? defaultRetryable(opts.kind);
+    this.name       = 'ProviderError';
+    this.kind       = opts.kind;
+    this.vendor     = opts.vendor;
+    this.status     = opts.status ?? null;
+    this.retryable  = opts.retryable ?? defaultRetryable(opts.kind);
+    this.retryAfter = opts.retryAfter ?? null;
   }
+}
+
+/**
+ * Parse a `Retry-After` header into seconds.
+ *
+ * Both RFC forms are accepted: a delta in seconds, and an HTTP date.
+ * The date form is converted against the local clock, which is
+ * approximate — a Worker's clock and a vendor's can differ — so a
+ * negative result reads as "now" rather than as a reason to skip the
+ * wait entirely, and an unparseable value reads as "not given" so the
+ * caller falls back to its own schedule.
+ */
+export function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+
+  const seconds = Number(value.trim());
+  if (Number.isFinite(seconds)) return Math.max(0, seconds);
+
+  const at = Date.parse(value);
+  if (Number.isNaN(at)) return null;
+  return Math.max(0, (at - Date.now()) / 1000);
 }
 
 function defaultRetryable(kind: ProviderErrorKind): boolean {
@@ -73,6 +107,9 @@ export async function errorFromResponse(vendor: string, res: Response): Promise<
     vendor,
     status:  res.status,
     message: `HTTP ${res.status}: ${body.slice(0, 500) || res.statusText}`,
+    // Read for every status, not just 429: a vendor shedding load
+    // sends it on 503 too, and the caller caps whatever comes back.
+    retryAfter: parseRetryAfter(res.headers.get('retry-after')),
   });
 }
 

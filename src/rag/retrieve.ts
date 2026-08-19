@@ -24,9 +24,17 @@
 // returning nothing, and so are the fallback message and the escalation
 // in src/index.ts. A floor below the model's noise floor disables all
 // three silently. See docs/rag-hardening.md, B1.
+//
+// AND THE INDEX MUST HAVE BEEN BUILT BY THE MODEL NOW ASKING. Two
+// 768-dimension models from different vendors satisfy every check this
+// pipeline has and still occupy different embedding spaces, so a bot
+// whose embedding vendor was changed searched its own corpus with a
+// ruler from another universe — silently, permanently. The gate below
+// compares `bot.embedding_model_indexed` against the resolved embedder
+// and skips rather than searching. See B2.
 // ----------------------------------------------------------------
 import type { Env, Bot, ChunkKind } from '../types';
-import type { ServiceDb } from '../supabase';
+import type { ServiceDb, RetrievalLogInsert } from '../supabase';
 import { matchChunks, matchChunksLexical } from '../supabase';
 import { resolveEmbeddingProvider, resolveSimilarityFloor } from '../providers';
 import { ragConfigFor, DEFAULT_CONTEXT_CHARS } from './ingest';
@@ -44,6 +52,10 @@ export interface RetrievedChunk {
   kind?: ChunkKind;
   priority?: number;
   channel?: RetrievalChannel;
+  /** Folded into both RPCs by 012, replacing a per-turn lookup.
+   *  Optional so a Worker running ahead of the migration still parses;
+   *  null when the document row has gone mid-search. */
+  document_title?: string | null;
 }
 
 /**
@@ -67,7 +79,13 @@ export interface RetrievalOutcome {
   chunks: RetrievedChunk[];
   /** Present when retrieval was attempted and failed. Non-fatal. */
   error?: string;
-  skipped?: 'disabled' | 'empty-query';
+  /** 'disabled'     — the tenant switched retrieval off.
+   *  'empty-query'  — too short to be worth embedding.
+   *  'stale-index'  — the corpus was built with a different embedding
+   *                   model than the one now resolving, so searching it
+   *                   would compare vectors from two different spaces.
+   *                   See B2 in docs/rag-hardening.md. */
+  skipped?: 'disabled' | 'empty-query' | 'stale-index';
   /** Which channel produced `chunks`. Absent when nothing was found. */
   channel?: RetrievalChannel;
   /** Absent when we never got as far as resolving an embedder. */
@@ -129,6 +147,34 @@ export async function retrieve(
       floor_source:    typeof tenantFloor === 'number' ? 'tenant' : resolved.source,
     };
 
+    // ── Drift gate (B2) ────────────────────────────────────────────
+    //
+    // Zero extra queries: the bot row is already in hand and the
+    // embedder has just been resolved, so this is a string compare on
+    // the hot path.
+    //
+    // Two 768-dimension models from different vendors pass every check
+    // this pipeline has — the width assertion in embedPieces, the
+    // pgvector column type, Postgres itself — and produce vectors from
+    // different embedding spaces. Cosine similarity between them is
+    // noise, so retrieval would return confident nonsense permanently,
+    // with no error and no status change. Degrading to the plain prompt
+    // is strictly better than answering from noise.
+    //
+    // NULL IS NOT DRIFT. A corpus indexed before 012 has nothing to
+    // compare against, and reading unknown as mismatched would switch
+    // retrieval off for every existing bot on the platform.
+    const indexedWith = bot.embedding_model_indexed;
+    if (indexedWith && indexedWith !== embedder.model) {
+      // Before the embed call, not after: there is nothing to search,
+      // so paying a vendor round trip to find that out is waste.
+      console.warn(
+        `[rag] stale index for bot ${bot.id}: corpus built with '${indexedWith}', ` +
+        `querying with '${embedder.model}' — retrieval skipped until re-indexed`,
+      );
+      return { chunks: [], skipped: 'stale-index', effective };
+    }
+
     const { vectors } = await embedder.embed({ input: [q] });
     const vector = vectors[0];
     if (!vector?.length) return { chunks: [], error: 'empty query embedding', effective };
@@ -173,6 +219,56 @@ export async function retrieve(
     console.error('[rag] retrieval failed (non-fatal):', message);
     return { chunks: [], error: message };
   }
+}
+
+/**
+ * Turn a retrieval outcome into a log row, or into nothing (M1).
+ *
+ * Pure, and separated from the chat handler for one reason: WHICH TURNS
+ * GET LOGGED is a decision with two ways to be quietly wrong, and both
+ * of them corrupt the only number the report exists to produce.
+ *
+ * Log on EVERY turn where retrieval ran, hits included. Misses alone
+ * would give the report its rows but no denominator — no miss rate, and
+ * no score distribution to tune a floor against, which is exactly the
+ * blindness B1 hid inside for four months.
+ *
+ * Log NOTHING when retrieval was skipped. Retrieval did not run, so
+ * there is no outcome to describe: a greeting recorded as
+ * `matched: false` would inflate the miss rate with turns nobody
+ * expected an answer to, and a `stale-index` turn recorded as a miss
+ * would report a drifted bot as a bot that cannot answer — two
+ * different problems with two different fixes.
+ *
+ * @param renderedCount Chunks that survived the context budget, NOT
+ *   what retrieval returned. `matched` means "the model was shown
+ *   something", which is the same statement missedRetrieval makes.
+ */
+export function retrievalLogRow(
+  outcome: RetrievalOutcome | null,
+  args: { botId: string; sessionId: string | null; query: string; renderedCount: number },
+): RetrievalLogInsert | null {
+  if (!outcome || outcome.skipped) return null;
+
+  return {
+    bot_id:     args.botId,
+    session_id: args.sessionId,
+    // Verbatim. A normalised or hashed query cannot be read back, and
+    // "here are the questions your bot could not answer" is the entire
+    // point of the table. Retention is what makes that defensible —
+    // see docs/tenancy.md.
+    query:      args.query,
+    matched:    args.renderedCount > 0,
+    channel:    outcome.channel ?? null,
+    // The best score retrieval RETURNED, before the context budget had
+    // its say. So `matched: false` with a score present means chunks
+    // came back and were dropped, which is a different problem from
+    // finding nothing — and the report reads it as one.
+    top_score:  outcome.chunks[0]?.similarity ?? null,
+    chunk_count: args.renderedCount,
+    min_similarity:  outcome.effective?.min_similarity ?? null,
+    embedding_model: outcome.effective?.embedding_model ?? null,
+  };
 }
 
 /**

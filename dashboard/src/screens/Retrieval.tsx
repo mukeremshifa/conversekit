@@ -12,18 +12,31 @@
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { endpoints, type Bot, type RagConfig } from '@/lib/api';
+import { endpoints, type Bot, type EffectiveRetrieval, type RagConfig } from '@/lib/api';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   Field, Input, Switch,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
-/** Mirrors ragConfigFor in src/rag/ingest.ts. */
-const DEFAULTS: Required<RagConfig> = {
+/**
+ * Mirrors ragConfigFor in src/rag/ingest.ts — with one deliberate hole.
+ *
+ * `min_similarity` IS NOT HERE, and that is the point. There is no
+ * platform default any more: the floor is resolved from the embedding
+ * model that will actually run the query, so the number this screen
+ * used to present as "the default, 0.3" was wrong for every bot on the
+ * platform embedder, whose measured floor is twice that. Presenting a
+ * stale constant as a default is the same class of lie the whole B1
+ * change exists to remove.
+ *
+ * What the field shows instead is the EFFECTIVE floor and where it came
+ * from, fetched from the bot's own retrieval preview — see
+ * EffectiveFloor below.
+ */
+const DEFAULTS: Omit<Required<RagConfig>, 'min_similarity'> = {
   enabled: true,
   top_k: 5,
-  min_similarity: 0.3,
   chunk_size: 800,
   chunk_overlap: 120,
   context_chars: 6000,
@@ -31,15 +44,29 @@ const DEFAULTS: Required<RagConfig> = {
   lexical_fallback: true,
 };
 
+/** `min_similarity` absent means "no override" — the resolved floor
+ *  applies. Every other key always has a value. */
+type Draft = Omit<Required<RagConfig>, 'min_similarity'> & { min_similarity?: number };
+
 export function Retrieval({
-  bot, onSaved, embedded = false,
+  bot, onSaved, embedded = false, effective = null,
 }: {
   bot: Bot;
   onSaved: (b: Bot) => void;
   /** Rendered inside the Knowledge screen, which owns the page header. */
   embedded?: boolean;
+  /**
+   * What actually governed the last search this bot ran, from the
+   * preview card above. Null until someone runs one.
+   *
+   * Passed in rather than fetched, because the only way to learn the
+   * effective floor is to resolve the embedder and ask it — the preview
+   * has already paid for that, and doing it again on mount would spend
+   * an embedding call per page view to render one number.
+   */
+  effective?: EffectiveRetrieval | null;
 }) {
-  const [cfg, setCfg] = useState<Required<RagConfig>>({ ...DEFAULTS, ...(bot.rag_config ?? {}) });
+  const [cfg, setCfg] = useState<Draft>({ ...DEFAULTS, ...(bot.rag_config ?? {}) });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -110,11 +137,22 @@ export function Retrieval({
                 onChange={(e) => set({ top_k: Number(e.target.value) })}
               />
             </Field>
-            <Field label="Minimum similarity" hint="0–1">
+            <Field
+              label="Minimum similarity"
+              hint={effective ? `0–1 · leave blank for ${effective.min_similarity}` : '0–1 · leave blank for the model default'}
+            >
               <Input
                 type="number" step="0.05" min={0} max={1}
-                value={cfg.min_similarity}
-                onChange={(e) => set({ min_similarity: Number(e.target.value) })}
+                // Empty means "no override", which is a real state and
+                // not the same as 0 — 0 is a floor that accepts
+                // everything, and it used to be unreachable because the
+                // field could never be cleared.
+                value={cfg.min_similarity ?? ''}
+                placeholder={effective ? String(effective.min_similarity) : 'model default'}
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
+                  setCfg({ ...cfg, min_similarity: raw === '' ? undefined : Number(raw) });
+                }}
               />
             </Field>
           </div>
@@ -122,6 +160,7 @@ export function Retrieval({
             Raise the threshold if the bot cites irrelevant passages; lower it if it says
             &ldquo;I don&rsquo;t know&rdquo; about things you know are indexed.
           </p>
+          <EffectiveFloor effective={effective} overridden={cfg.min_similarity !== undefined} />
         </CardContent>
       </Card>
 
@@ -213,5 +252,54 @@ export function Retrieval({
         </CardContent>
       </Card>
     </>
+  );
+}
+
+/**
+ * What the similarity floor actually is, and where it came from.
+ *
+ * This screen used to declare 0.3 as "the default". It was not: the
+ * floor is resolved from the embedding model that runs the query, and
+ * for the platform's own embedder the measured value is twice that — a
+ * number below which two unrelated businesses' documents still score,
+ * so the floor could never reject anything. Three shipped features are
+ * gated on it rejecting, and all three were silently dead.
+ *
+ * A default a tenant reads and reasons about has to be the number that
+ * runs. So this reports the resolved one and names its provenance,
+ * including the case worth acting on — `default`, meaning nobody has
+ * measured this model and the value is a guess.
+ */
+function EffectiveFloor({
+  effective, overridden,
+}: {
+  effective: EffectiveRetrieval | null;
+  overridden: boolean;
+}) {
+  if (!effective) {
+    return (
+      <p className="text-xs leading-relaxed text-muted">
+        Leave this blank to use the floor calibrated for whichever embedding model this bot uses —
+        different models score on different scales, so there is no one right number. Run a search in
+        &ldquo;What would this retrieve?&rdquo; above to see the one in force.
+      </p>
+    );
+  }
+
+  return (
+    <p className="text-xs leading-relaxed text-muted">
+      Currently <strong className="text-ink tabular-nums">{effective.min_similarity}</strong>
+      {overridden
+        ? ', set by you here.'
+        : effective.floor_source === 'model'
+          ? <>, calibrated for <code>{effective.embedding_model}</code>.</>
+          : <>
+              {' '}— a fallback, because nothing on this deployment has measured{' '}
+              <code>{effective.embedding_model}</code> yet. Treat it as a starting point rather than
+              a recommendation.
+            </>}
+      {' '}Scores are not comparable between embedding models: changing the model changes what this
+      number means, not just how strict it is.
+    </p>
   );
 }

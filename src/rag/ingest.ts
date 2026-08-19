@@ -10,14 +10,34 @@
 // leaves `failed` plus the reason, and re-ingesting is idempotent
 // because chunks are replaced wholesale. That is deliberately less
 // than a Workflow gives you — see docs/roadmap.md Phase 2b for when to
-// upgrade — but it survives the failure that actually happens here,
-// which is a vendor rate-limit part-way through a batch.
+// upgrade.
+//
+// TWO THINGS MAKE THAT CLAIM TRUE, and until 012 neither existed.
+//
+// The header here used to say the design "survives the failure that
+// actually happens, which is a vendor rate-limit part-way through a
+// batch". It did not: embedPieces looped batches with no retry, so one
+// 429 on batch 7 of 13 threw, the catch marked the document `failed`,
+// and every batch already embedded was discarded. It now retries with
+// bounded backoff, honours the vendor's own Retry-After, and spends a
+// cumulative budget rather than an unbounded one — because a retry
+// schedule longer than the `waitUntil` it runs inside is a worse
+// failure than the one it fixes. See B5 in docs/rag-hardening.md.
+//
+// And two runs could interleave. `replaceChunks` is delete-then-insert,
+// so two reindex clicks raced: the loser marked a document `failed`
+// while the winner's chunks sat there indexed and working. Every entry
+// point now goes through a claim on `documents.ingest_started_at`, and
+// the loser throws AlreadyIndexing rather than touching `status` at
+// all — the whole point being that the second run must not overwrite
+// the first run's result. See B4.
 // ----------------------------------------------------------------
 import type { Env, Bot, Document, RagConfig } from '../types';
 import type { ServiceDb, ChunkInsert } from '../supabase';
 import {
   getDocumentForChat, updateDocument, replaceChunks,
   listFaqItemsForIngest, getFaqDocument,
+  claimDocument, setBotIndexedModel,
 } from '../supabase';
 import { resolveEmbeddingProvider, ProviderError, DEFAULT_SIMILARITY_FLOOR } from '../providers';
 import { chunkText, chunkQA, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP } from './chunk';
@@ -31,6 +51,56 @@ const EMBED_BATCH = 32;
 /** A single document may not exceed this many chunks. Guards against
  *  one pasted novel consuming a tenant's entire embedding quota. */
 const MAX_CHUNKS = 400;
+
+/** Attempts per batch, first included. Three, not more: past that the
+ *  vendor is not having a bad second, it is having a bad minute, and
+ *  the tenant is better served by a message than by a longer wait. */
+const EMBED_ATTEMPTS = 3;
+
+/** 1s, then 2s. Doubling from here. */
+const EMBED_BACKOFF_MS = 1000;
+
+/** Ceiling on any single wait, however long the vendor asks for. A
+ *  `Retry-After: 3600` is a real answer to a real question and a
+ *  useless one inside a request-scoped runtime. */
+const EMBED_BACKOFF_CAP_MS = 10_000;
+
+/**
+ * Cumulative retry budget for one document, across every batch.
+ *
+ * This is the constant that matters, and per-batch limits alone would
+ * not give it: three attempts × ten seconds × thirteen batches is
+ * minutes of wall clock inside a `waitUntil` that will be killed
+ * part-way through — a silent, partial, unrepeatable failure, which is
+ * strictly worse than the clean one being fixed.
+ */
+const EMBED_RETRY_BUDGET_MS = 30_000;
+
+/**
+ * How long a claim on a document may be held before another run may
+ * take it (012).
+ *
+ * Ten minutes is well past the slowest legitimate ingest — a 400-chunk
+ * document is thirteen batched vendor calls — and well short of leaving
+ * a tenant with a document they cannot re-index. It exists because a
+ * Worker can die mid-`waitUntil` with no chance to release.
+ */
+export const CLAIM_STALE_MS = 10 * 60_000;
+
+/**
+ * Thrown when another run already holds this document's claim.
+ *
+ * A distinct type rather than a generic Error because the callers must
+ * treat it differently from every other ingest failure: it is the one
+ * outcome that must NOT mark the document `failed`. The first run is
+ * still going, and overwriting its status is precisely the bug.
+ */
+export class AlreadyIndexing extends Error {
+  constructor(readonly documentId: string) {
+    super('This source is already being indexed. Wait for that to finish.');
+    this.name = 'AlreadyIndexing';
+  }
+}
 
 export interface IngestResult {
   chunkCount: number;
@@ -95,12 +165,38 @@ async function extractText(env: Env, doc: Document, signal?: AbortSignal): Promi
 }
 
 /**
- * Embed every piece and assert the width, in batches.
+ * How long to wait before retrying a failed embedding batch.
+ *
+ * Exported because it is the part of the backoff worth testing without
+ * actually sleeping: the schedule, the vendor's override, and the cap
+ * are three separate decisions and each can be wrong on its own.
+ *
+ * The vendor's own `Retry-After` wins over the schedule when it sends
+ * one — it knows when its window resets and we are guessing — but it
+ * is still capped, because an hour-long answer is correct and unusable
+ * here. `attempt` is 1-based: the wait after the first failure.
+ */
+export function retryDelayMs(attempt: number, retryAfterSeconds: number | null): number {
+  const scheduled = EMBED_BACKOFF_MS * 2 ** Math.max(0, attempt - 1);
+  const asked = retryAfterSeconds === null ? null : retryAfterSeconds * 1000;
+  return Math.min(asked ?? scheduled, EMBED_BACKOFF_CAP_MS);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Embed every piece and assert the width, in batches, with bounded
+ * retries per batch.
  *
  * Shared by both ingestion paths rather than duplicated, because the
  * 768 check is the one that turns a vendor misconfiguration into a
  * sentence instead of an opaque Postgres error, and a second copy of it
  * is a second copy to forget to update.
+ *
+ * ONLY `retryable` FAILURES ARE RETRIED. A `bad_request` or an `auth`
+ * failure is deterministic: retrying it burns the `waitUntil` budget to
+ * arrive at exactly the same error, three times as slowly, and delays
+ * the message that would let the tenant fix it.
  */
 async function embedPieces(
   env: Env, bot: Bot, pieces: string[],
@@ -108,10 +204,43 @@ async function embedPieces(
   const embedder = resolveEmbeddingProvider(env, bot.embedding_config);
 
   const vectors: number[][] = [];
+  const batches = Math.ceil(pieces.length / EMBED_BATCH);
+  let budget = EMBED_RETRY_BUDGET_MS;
+
   for (let i = 0; i < pieces.length; i += EMBED_BATCH) {
     const batch = pieces.slice(i, i + EMBED_BATCH);
-    const res = await embedder.embed({ input: batch });
-    vectors.push(...res.vectors);
+    const batchNumber = i / EMBED_BATCH + 1;
+
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const res = await embedder.embed({ input: batch });
+        vectors.push(...res.vectors);
+        break;
+      } catch (err) {
+        if (!(err instanceof ProviderError) || !err.retryable) throw err;
+
+        const wait = retryDelayMs(attempt, err.retryAfter);
+        // Two ways to be out of road, and they are reported as one
+        // thing because the tenant's next move is the same for both:
+        // wait, then re-index.
+        if (attempt >= EMBED_ATTEMPTS || wait > budget) {
+          throw new ProviderError({
+            kind:   err.kind,
+            vendor: err.vendor,
+            status: err.status,
+            // Naming the batch is what separates "the vendor is
+            // throttling you" from "your document is broken" — the
+            // document reached batch 7 of 13, so it is not the file.
+            message:
+              `embedding batch ${batchNumber} of ${batches} failed after ${attempt} attempt` +
+              `${attempt === 1 ? '' : 's'}: ${err.message}`,
+          });
+        }
+
+        budget -= wait;
+        await sleep(wait);
+      }
+    }
   }
 
   const dimensions = vectors[0]?.length ?? 0;
@@ -142,11 +271,23 @@ export async function ingestDocument(
   // The FAQ document has no content of its own — its text lives in
   // faq_items. Delegating here rather than special-casing the callers
   // is what makes "Reindex" on the Sources list work for it unchanged.
+  // Claimed there rather than here, so it is claimed exactly once.
   if (doc.source === 'faq') return ingestFaq(env, db, doc.bot_id, bot);
 
-  await updateDocument(db, documentId, { status: 'processing', error: null });
+  // BEFORE the status write, not after. Losing the race must leave the
+  // winner's `processing`/`ready`/`failed` exactly as it found it —
+  // writing `processing` first and then discovering the claim is held
+  // would already have clobbered it.
+  if (!await claimDocument(db, documentId, CLAIM_STALE_MS)) {
+    throw new AlreadyIndexing(documentId);
+  }
 
+  // Inside the try, so that every path from here on releases the claim.
+  // A document left holding one is unindexable until the stale window
+  // expires, and the status write is as able to fail as anything else.
   try {
+    await updateDocument(db, documentId, { status: 'processing', error: null });
+
     const { text, title } = await extractText(env, doc);
 
     const pieces = chunkText(text, { size: cfg.chunk_size, overlap: cfg.chunk_overlap });
@@ -169,21 +310,54 @@ export async function ingestDocument(
       chunk_count: pieces.length,
       embedding_model: model,
       embedding_dimensions: dimensions,
+      // Released here rather than in a `finally`, so the claim and the
+      // terminal status land in the same write. A crash between two
+      // writes is the state the stale window exists to recover from,
+      // but there is no reason to create one.
+      ingest_started_at: null,
       // Cache the extracted text so a re-chunk needs no second fetch,
       // and so a file source survives losing its object in the bucket.
       content: doc.source === 'url' || doc.source === 'file' ? text : doc.content,
       ...(title && doc.title === doc.url ? { title } : {}),
     });
 
+    // B2: the corpus is now this model's. Stamped on success only, and
+    // after the document row, so a failure between the two leaves the
+    // bot's last-known-good stamp rather than a claim about vectors
+    // that were never written.
+    await stampIndexedModel(db, doc.bot_id, model);
+
     return { chunkCount: pieces.length, model, dimensions };
   } catch (err) {
     const message = err instanceof ProviderError ? err.message
                   : err instanceof Error ? err.message
                   : String(err);
-    await updateDocument(db, documentId, { status: 'failed', error: message.slice(0, 500) })
-      .catch((e) => console.error('could not record ingest failure:', e));
+    await updateDocument(db, documentId, {
+      status: 'failed',
+      error: message.slice(0, 500),
+      // Released on failure too. A document holding a claim it will
+      // never use is one nobody can re-index until the stale window
+      // expires — and "click Reindex" is the entire remedy this screen
+      // offers for a failed row.
+      ingest_started_at: null,
+    }).catch((e) => console.error('could not record ingest failure:', e));
     throw err;
   }
+}
+
+/**
+ * Record the model a bot's corpus is now built with, without letting
+ * that write fail an ingest that has already succeeded.
+ *
+ * The document row is the durable result; this is the hot-path hint
+ * that makes drift detectable. Losing it degrades to NULL, which
+ * retrieval reads as "unknown, allow" — the pre-012 behaviour, not a
+ * broken bot.
+ */
+async function stampIndexedModel(db: ServiceDb, botId: string, model: string): Promise<void> {
+  if (!model) return;
+  await setBotIndexedModel(db, botId, model)
+    .catch((e) => console.error('[rag] could not stamp the indexed model:', e));
 }
 
 /**
@@ -217,9 +391,17 @@ export async function ingestFaq(
   const doc = await getFaqDocument(db, botId);
   if (!doc) throw new Error(`Bot ${botId} has no FAQ document`);
 
-  await updateDocument(db, doc.id, { status: 'processing', error: null });
+  // Same claim, same reason as ingestDocument: every FAQ edit fires a
+  // background re-index of the whole FAQ, so a tenant editing three
+  // items quickly is the ordinary case rather than the pathological
+  // one, and those runs must not interleave.
+  if (!await claimDocument(db, doc.id, CLAIM_STALE_MS)) {
+    throw new AlreadyIndexing(doc.id);
+  }
 
   try {
+    await updateDocument(db, doc.id, { status: 'processing', error: null });
+
     const items = await listFaqItemsForIngest(db, botId);
 
     // Every item disabled, or none yet: not a failure. Clear the chunks
@@ -227,7 +409,11 @@ export async function ingestFaq(
     // report ready-with-nothing rather than failed-with-a-reason.
     if (items.length === 0) {
       await replaceChunks(db, { documentId: doc.id, botId, rows: [] });
-      await updateDocument(db, doc.id, { status: 'ready', error: null, chunk_count: 0 });
+      await updateDocument(db, doc.id, {
+        status: 'ready', error: null, chunk_count: 0, ingest_started_at: null,
+      });
+      // No model to stamp: nothing was embedded, so the corpus is
+      // whatever the last real ingest left it as.
       return { chunkCount: 0, model: '', dimensions: 0 };
     }
 
@@ -270,15 +456,21 @@ export async function ingestFaq(
       chunk_count: rows.length,
       embedding_model: model,
       embedding_dimensions: dimensions,
+      ingest_started_at: null,
     });
+
+    await stampIndexedModel(db, botId, model);
 
     return { chunkCount: rows.length, model, dimensions };
   } catch (err) {
     const message = err instanceof ProviderError ? err.message
                   : err instanceof Error ? err.message
                   : String(err);
-    await updateDocument(db, doc.id, { status: 'failed', error: message.slice(0, 500) })
-      .catch((e) => console.error('could not record FAQ ingest failure:', e));
+    await updateDocument(db, doc.id, {
+      status: 'failed',
+      error: message.slice(0, 500),
+      ingest_started_at: null,
+    }).catch((e) => console.error('could not record FAQ ingest failure:', e));
     throw err;
   }
 }

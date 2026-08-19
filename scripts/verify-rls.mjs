@@ -56,6 +56,12 @@ const RAG_MIGRATIONS = [
   // signature, so it is gated the same way.
   join(ROOT, 'supabase', '011_knowledge.sql'),
   join(HERE, 'rls', 'knowledge-test.sql'),
+  // 012 recreates both retrieval RPCs, so it takes vector arguments
+  // and is gated for the same reason. Its own assertions cover the new
+  // table's policies and — the one worth having — that
+  // prune_retrieval_log clamps its window rather than truncating.
+  join(ROOT, 'supabase', '012_retrieval.sql'),
+  join(HERE, 'rls', 'retrieval-test.sql'),
 ];
 
 /**

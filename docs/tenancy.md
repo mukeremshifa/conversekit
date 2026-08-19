@@ -1,6 +1,7 @@
 # Tenancy, auth and leads
 
-How organizations are isolated, how the origin lock works, and how leads are captured.
+How organizations are isolated, how the origin lock works, how leads are
+captured, and what visitor-typed text this platform keeps.
 
 [← Back to the README](../README.md)
 
@@ -40,5 +41,67 @@ end of its reply:
 visitor never sees it) and, if it contains at least a name and a valid email,
 saves a row to the `leads` table. Leads show up in the admin dashboard's **Leads**
 tab.
+
+---
+
+## Data retention
+
+Three tables hold text a visitor typed. They are listed together here because
+the answer differs per table, and "the conversation is stored anyway" is not a
+reason to stop thinking about the others.
+
+| Table | What it holds | Retention |
+|---|---|---|
+| `conversations` | The full transcript, both sides | Kept until the bot is deleted |
+| `leads` | Name, email, and whatever else the visitor volunteered | Kept until the bot is deleted |
+| `retrieval_log` | The visitor's question, verbatim, plus what retrieval did with it | **Pruned at 90 days** |
+
+All three cascade on `ON DELETE CASCADE` from `bots`, so deleting a bot removes
+everything it ever recorded. There is no per-visitor erasure endpoint yet; the
+unit a tenant can act on is the bot.
+
+### Why `retrieval_log` stores the query verbatim
+
+It is the first table on this platform whose *purpose* is keeping what visitors
+typed, rather than keeping it as a side effect of holding a conversation. That
+deserves a stated reason rather than a shrug.
+
+The whole value of the table is the report **"here are the questions your bot
+could not answer"** — the list a tenant reads to decide what to write next. A
+normalised or hashed query cannot be read back, and a report of question
+*shapes* tells nobody what to write. Storing anything less would be storing it
+for no benefit, which is the worse trade.
+
+What it does **not** hold: no IP address, no user agent, no reply. `session_id`
+is the same signed, opaque id the transcript uses, and is null for dashboard
+preview traffic. So the row is strictly narrower than the `conversations` row
+that already exists for the same turn.
+
+### Retention is enforced in the database, not the Worker
+
+`prune_retrieval_log(p_days integer default 90)` is a `security definer`
+function in [`012_retrieval.sql`](../supabase/012_retrieval.sql). A Cron Trigger
+(`17 3 * * *`, see [`wrangler.toml`](../wrangler.toml)) calls it once a day with
+90 and logs the number of rows removed.
+
+**The function clamps `p_days` into `[7, 365]` inside its own body**, and that
+placement is the point. The Worker holds a service-role key, and this is the one
+table on the platform where a wrong number deletes tenant data outright — so the
+Worker is not trusted with the number at all. A bug in the scheduled handler, or
+a stray manual call, cannot ask for a zero-day purge:
+
+```sql
+select prune_retrieval_log(0);   -- prunes at 7 days, not 0
+select prune_retrieval_log(7);   -- returns the row count
+```
+
+### Who can read it
+
+RLS on `retrieval_log` mirrors **`chunks`**, not `documents`: select for members
+of the owning org, and **no tenant write policy at all**. It is derived data
+written by the service role, and a tenant forging their own miss report is not a
+state worth allowing. `org_id` is set by the same
+`set_org_from_bot_row()` trigger every other tenant-scoped table uses, so it can
+never be supplied by a caller.
 
 ---

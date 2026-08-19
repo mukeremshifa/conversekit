@@ -17,13 +17,30 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Search, Sparkles, Type } from 'lucide-react';
-import { endpoints, type Bot, type RetrievePreview as Result } from '@/lib/api';
+import {
+  endpoints, type Bot, type EffectiveRetrieval, type RetrievePreview as Result,
+} from '@/lib/api';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   Input, Muted,
 } from '@/components/ui';
 
-export function RetrievePreview({ bot }: { bot: Bot }) {
+export function RetrievePreview({
+  bot, onEffective,
+}: {
+  bot: Bot;
+  /**
+   * Reports what actually governed the search — the resolved embedding
+   * model and its similarity floor — so the settings below can show the
+   * floor in force rather than a constant.
+   *
+   * It travels this way because this is the only call that pays for it:
+   * the floor depends on the resolved embedder, and resolving one means
+   * an embedding round trip. Having the settings screen fetch its own
+   * would spend that on every page view to render one number.
+   */
+  onEffective?: (effective: EffectiveRetrieval | null) => void;
+}) {
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
@@ -33,7 +50,9 @@ export function RetrievePreview({ bot }: { bot: Bot }) {
     if (!q) { toast.error('Type a question first'); return; }
     setBusy(true);
     try {
-      setResult(await endpoints.retrievePreview(bot.id, q));
+      const res = await endpoints.retrievePreview(bot.id, q);
+      setResult(res);
+      onEffective?.(res.effective);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not run that search');
       setResult(null);
@@ -84,6 +103,20 @@ function Outcome({ result }: { result: Result }) {
   }
   if (result.skipped === 'empty-query') {
     return <Muted className="mt-4 text-sm">Too short to search — try a whole question.</Muted>;
+  }
+  if (result.skipped === 'stale-index') {
+    return (
+      <div className="mt-4 space-y-2">
+        <p className="text-sm font-medium text-danger">Nothing was searched.</p>
+        <Muted className="text-sm leading-relaxed">
+          Your sources were indexed with a different embedding model from the one this bot now
+          uses{result.effective ? <> (<code>{result.effective.embedding_model}</code>)</> : null}.
+          The two score on different scales, so comparing them produces noise rather than matches —
+          the bot answers from its own business details instead, which is why it has not started
+          saying strange things. Re-index your sources on the Sources tab to fix it.
+        </Muted>
+      </div>
+    );
   }
   if (result.error) {
     return <p className="mt-4 text-sm text-danger">Search failed: {result.error}</p>;

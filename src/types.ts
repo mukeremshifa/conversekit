@@ -169,6 +169,18 @@ export interface Bot {
    * harmlessly in the corpus. That reversibility is the whole point.
    */
   knowledge_migrated_at?: string | null;
+
+  /**
+   * Embedding model this bot's corpus was last successfully built with
+   * (supabase/012).
+   *
+   * NULL means UNKNOWN, which retrieval treats as "allow" — a corpus
+   * indexed before 012, or a Worker running ahead of it, has nothing to
+   * compare against, and reading unknown as mismatched would switch
+   * retrieval off for every existing bot. See B2 in
+   * docs/rag-hardening.md.
+   */
+  embedding_model_indexed?: string | null;
 }
 
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
@@ -347,6 +359,14 @@ export interface Document {
   r2_key?: string | null;
   mime_type?: string | null;
   size_bytes?: number | null;
+
+  /**
+   * The ingest claim (supabase/012). Non-null while a run owns this
+   * document; released on success and on failure alike. Deliberately
+   * absent from the list queries the dashboard reads — it is a lock,
+   * not a status, and `status` is the thing a tenant looks at.
+   */
+  ingest_started_at?: string | null;
 }
 
 export interface DocumentCreatePayload {

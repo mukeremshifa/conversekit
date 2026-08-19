@@ -21,7 +21,7 @@ await build({
   entryPoints: [join(ROOT, 'src/stats.ts')],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });
-const { buildStats, dayKey } = await import(`file://${OUT}/stats.js`);
+const { buildStats, buildMissReport, dayKey } = await import(`file://${OUT}/stats.js`);
 
 let failures = 0;
 const check = (label, cond, detail = '') => {
@@ -145,6 +145,131 @@ console.log('\nDocuments and edge cases');
   const many = Array.from({ length: 10 }, (_, i) => msg('user', 'q' + i, 0, 's' + i));
   const s = run({ messages: many, caps: { messages: 10, leads: 1000 } });
   check('reports truncation when the row cap is hit', s.truncated.messages === true);
+}
+
+// ── The miss report ──────────────────────────────────────────────
+//
+// The report a tenant reads to find out what to write next, and the
+// only continuous measurement of whether the similarity floor is in the
+// right place. Both halves are aggregates over rows, which is the class
+// of thing that looks right in the UI while being quietly wrong — the
+// same reason buildStats is tested above.
+
+const log = (over = {}) => ({
+  query: 'What are your hours?',
+  matched: true,
+  channel: 'vector',
+  top_score: 0.71,
+  chunk_count: 3,
+  min_similarity: 0.6,
+  embedding_model: '@cf/baai/bge-base-en-v1.5',
+  created_at: day(0),
+  ...over,
+});
+
+const miss = (query, daysAgo = 0, over = {}) =>
+  log({ query, matched: false, channel: null, top_score: null, chunk_count: 0, created_at: day(daysAgo), ...over });
+
+const report = (rows, over = {}) =>
+  buildMissReport({ days: 7, now: NOW, rows, cap: 4000, ...over });
+
+console.log('\nMiss report — totals and rate');
+{
+  const r = report([log(), log(), miss('Do you do implants?')]);
+  eq('every logged turn is a query', r.totals.queries, 3);
+  eq('misses counted', r.totals.misses, 1);
+  eq('miss rate is misses over queries', r.totals.missRate, 1 / 3);
+  eq('hits and misses share the denominator', r.channels.vector + r.channels.missed, 3);
+}
+{
+  const r = report([]);
+  eq('no traffic is an unknown rate, not zero', r.totals.missRate, null);
+  eq('and no questions', r.questions.length, 0);
+  eq('with no median to report', r.scores.hitMedian, null);
+}
+{
+  // The window bound, which is the half of buildStats most likely to be
+  // got wrong twice.
+  const r = report([log(), miss('old one', 9)]);
+  eq('rows older than the window are excluded', r.totals.queries, 1);
+  eq('including from the question list', r.questions.length, 0);
+}
+
+console.log('\nMiss report — the questions');
+{
+  const r = report([
+    miss('Do you do implants?', 0),
+    miss('do you do IMPLANTS', 1),
+    miss('  Do you do implants?  ', 2),
+    miss('Do you take Bupa?', 1),
+    log({ query: 'Do you do implants?' }),   // a HIT with the same text
+    miss('no', 0),                           // too short to group
+  ]);
+  eq('grouped case, spacing and trailing punctuation', r.questions[0].count, 3);
+  check('keeps the first spelling seen', r.questions[0].text === 'Do you do implants?',
+    `got ${JSON.stringify(r.questions[0].text)}`);
+  eq('the same question answered successfully is not a miss', r.totals.misses, 5);
+  check('a hit never reaches the question list',
+    r.questions.reduce((n, q) => n + q.count, 0) === 4,
+    JSON.stringify(r.questions));
+  eq('a distinct miss is its own entry', r.questions[1].count, 1);
+  check('very short misses are dropped', !r.questions.some((q) => q.text === 'no'));
+  eq('lastAsked is the most recent sighting', r.questions[0].lastAsked, day(0));
+}
+{
+  // Order must not depend on the order rows arrive in — the query sorts
+  // newest-first today and nothing in the contract says it must.
+  const rows = [miss('older', 3), miss('older', 0), miss('older', 1)];
+  const r = report(rows);
+  eq('lastAsked survives unsorted input', r.questions[0].lastAsked, day(0));
+}
+{
+  const many = Array.from({ length: 30 }, (_, i) => miss(`question number ${i}`));
+  const r = report(many);
+  eq('the question list is capped', r.questions.length, 20);
+  eq('but the totals are not', r.totals.misses, 30);
+}
+
+console.log('\nMiss report — channels and scores');
+{
+  const r = report([
+    log({ top_score: 0.9 }),
+    log({ top_score: 0.7 }),
+    log({ channel: 'lexical', top_score: 0.08 }),
+    miss('nothing here'),
+  ]);
+  eq('vector hits counted', r.channels.vector, 2);
+  eq('lexical rescues counted', r.channels.lexical, 1);
+  eq('misses counted', r.channels.missed, 1);
+  // The lexical 0.08 is a ts_rank, not a cosine score. Pooling it would
+  // drag the median to 0.7 and read like a measurement.
+  eq('the median ignores the lexical channel entirely', r.scores.hitMedian, 0.8);
+  eq('the floor those scores were tested against is reported', r.scores.floor, 0.6);
+  eq('a miss with no score leaves missMax null', r.scores.missMax, null);
+}
+{
+  const r = report([log({ top_score: 0.9 }), log({ top_score: 0.7 }), log({ top_score: 0.5 })]);
+  eq('an odd count takes the middle value', r.scores.hitMedian, 0.7);
+}
+{
+  // Chunks came back and the model was still shown nothing — a budget
+  // problem rather than a retrieval one, and worth seeing as such.
+  const r = report([miss('x y z', 0, { top_score: 0.82, chunk_count: 0 })]);
+  eq('a scored miss is reported', r.scores.missMax, 0.82);
+}
+{
+  const r = report([log({ min_similarity: 0.6, created_at: day(0) }),
+                    log({ min_similarity: 0.3, created_at: day(3) })]);
+  eq('the floor comes from the newest row that has one', r.scores.floor, 0.6);
+}
+{
+  const r = report([log({ min_similarity: null })]);
+  eq('a row with no floor recorded leaves it null', r.scores.floor, null);
+}
+{
+  const rows = Array.from({ length: 10 }, () => miss('anything at all'));
+  const r = report(rows, { cap: 10 });
+  check('reports truncation when the row cap is hit', r.truncated === true);
 }
 
 rmSync(OUT, { recursive: true, force: true });

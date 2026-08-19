@@ -379,25 +379,15 @@ export async function countTrailingMisses(
   return streak;
 }
 
-/**
- * Titles for the documents behind a set of retrieved chunks.
- *
- * A second query rather than a new match_chunks signature: the SQL
- * function is versioned into a migration and called from two places,
- * and this reads a handful of rows by primary key.
+/*
+ * getDocumentTitles lived here until 012. It existed because
+ * match_chunks returned document_id and nothing else, so naming a
+ * source cost a second round trip on the hot path of every turn with
+ * citations on. 012 folds the title into both retrieval RPCs (the S2
+ * title fold), which left this with no callers — deleted rather than
+ * kept as an unused export, because an exported helper reads as
+ * something someone is meant to use.
  */
-export async function getDocumentTitles(
-  db: ServiceDb,
-  documentIds: string[],
-): Promise<Map<string, string>> {
-  if (documentIds.length === 0) return new Map();
-
-  const list = documentIds.map((id) => `"${encodeURIComponent(id)}"`).join(',');
-  const rows = await pgFetch<Array<{ id: string; title: string }>>(db,
-    `/documents?select=id,title&id=in.(${list})`
-  );
-  return new Map(rows.map((r) => [r.id, r.title]));
-}
 
 /**
  * @param sessionId Narrow to one session. The bot filter stays in place
@@ -583,6 +573,68 @@ export async function updateDocument(
   );
 }
 
+/**
+ * Take the ingest claim on a document (012). Returns false when someone
+ * else already holds it.
+ *
+ * ONE conditional PATCH, and that is the whole correctness argument.
+ * PostgREST turns it into a single UPDATE with the filter in its WHERE
+ * clause, so the compare-and-set happens inside one statement and
+ * Postgres serialises the two racing writers for us. Reading the column
+ * and then writing it would reintroduce exactly the window this exists
+ * to close.
+ *
+ * `Prefer: return=representation` is what makes the result readable:
+ * zero rows back means the filter matched nothing, which means the
+ * claim is held.
+ *
+ * @param staleAfterMs A claim older than this is treated as abandoned
+ *   and may be taken. A Worker can die mid-`waitUntil` with no chance
+ *   to release, so without a stale window a crashed run would leave a
+ *   document permanently unindexable — a worse failure than the double
+ *   index this guards against.
+ */
+export async function claimDocument(
+  db: ServiceDb,
+  documentId: string,
+  staleAfterMs: number,
+): Promise<boolean> {
+  const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
+  const rows = await pgFetch<Array<{ id: string }>>(db,
+    `/documents?select=id&id=eq.${encodeURIComponent(documentId)}` +
+    `&or=(ingest_started_at.is.null,ingest_started_at.lt.${encodeURIComponent(cutoff)})`,
+    { method: 'PATCH', body: JSON.stringify({ ingest_started_at: new Date().toISOString() }) }
+  );
+  return rows.length > 0;
+}
+
+/**
+ * The claim is RELEASED through updateDocument, not through a function
+ * of its own — `ingest_started_at: null` rides along with the terminal
+ * `status` write in both the success and the failure path. One write
+ * rather than two means there is no window where a document is `ready`
+ * but still claimed, and no second call to forget on a new code path.
+ */
+
+/**
+ * Record the embedding model a bot's corpus was last built with (012).
+ *
+ * Written by both ingest paths on success only, and read by `retrieve`
+ * to detect drift. Never by a tenant: like knowledge_migrated_at this
+ * is a statement that something succeeded, not a setting, so it is
+ * deliberately absent from BotUpdatePayload.
+ */
+export async function setBotIndexedModel(
+  db: ServiceDb, botId: string, model: string,
+): Promise<void> {
+  await pgFetch<unknown>(db,
+    `/bots?id=eq.${encodeURIComponent(botId)}`,
+    { method: 'PATCH',
+      body: JSON.stringify({ embedding_model_indexed: model }),
+      headers: { 'Prefer': 'return=minimal' } }
+  );
+}
+
 // ----------------------------------------------------------------
 // Chunks
 // ----------------------------------------------------------------
@@ -666,6 +718,10 @@ export interface MatchedChunk {
   similarity: number;
   kind?: ChunkKind;
   priority?: number;
+  /** Folded into both RPCs by 012 (the S2 title fold), which is what
+   *  removed getDocumentTitles from the chat path. Optional so a Worker
+   *  running ahead of the migration still parses the older row shape. */
+  document_title?: string | null;
 }
 
 export async function matchChunks(
@@ -889,6 +945,94 @@ export async function setKnowledgeMigrated(
     { method: 'PATCH', body: JSON.stringify({ knowledge_migrated_at: at }) }
   );
   return rows[0] ?? null;
+}
+
+// ----------------------------------------------------------------
+// Retrieval log (012)
+//
+// Written by the chat path with the service client, read by the
+// dashboard as the user so RLS scopes it. Same split as everything
+// else — and here it is load-bearing rather than conventional, because
+// the table has no tenant write policy at all: this is derived data,
+// and a tenant forging their own miss report is not a state worth
+// allowing.
+// ----------------------------------------------------------------
+export interface RetrievalLogInsert {
+  bot_id: string;
+  session_id: string | null;
+  query: string;
+  matched: boolean;
+  channel: 'vector' | 'lexical' | null;
+  top_score: number | null;
+  chunk_count: number;
+  min_similarity: number | null;
+  embedding_model: string | null;
+}
+
+/**
+ * Record one turn's retrieval outcome. NEVER THROWS.
+ *
+ * Called from `waitUntil`, so a rejection here would be an unhandled
+ * one in a context the request has already left — and more to the
+ * point, a bot must not have a worse conversation because its
+ * analytics table is unavailable. The whole failure surface of this
+ * feature is "the report is missing a row".
+ *
+ * `return=minimal` because nothing reads the row back, and the query
+ * text is the largest field on it.
+ */
+export async function logRetrieval(db: ServiceDb, row: RetrievalLogInsert): Promise<void> {
+  try {
+    await pgFetch<unknown>(db, '/retrieval_log',
+      { method: 'POST',
+        body: JSON.stringify(row),
+        headers: { 'Prefer': 'return=minimal' } }
+    );
+  } catch (err) {
+    console.error('[retrieval-log] write failed (non-fatal):', err);
+  }
+}
+
+/**
+ * Delete rows older than `days`, returning how many went.
+ *
+ * The number is CLAMPED INSIDE THE FUNCTION, into [7, 365] — see
+ * 012_retrieval.sql. Passing a bad value from here is not merely
+ * guarded against, it is unrepresentable: the Worker holds a
+ * service-role key, and this is the one table where a wrong number
+ * deletes tenant data outright.
+ */
+export async function pruneRetrievalLog(db: ServiceDb, days: number): Promise<number> {
+  const deleted = await pgFetch<number | string>(db, '/rpc/prune_retrieval_log',
+    { method: 'POST', body: JSON.stringify({ p_days: days }) }
+  );
+  return Number(deleted) || 0;
+}
+
+/** The same ceiling reasoning as STATS_MESSAGE_CAP: past it the report
+ *  would silently under-report, so it is surfaced rather than hidden. */
+export const RETRIEVAL_LOG_CAP = 4000;
+
+export interface RetrievalLogRow {
+  query: string;
+  matched: boolean;
+  channel: string | null;
+  top_score: number | null;
+  chunk_count: number;
+  min_similarity: number | null;
+  embedding_model: string | null;
+  created_at: string;
+}
+
+export function getRetrievalLog(
+  db: UserDb, botId: string, since: string, cap = RETRIEVAL_LOG_CAP,
+): Promise<RetrievalLogRow[]> {
+  return pgFetch<RetrievalLogRow[]>(db,
+    `/retrieval_log?select=query,matched,channel,top_score,chunk_count,min_similarity,embedding_model,created_at` +
+    `&bot_id=eq.${encodeURIComponent(botId)}` +
+    `&created_at=gte.${encodeURIComponent(since)}` +
+    `&order=created_at.desc&limit=${cap}`
+  );
 }
 
 // ── Overview statistics ───────────────────────────────────────────

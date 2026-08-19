@@ -15,10 +15,11 @@
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { ArrowRight, Boxes, HelpCircle, Search } from 'lucide-react';
-import { endpoints, type Bot } from '@/lib/api';
+import { endpoints, type Bot, type EffectiveRetrieval } from '@/lib/api';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 import { FaqEditor } from '@/screens/knowledge/FaqEditor';
+import { MissReport } from '@/screens/knowledge/MissReport';
 import { Sources } from '@/screens/Sources';
 import { Retrieval } from '@/screens/Retrieval';
 import { RetrievePreview } from '@/screens/knowledge/RetrievePreview';
@@ -46,6 +47,28 @@ export function Knowledge({
   onNavigate: (route: string) => void;
   onSaved: (b: Bot) => void;
 }) {
+  /**
+   * A question carried from the miss report on the Retrieval tab to the
+   * editor on the FAQ tab. Held here because it crosses tabs — the
+   * whole point of the action is that it lands you in the right place
+   * with the question already typed.
+   *
+   * Cleared once the editor has taken it, so switching back to the FAQ
+   * tab later does not re-prefill a question already dealt with.
+   */
+  const [faqDraft, setFaqDraft] = useState<string | null>(null);
+
+  /** What actually governed the last preview search. Lifted out of
+   *  RetrievePreview so the settings card below it can show the floor
+   *  in force rather than a constant that is wrong for every bot on the
+   *  platform embedder. */
+  const [effective, setEffective] = useState<EffectiveRetrieval | null>(null);
+
+  function addAsFaq(question: string) {
+    setFaqDraft(question);
+    onNavigate(TAB_ROUTES.faq);
+  }
+
   return (
     <>
       <Header
@@ -73,12 +96,17 @@ export function Knowledge({
         ))}
       </div>
 
-      {tab === 'faq' && <FaqEditor bot={bot} />}
+      {tab === 'faq' && (
+        <FaqEditor bot={bot} draftQuestion={faqDraft} onDraftTaken={() => setFaqDraft(null)} />
+      )}
       {tab === 'sources' && <Sources bot={bot} embedded />}
       {tab === 'retrieval' && (
         <>
-          <RetrievePreview bot={bot} />
-          <Retrieval bot={bot} onSaved={onSaved} embedded />
+          {/* Above the preview: what visitors actually asked comes
+              before what a test query would retrieve. */}
+          <MissReport bot={bot} onAddFaq={addAsFaq} />
+          <RetrievePreview bot={bot} onEffective={setEffective} />
+          <Retrieval bot={bot} onSaved={onSaved} embedded effective={effective} />
         </>
       )}
     </>

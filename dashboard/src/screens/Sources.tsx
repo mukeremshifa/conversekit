@@ -17,6 +17,26 @@ const STATUS = {
   failed:     { tone: 'bad' as const,  label: 'failed' },
 };
 
+/**
+ * Whether this document was indexed by a different embedding model
+ * than the one that would run today.
+ *
+ * The failure it makes visible is the quietest one in the pipeline:
+ * two 768-dimension models from different vendors pass every check —
+ * the width assertion, the pgvector column, Postgres itself — and store
+ * vectors in different embedding spaces. Similarity between them is
+ * noise, so the bot answers confidently and wrongly, forever, with no
+ * error anywhere.
+ *
+ * Only `ready` documents are compared. A pending one has no model yet
+ * and a failed one has nothing indexed to be stale, and flagging either
+ * would be a second red badge saying the same thing as the first.
+ */
+function needsReindex(doc: Doc, current: string | null): boolean {
+  return !!current && doc.status === 'ready' && !!doc.embedding_model
+    && doc.embedding_model !== current;
+}
+
 /** Mirrors MAX_FILE_BYTES in src/rag/files.ts. Checked here too so a
  *  file that cannot possibly succeed fails instantly rather than after
  *  the browser has pushed ten megabytes up a slow connection. */
@@ -37,13 +57,18 @@ export function Sources({
   embedded?: boolean;
 }) {
   const [docs, setDocs] = useState<Doc[] | null>(null);
+  /** The embedding model that would run TODAY, from the API. Null when
+   *  the bot's embedding config cannot be resolved at all — a Providers
+   *  problem, and not a reason to hide the source list. */
+  const [embedding, setEmbedding] = useState<{ vendor: string; model: string } | null>(null);
   const [inspect, setInspect] = useState<{ doc: Doc; chunks: Chunk[] | null } | null>(null);
   const timer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const { documents } = await endpoints.documents(bot.id);
+      const { documents, embedding: current } = await endpoints.documents(bot.id);
       setDocs(documents);
+      setEmbedding(current ?? null);
 
       // Ingestion is asynchronous, so poll while anything is in flight
       // — and stop the moment nothing is, rather than polling forever.
@@ -61,6 +86,9 @@ export function Sources({
     void load();
     return () => { if (timer.current) clearTimeout(timer.current); };
   }, [load]);
+
+  const currentModel = embedding?.model ?? null;
+  const stale = docs?.filter((d) => needsReindex(d, currentModel)) ?? [];
 
   async function showChunks(doc: Doc) {
     setInspect({ doc, chunks: null });
@@ -105,6 +133,34 @@ export function Sources({
       )}
 
       <AddSource botId={bot.id} onAdded={load} />
+
+      {stale.length > 0 && embedding && (
+        <Card className="border-danger/40">
+          <CardHeader>
+            <div>
+              <CardTitle>Re-index required</CardTitle>
+              <CardDescription>
+                This bot now embeds with <strong>{embedding.model}</strong> ({embedding.vendor}), but{' '}
+                {stale.length === 1 ? 'one source was' : `${stale.length} sources were`} indexed with a
+                different model. Searching across the two compares numbers that do not mean the same
+                thing, so the bot is answering without them — from its own business details alone.
+                Re-index each one below to bring it back.
+              </CardDescription>
+            </div>
+            <Button
+              size="sm"
+              onClick={async () => {
+                // Sequentially: each one starts an embedding job, and
+                // firing them together only makes the progress display
+                // a lie — the same reason uploads go one at a time.
+                for (const d of stale) await reindex(d);
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> Re-index {stale.length === 1 ? 'it' : 'all'}
+            </Button>
+          </CardHeader>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
@@ -158,6 +214,19 @@ export function Sources({
                     </Td>
                     <Td>
                       <Badge tone={STATUS[d.status].tone}>{STATUS[d.status].label}</Badge>
+                      {/* A fifth badge beside the four statuses rather
+                          than instead of them: the document IS ready —
+                          it is indexed, it just cannot be searched by
+                          the model this bot now uses. */}
+                      {needsReindex(d, currentModel) && (
+                        <>
+                          {' '}
+                          <Badge tone="bad">re-index required</Badge>
+                          <p className="mt-1 max-w-xs text-xs leading-relaxed text-muted">
+                            Indexed with {d.embedding_model}, now searching with {currentModel}.
+                          </p>
+                        </>
+                      )}
                       {d.status === 'failed' && d.error && (
                         <p className="mt-1 max-w-xs text-xs leading-relaxed text-danger">{d.error}</p>
                       )}

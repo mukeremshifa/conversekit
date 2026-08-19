@@ -7,6 +7,61 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Added
 
+- **Retrieval logging, and the report a tenant actually wants** (`retrieval_log`,
+  supabase/012) — nothing recorded what visitors asked or whether the bot could
+  answer, so every question about this pipeline needed a hand-written SQL query
+  against a table that happened to be small. One row per turn now carries the
+  query, whether the model was shown anything, which channel found it, the top
+  score and the similarity floor that score was tested against — written from
+  `waitUntil`, so a visitor's reply never waits on bookkeeping.
+
+  On top of it: **"Questions your bot could not answer"** at the top of
+  Knowledge → Retrieval, with counts, last-asked, and an **Add as FAQ** action
+  that drops into the editor with the question already typed. The gap between
+  seeing the problem and fixing it is where a report like this normally dies.
+
+  **Hits are logged as well as misses**, and that is not padding: a miss-only
+  table has rows and no denominator — no miss rate, and no score distribution to
+  tune a floor against, which is precisely how a similarity floor that could
+  never reject anything survived four months of looking like it worked. Skipped
+  turns (a greeting, a disabled bot, a drifted index) are logged not at all,
+  because a greeting counted as a miss inflates the number the whole report
+  exists to produce.
+- **Embedding-model drift is now visible and non-destructive.** Changing a bot
+  from one 768-dimension embedder to another passed every check the pipeline
+  had — the width assertion, the pgvector column type, Postgres itself — and
+  left the stored vectors and the query vector in different embedding spaces,
+  where cosine similarity is noise. The bot answered confidently and wrongly,
+  permanently, with no error and no dashboard signal.
+
+  `bots.embedding_model_indexed` is stamped by both ingest paths on success, and
+  `retrieve()` compares it against the embedder it has just resolved — a string
+  compare on a row it already holds, so no extra query. A mismatch skips
+  retrieval *before* the embedding call and the turn proceeds on the plain
+  prompt. Sources shows **"re-index required"** per document, and offers to
+  re-index the lot.
+
+  Two things this had to get right, and both are pinned by tests: **NULL is not
+  drift** (every corpus indexed before 012 has no stamp, and reading unknown as
+  mismatched would have switched retrieval off platform-wide), and **a stale
+  index is not a miss** (otherwise `fallback_message` fires on every turn and
+  `escalate_after_misses` escalates every conversation, on a bot that is
+  answering fine from its knowledge-base fields).
+- **A re-index claim** (`documents.ingest_started_at`). Two clicks, or a click
+  landing while a background re-index was still running, interleaved
+  delete-then-insert: the loser marked the document `failed` while the winner's
+  chunks sat there indexed and working, so the tenant saw a red row on a
+  document that was fine and the natural response was to click again.
+
+  `claimDocument` is a single conditional PATCH, so the compare-and-set is one
+  UPDATE and atomic. It lives inside `ingestDocument`/`ingestFaq`, so every
+  caller inherits it, and the loser throws rather than touching status. A claim
+  older than 10 minutes is reclaimable — a Worker can die mid-`waitUntil`, and a
+  document nobody can ever re-index is the worse failure. The reindex route also
+  answers **409** rather than a `202` for work that will not happen.
+- **`GET /v1/admin/bots/:id/retrieval`** — the miss report, and
+  **`GET /v1/admin/bots/:id/documents`** now returns the embedding model that
+  would run today alongside the list. See [docs/api.md](docs/api.md).
 - **One knowledge pipeline** — `bots.services` and `bots.faq` were pasted into
   every system prompt by `buildSystemPrompt` while `documents → chunks →
   match_chunks` ran alongside and never saw them. They are now ingested sources
@@ -60,6 +115,50 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Changed
 
+- **Ingestion now survives the failure its own header claimed it survived.**
+  `embedPieces` looped batches of 32 with no retry and no partial-progress
+  record, so one 429 on batch 7 of 13 threw, the catch marked the document
+  `failed`, and every batch already embedded was discarded — the next attempt
+  starting from zero and failing the same way. It now retries each batch three
+  times at 1s/2s/4s, honours the vendor's own `Retry-After` (newly parsed onto
+  `ProviderError.retryAfter`) capped at 10s, and **only retries `retryable`
+  failures** — a `bad_request` or an `auth` error fails on the first attempt,
+  because retrying those burns the `waitUntil` budget to reach the same error
+  three times as slowly.
+
+  The constant that matters is the cumulative one: **30 seconds per document**,
+  not per batch. Three attempts × ten seconds × thirteen batches is minutes of
+  wall clock inside a `waitUntil` that will be killed part-way, which is a
+  silent partial failure and strictly worse than the clean one being fixed. On
+  exhaustion the error names the batch, so "the vendor is throttling you" reads
+  differently from "your document is broken".
+- **One fewer round trip on every chat turn with citations on.** Both retrieval
+  RPCs now return `document_title` from a join to `documents`, so naming a
+  source no longer costs a second query — the fold the citation-alignment fix
+  explicitly deferred because it changes the signature of a versioned SQL
+  function. `getDocumentTitles` was deleted rather than left as an unused
+  export.
+- **`hnsw.ef_search` is set before the vector search.** One shared `chunks`
+  table, one global HNSW index and a `bot_id` filter applied after the vector
+  ordering is a recall trap: once a tenant's slice is large enough that the
+  planner prefers the index scan, it walks only `ef_search` candidates
+  *globally* and keeps whichever happen to belong to this tenant — fewer than
+  `top_k` rows, sometimes zero, for a corpus containing a perfectly good answer.
+  Invisible at today's row counts and unpleasant to debug later. `match_chunks`
+  became `plpgsql` for this one line; the two-phase over-fetch and re-rank is
+  otherwise unchanged.
+- **The Retrieval screen stops presenting 0.3 as the minimum-similarity
+  default.** There is no platform default any more — the floor is resolved from
+  the embedding model that runs the query, and 0.3 is wrong for every bot on the
+  platform embedder, whose measured floor is twice that. The field is now an
+  optional override that can be cleared, and the effective floor and its
+  provenance (`tenant` / `model` / the unmeasured `default`) are shown beneath
+  it.
+- **One Cron Trigger, deliberately narrow.** `17 3 * * *` prunes `retrieval_log`
+  at 90 days and does nothing else. The day count is clamped into `[7, 365]`
+  inside the Postgres function rather than in the Worker: the Worker holds a
+  service-role key, and this is the one table where a wrong number deletes
+  tenant data outright.
 - **Three dashboard screens became one.** Knowledge Base, Knowledge Sources and
   Retrieval were split by implementation detail rather than by what a tenant is
   trying to do; they are now the FAQ, Sources and Retrieval tabs of a single

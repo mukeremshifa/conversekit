@@ -8,24 +8,41 @@ the two that only break at scale, and what production grade would add.
 
 ---
 
-## Status — phase 1 shipped
+## Status — phases 1 and 2 shipped
 
 Everything below started as analysis against the live schema and the deployed
 code. Measurements were taken read-only against the production project on
 2026-08-19, when it held 11 chunks across 2 bots.
 
-**Shipped:** B1 (model-relative similarity floor), B3 (CJK query gate), B6
-(citation/marker alignment), M2 (`npm run eval:rag`), and the housekeeping.
+**Phase 1 shipped:** B1 (model-relative similarity floor), B3 (CJK query gate),
+B6 (citation/marker alignment), M2 (`npm run eval:rag`), and the housekeeping.
 No SQL migration was needed for any of it.
 
-**Still open:** B2, B4, B5, S1, S2 and M1, M3–M8. Each is marked below.
+**Phase 2 shipped**, all on [`012_retrieval.sql`](../supabase/012_retrieval.sql):
+M1 (retrieval logging and the tenant-facing miss report), B2 (embedding-model
+drift), B4 (the re-index claim), B5 (ingest retry with backoff), S1's first
+mitigation (`hnsw.ef_search`), and the S2 title fold.
 
-The one thing phase 1 does **not** yet have is the measured floor for any
-embedder other than bge. The mechanism resolves per model; only bge-base has a
-number behind it, and every other vendor falls through to the documented 0.30
-fallback marked as unmeasured. `npm run eval:rag -- --vendor=x --sweep=...` is
-what replaces those, and it is the next thing to run — not the next thing to
-build.
+Phase 2 is one theme, not four fixes: **the pipeline stops lying about its own
+state, and starts telling the tenant the truth.** Every claim in the phase 1
+audit needed a hand-written SQL query against a table that happened to be small.
+Now a bot records what it was asked and whether it could answer, a vendor switch
+says so instead of poisoning every answer silently, a raced re-index no longer
+marks a working document `failed`, and a rate limit part-way through a batch no
+longer discards the batches before it.
+
+**Still open:** the `hasChunks` half of S2, pgvector 0.8 `iterative_scan`, and
+M3–M8. Each is marked below.
+
+The one thing neither phase has is the measured floor for any embedder other
+than bge. The mechanism resolves per model; only bge-base has a number behind
+it, and every other vendor falls through to the documented 0.30 fallback marked
+as unmeasured. `npm run eval:rag -- --vendor=x --sweep=...` is what replaces
+those, and it is the next thing to run — not the next thing to build. The miss
+report now measures the same thing continuously against real traffic, which
+narrows the gap but does not close it: it reports the floor in force and the
+score distribution around it, and it cannot tell you what a *different* floor
+would have retrieved.
 
 ---
 
@@ -38,10 +55,11 @@ The loop is complete and the parts are individually sound:
 | Extract | [extract.ts](../src/rag/extract.ts), [files.ts](../src/rag/files.ts) | HTML/markdown/PDF/DOCX, SSRF-guarded |
 | Chunk | [chunk.ts](../src/rag/chunk.ts) | Recursive character split + a Q&A-aware splitter |
 | Embed | [ingest.ts](../src/rag/ingest.ts) | Batched, width-asserted, 11 vendors |
-| Store | [005](../supabase/005_rag.sql), [011](../supabase/011_knowledge.sql) | pgvector, HNSW, `tsvector` + GIN, RLS |
-| Retrieve | [retrieve.ts](../src/rag/retrieve.ts) | Vector search, priority boost, lexical fallback |
+| Store | [005](../supabase/005_rag.sql), [011](../supabase/011_knowledge.sql), [012](../supabase/012_retrieval.sql) | pgvector, HNSW + `ef_search`, `tsvector` + GIN, RLS |
+| Retrieve | [retrieve.ts](../src/rag/retrieve.ts) | Vector search, priority boost, lexical fallback, drift gate |
 | Render | `renderContext` | Numbered excerpts, character budget, injection framing |
 | Inspect | `retrieve-preview` | Runs the real path, reports the channel |
+| Observe | `retrieval_log`, `buildMissReport` | Per-turn outcome, miss report, 90-day retention |
 
 The architecture is right. **The defaults are not**, and that turns out to
 matter more than any missing feature.
@@ -129,7 +147,7 @@ embedder — which would show a different number from the one the query was
 filtered by. A tenant asking "why did it find nothing" gets the model, the
 floor, and whether that floor was measured.
 
-### B2 — Embedding model drift is silent and unrecoverable
+### B2 — Embedding model drift is silent and unrecoverable — **FIXED**
 
 `documents.embedding_model` is recorded at ingest. `retrieve()` calls
 `resolveEmbeddingProvider(env, bot.embedding_config)` and compares it to
@@ -146,11 +164,41 @@ The dimension guard catches the OpenAI case (1536 ≠ 768) loudly. It cannot
 catch the dangerous case, which is two models that agree on width and disagree
 on everything else.
 
-**Fix.** Compare at query time: if any of the bot's documents were embedded
-with a model other than the one now resolving, mark those documents
-`stale` and surface "Re-index required" in Sources. Refusing to retrieve is the
-wrong call — degrading to the plain prompt beats answering from noise, but
-telling the tenant is what actually fixes it.
+**Fixed**, in two places that answer two different questions.
+
+**On the hot path, at zero extra cost.** `bots.embedding_model_indexed` (012) is
+stamped by both ingest paths on success, and `retrieve()` compares it against
+the embedder it has just resolved — it already holds the bot row, so this is a
+string compare rather than a query. A mismatch returns
+`{ chunks: [], skipped: 'stale-index' }` *before* the embedding call, and the
+turn proceeds on the plain prompt. Degrading beats answering from noise.
+
+Two things that had to be right, and both are asserted in
+[test-knowledge-units.mjs](../scripts/test-knowledge-units.mjs):
+
+- **NULL is not drift.** Every corpus indexed before 012 has no stamp, and
+  reading unknown as mismatched would have switched retrieval off for every
+  bot on the platform at once. The migration also backfills the column from
+  each bot's most recently updated `ready` document, so the NULL case is the
+  genuinely-unknown one rather than the common one.
+- **A stale index is not a miss.** `missedRetrieval` stays false, because
+  otherwise `fallback_message` fires on literally every turn and
+  `escalate_after_misses` escalates every conversation — on a bot that is
+  answering perfectly well from its knowledge-base fields. Drift is closer to
+  "this bot has no corpus" than to "this bot could not answer". It is logged as
+  its own thing, and `retrieve-preview` says so in as many words.
+
+**In the dashboard, per document.** `GET /v1/admin/bots/:id/documents` now
+returns the model that would resolve *today* alongside the list, and
+[Sources.tsx](../dashboard/src/screens/Sources.tsx) shows **"re-index required"**
+as a fifth badge beside `pending`/`processing`/`ready`/`failed`, plus a banner
+offering to re-index every affected source. Per document because a mixed corpus
+is real: the bot-level stamp is the last ingest, the per-document column is the
+detail.
+
+That second half also covers the case the bot column cannot — changing the
+platform default `EMBEDDING_VENDOR` in `wrangler.toml` alters no bot row at all,
+and every corpus on the deployment goes stale at once.
 
 ### B3 — A 4-character minimum drops valid CJK questions — **FIXED**
 
@@ -170,7 +218,7 @@ contains Han, Hiragana, Katakana, Hangul or Thai. Unicode property escapes
 rather than hand-rolled ranges, so CJK Extension B and beyond come out right;
 the code-point count is what stops a single astral character reading as two.
 
-### B4 — Concurrent re-index leaves the status lying
+### B4 — Concurrent re-index leaves the status lying — **FIXED**
 
 `reindex` fires `waitUntil(ingestDocument(...))` with no lock, and
 `replaceChunks` is delete-then-insert. Two clicks, or a click landing while a
@@ -185,11 +233,40 @@ but B's failure marks the document `failed` with an error message, while A's
 chunks are sitting there indexed and working. The tenant sees a red row on a
 document that is fine, and the natural response is to click reindex again.
 
-**Fix.** A `documents.ingest_started_at` claim, or advisory-lock on the
-document id in the RPC. Refuse rather than queue: the second run would produce
-identical output.
+**Fixed** with a `documents.ingest_started_at` claim (012). `claimDocument` is a
+single conditional PATCH —
+`?id=eq.X&or=(ingest_started_at.is.null,ingest_started_at.lt.<cutoff>)` — which
+PostgREST turns into one UPDATE, so the compare-and-set is atomic in Postgres
+and zero rows back means someone else holds it. The claim is released on success
+*and* in the failure path, in the same write as the terminal `status`, so a
+document is never left both `ready` and claimed.
 
-### B5 — Ingestion does not survive the failure its own comment claims it survives
+The claim lives **inside** `ingestDocument`/`ingestFaq`, so every caller
+inherits it: the reindex route, both upload paths and `knowledge/migrate`. The
+loser throws a typed `AlreadyIndexing` rather than marking anything `failed` —
+that is the whole point, since the bug is the second run overwriting the first
+run's status.
+
+Three details that are not obvious from the one-line version:
+
+- **A stale claim is reclaimable, after 10 minutes.** A Worker can die
+  mid-`waitUntil` with no chance to release, and a document nobody can ever
+  re-index is a worse failure than the double index. The reindex route's
+  pre-check honours the same window for the same reason.
+- **The route's 409 is a courtesy, not the guarantee.** It reads the document,
+  sees `processing`, and tells the tenant — but two clicks a millisecond apart
+  both read "free". The claim is the correctness argument; the 409 exists so the
+  common case gets a sentence instead of a `202` for work that will not happen.
+- **The FAQ path retries instead of refusing.** Clicking Reindex twice asks for
+  the same work twice, so refusing the second is right. But an FAQ re-index is
+  triggered by an *edit*, and a tenant fixing three answers in a row is ordinary
+  — the second run reads different items. Refusing it would leave the corpus one
+  edit behind while the editor showed `ready`, a quieter version of exactly the
+  lie this fix is about. `reindexFaq` retries the claim a few times, and because
+  `ingestFaq` re-reads every item when it starts, one later run subsumes any
+  number of edits made while it was blocked.
+
+### B5 — Ingestion does not survive the failure its own comment claims it survives — **FIXED**
 
 [ingest.ts](../src/rag/ingest.ts) opens by saying the design "survives the
 failure that actually happens here, which is a vendor rate-limit part-way
@@ -198,10 +275,30 @@ no backoff, and no partial-progress record. One 429 on batch 7 of 13 throws,
 the catch marks the document `failed`, and all prior work is discarded — the
 next attempt re-embeds from zero and can fail the same way.
 
-**Fix.** Bounded exponential backoff per batch (three attempts, respecting
-`Retry-After` where the vendor sends it). The provider layer already models
-`kind: 'rate_limit'` in [errors.ts](../src/providers/errors.ts), so the signal
-exists and is simply not acted on.
+**Fixed.** `ProviderError` gained `retryAfter`, parsed from the `Retry-After`
+header in `errorFromResponse` — both RFC forms, seconds and HTTP date. The
+`rate_limit` kind and the `retryable` flag were already modelled; the vendor's
+own answer to *how long* was the one piece missing.
+
+`embedPieces` now retries each batch up to three attempts at 1s/2s/4s, honouring
+`retryAfter` when present and capped at 10s, and **only when `err.retryable`** —
+a `bad_request` or an `auth` failure fails on the first attempt, because
+retrying those burns the `waitUntil` budget to arrive at the same error three
+times as slowly.
+
+The constant that matters is the one a per-batch limit would not give you: **a
+cumulative retry budget of 30 seconds per document**. Three attempts × ten
+seconds × thirteen batches is minutes of wall clock inside a `waitUntil` that
+will be killed part-way — a silent, partial, unrepeatable failure, strictly
+worse than the clean one being fixed.
+
+On exhaustion the error names the batch (`embedding batch 7 of 13 failed after
+3 attempts: …`), so a tenant can tell "the vendor is throttling you" from "your
+document is broken" — the document reached batch 7, so it is not the file.
+
+The header comment at the top of [ingest.ts](../src/rag/ingest.ts), which had
+been claiming all of this since it was written, now describes what the code
+does.
 
 ### B6 — Citations do not correspond to the `[n]` markers the model sees — **FIXED**
 
@@ -246,7 +343,7 @@ the next migration rather than riding along.
 
 ## Breaks at scale, not yet
 
-### S1 — HNSW plus a tenant filter is a recall trap
+### S1 — HNSW plus a tenant filter is a recall trap — **MITIGATED**
 
 One shared `chunks` table, one global HNSW index over `embedding
 vector_cosine_ops`, and `where c.bot_id = p_bot_id` applied *after* the vector
@@ -268,29 +365,64 @@ The over-fetch in `match_chunks` (`limit top_k * 4 + 10`) helps the re-rank but
 does not help here: it widens the candidate set *after* the index has already
 decided which 40 nodes to visit.
 
-**Fix, cheapest first.** `set local hnsw.ef_search` inside the RPC to something
-like `greatest(40, p_match_count * 20)`. Then, on pgvector 0.8+, enable
-`hnsw.iterative_scan = relaxed_order`, which is the feature built precisely for
-filtered vector search. Partitioning `chunks` by tenant is the structural
-answer and should not be reached for first.
+**Mitigated, cheapest first.** 012 rewrote `match_chunks` as `language plpgsql`
+for exactly one reason — so the body can
+
+```sql
+perform set_config('hnsw.ef_search', greatest(40, coalesce(p_match_count, 5) * 20)::text, true);
+```
+
+before the query. Deep enough that a filtered index scan still has this tenant's
+rows in the candidate pool, floored at pgvector's own default so a small `top_k`
+never makes recall worse than it was.
+
+Two details, both verified against Postgres rather than assumed:
+
+- **`perform set_config` is required, not preferred.** `SET LOCAL` is a utility
+  statement and a `STABLE` function may not run one — it fails outright with
+  *"SET is not allowed in a non-volatile function"*. `set_config` is an ordinary
+  function call inside a `SELECT`, which a read-only context permits.
+- **`is_local := true` scopes the value to the transaction, not to the call.**
+  It remains set after the function returns and is discarded at transaction end;
+  a function's own `SET` clause commits its nested GUC values upward rather than
+  rolling them back. That is the property that matters, because PostgREST runs
+  every request in its own transaction — so it cannot leak between requests,
+  which is the only leak that would change another caller's results.
+
+**Still open:** on pgvector 0.8+, `hnsw.iterative_scan = relaxed_order` is the
+feature built precisely for filtered vector search and is the next step.
+Partitioning `chunks` by tenant is the structural answer and should still not be
+reached for first.
 
 *(I attempted to demonstrate this empirically with a 200k-row rolled-back
 transaction; the test needed a `drop index` to force the plan and was blocked by
 the sandbox. The mechanism is pgvector's documented filtered-search behaviour,
 and the schema conditions for it are all present.)*
 
-### S2 — Two avoidable round trips on every chat turn
+### S2 — Two avoidable round trips on every chat turn — **HALF DONE**
 
 `hasChunks(db, botId)` runs before retrieval on every turn to decide whether to
-embed at all, and `getDocumentTitles` runs after it when citations are on. Both
-are separate PostgREST calls on the hot path. The first can fold into
-`match_chunks` — returning zero rows *is* "no corpus", and since B1 that is a
-state which actually occurs, so the premise now holds.
+embed at all, and `getDocumentTitles` ran after it when citations are on. Both
+are separate PostgREST calls on the hot path.
 
-The second did **not** disappear with B6. Aligning the citations needed no
-schema change and got none; dropping the round trip means returning the title
-from `match_chunks`, which changes the signature of a versioned SQL function.
-Both halves of S2 are therefore one migration, and they should go together.
+**The title fold shipped.** Both RPCs now return `document_title` from a join to
+`documents`, so a citation names its source from the row `match_chunks` already
+returned. `getDocumentTitles` was deleted rather than left as an unused export —
+`retrieve-preview` moved to the same field, so it had no callers.
+
+It is worth recording that this is the field phase 1 *added and then removed* as
+dead surface. It now has a reason to exist, and the reason is the round trip B6
+could not take without changing the signature of a versioned SQL function. The
+join is `left`, not inner: a chunk whose document row is mid-delete must still
+be returned rather than silently vanishing from a search.
+
+**The `hasChunks` half is still open.** It can fold into `match_chunks` —
+returning zero rows *is* "no corpus", and since B1 that is a state which
+actually occurs, so the premise holds. It did not ride 012 because the two are
+independent: the title fold is a column on a row shape, and this one changes
+what "no corpus" means to `missedRetrieval`, `fallback_message` and
+`escalate_after_misses` all at once. That deserves its own change and its own
+tests.
 
 ---
 
@@ -298,23 +430,57 @@ Both halves of S2 are therefore one migration, and they should go together.
 
 Ordered by value per unit of work, not by ambition.
 
-### M1 — Retrieval logging, and the miss report built on it
+### M1 — Retrieval logging, and the miss report built on it — **BUILT**
 
-Nothing records what was asked, what came back, at what score, or via which
+Nothing recorded what was asked, what came back, at what score, or via which
 channel. Every question in this audit that needed evidence needed a manual SQL
 query against a table that happens to be small.
 
-A `retrieval_log` row per turn — query, top score, channel, chunk ids, whether
-it cleared the floor — is a day of work and it is the foundation for
-everything else here. It also turns into the single most valuable *tenant*
-feature in the product: **"here are the questions your visitors asked that your
-bot could not answer."** That is the report that tells someone what to write
-next, and it is the natural home for a "add this as an FAQ item" button that
-closes the loop back into [FaqEditor.tsx](../dashboard/src/screens/knowledge/FaqEditor.tsx).
+`retrieval_log` (012) is one row per turn where retrieval ran: the query, whether
+the model was shown anything, which channel found it, the top score, the floor
+that score was tested against, and the embedding model. Written from `waitUntil`
+in both chat routes, beside the lead notification and for the same reason — a
+visitor's reply must never wait on bookkeeping — and through a `logRetrieval`
+that cannot throw.
 
-It needs a retention window and it holds visitor-typed text, so it is a privacy
-surface — see the note in [tenancy.md](tenancy.md) about what the conversation
-tables already carry.
+**Two decisions about what to log, and both are load-bearing.**
+
+*Hits are logged too.* Misses alone give the report its rows but no denominator:
+no miss rate, and no score distribution to tune a floor against. That is
+precisely the blindness B1 hid inside for four months.
+
+*Skipped turns are logged not at all.* A greeting recorded as `matched: false`
+would inflate the miss rate with turns nobody expected an answer to, and a
+`stale-index` turn recorded as a miss would report a drifted bot as a bot that
+cannot answer. The decision lives in `retrievalLogRow` — pure, beside the
+outcome it describes, and unit-tested there.
+
+**The report.** `buildMissReport` in [stats.ts](../src/stats.ts) is a pure
+function over rows the caller fetched, in the same shape as `buildStats` and in
+the same file so it reuses `normalise()` — "What are your hours?" and "what are
+your hours" group identically in the overview and here. It is served by
+`GET /v1/admin/bots/:id/retrieval?days=30`, modelled on the stats route: same
+day clamping, same `UserDb` so RLS scopes it, same row cap surfaced rather than
+hidden.
+
+**In the dashboard** it is a card at the top of the **Knowledge → Retrieval**
+tab: *"Questions your bot could not answer"*, count and last-asked per row, and
+an **Add as FAQ** action that switches to the FAQ tab with the question
+prefilled and the cursor in the Answer field. That is the loop closed — seeing
+the gap and fixing it are one action rather than two screens and a copy-paste.
+
+**And it is more than a UI feature.** `scores.hitMedian` against `scores.floor`
+is the same measurement the eval sweep makes, taken continuously against real
+traffic instead of a fixture corpus. A median sitting just above the floor means
+the threshold is doing the rejecting; a wide gap means the misses are genuinely
+off-topic and no tuning will help.
+
+**Retention.** The query is stored **verbatim** — a normalised or hashed one
+cannot be read back, and a report of question *shapes* tells nobody what to
+write next. `prune_retrieval_log(p_days)` runs from a daily cron at 90 days, and
+clamps its argument into `[7, 365]` **inside the function body**: the Worker
+holds a service-role key, and this is the one table where a wrong number deletes
+tenant data outright. See [tenancy.md](tenancy.md#data-retention).
 
 ### M2 — An eval harness — **BUILT**
 
@@ -442,6 +608,14 @@ worth the most on exactly the corpora that are hardest to curate.
   resolution, the floor, the RPC payloads and the fallback decision all run
   exactly as they do in the Worker, and the tests assert on what
   `match_chunks` was actually *asked* for.
+
+  Phase 2 extended the same harness rather than starting another: the drift
+  gate, the re-index claim, the retry schedule and the log-row decision are all
+  in that file, and the claim and retry cases run through the **real**
+  `ingestDocument` against a stubbed PostgREST — claim, retry, release and stamp
+  have to happen in the right order relative to each other, and a stub of the
+  middle proves nothing about the order. `buildMissReport` is pure and lives in
+  [test-stats-units.mjs](../scripts/test-stats-units.mjs) with `buildStats`.
 - **No SQL-level test for ranking.** `match_chunks`'s boost and
   `match_chunks_lexical`'s overlap gate were verified by hand against the live
   database during the 011 work and are not covered by
@@ -455,23 +629,31 @@ worth the most on exactly the corpora that are hardest to curate.
 **~~First, and small:~~ DONE.** B1 with M2 to prove it, then B3, B6 and the
 housekeeping. No migration was needed.
 
-**Next, and it is a run rather than a build:** `npm run eval:rag --
+**~~Then, one migration:~~ DONE.** M1 with B2, B4 and B5, plus S1's first
+mitigation and the S2 title fold riding
+[012](../supabase/012_retrieval.sql) — everything that needed SQL, in one file,
+deployed before the Worker because both RPCs widen their return type.
+
+**Still a run rather than a build, and still outstanding:** `npm run eval:rag --
 --vendor=google --sweep=...` for every embedding vendor with a
 `defaultEmbedModel`, and commit the measured floors. Until then every non-bge
 vendor is on the unmeasured 0.30 — which is the value B1 was about, still in
-place for anyone who switched away from the platform default.
-
-**Then:** M1 (retrieval logging + miss report), which is the largest tenant-
-visible win on the list and makes every later change measurable. B2 and B4
-alongside it, since both are about telling the tenant the truth about index
-state.
+place for anyone who switched away from the platform default. It needs
+`wrangler login`, live Supabase and real embedding quota, and it creates then
+deletes a tenant in the production project, which is why it has not happened as
+a side effect of anything else.
 
 **Then, quality:** M8 and M6 (cheap, no new infrastructure), then M4 (hybrid,
-groundwork already laid), then M5 (re-rank).
+groundwork already laid), then M5 (re-rank). All three are now measurable
+against the miss report rather than against an opinion.
 
-**Before real scale:** S1. It is invisible now and unpleasant to debug later,
-and the first mitigation is one `set local` inside an existing function.
+**Before real scale:** the rest of S1 (`iterative_scan` on pgvector 0.8+) and
+the `hasChunks` half of S2.
 
-**Deferred deliberately:** M3 and M7 both cost recurring calls or a Cron
-Trigger, and neither pays off until the corpus is bigger and the conversations
-longer than they are today.
+**Deferred deliberately:** M3 and M7 both cost recurring calls, and neither pays
+off until the corpus is bigger and the conversations longer than they are today.
+M7's Cron Trigger objection is now weaker — 012 added one for retention — but
+the argument that stands is the deliberately narrow scope of that handler: a
+"daily maintenance" function accretes, and one failure takes down work unrelated
+to the failure. A URL refresh gets its own schedule and its own branch, not
+another line in that one.

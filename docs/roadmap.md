@@ -174,7 +174,7 @@ byte-identical to what shipped before — asserted as a string comparison in
 Full reasoning, decisions and rejected alternatives:
 [knowledge-pipeline.md](knowledge-pipeline.md).
 
-## Phase 2d — RAG hardening ◐ phase 1 shipped
+## Phase 2d — RAG hardening ◐ phases 1 and 2 shipped
 
 An audit of the pipeline 2c left behind found six correctness bugs, two that
 only appear at scale, and eight things production grade would add. The headline
@@ -186,18 +186,46 @@ ran — and neither did `fallback_message` or `escalate_after_misses`. Three
 shipped, documented, tested features were dead in production and nothing logged
 it.
 
-Shipped: a model-relative similarity floor resolved from the embedder
+Phase 1 shipped: a model-relative similarity floor resolved from the embedder
 (`resolveSimilarityFloor` in `src/providers/catalog.ts`), a code-point and
 script-aware short-query gate, citations aligned to the `[n]` markers the model
 actually sees, and `npm run eval:rag` — a golden-set harness whose off-topic
 queries are the assertion that a floor discriminates at all. No migration.
 
-Still open, and each has a written brief: embedding-model drift detection,
-a re-index lock, ingest retry with backoff, `hnsw.ef_search` before real scale,
-retrieval logging and the tenant-facing miss report built on it, hybrid
-retrieval, re-ranking, and heading context in prose chunks.
+**Phase 2 is one theme: the pipeline stops lying about its own state, and starts
+telling the tenant the truth.** It is all one migration,
+[`012_retrieval.sql`](../supabase/012_retrieval.sql), because everything in it
+needed SQL and both retrieval RPCs had to be recreated anyway.
+
+`retrieval_log` records every turn where retrieval ran — the query verbatim,
+whether the model was shown anything, which channel found it, the top score and
+the floor it was tested against — written from `waitUntil` so it never touches
+the visitor's latency. On top of it sits the report that is the largest
+tenant-visible win on the whole list: **"here are the questions your visitors
+asked that your bot could not answer"**, with an *Add as FAQ* action that lands
+in the editor with the question already typed. Hits are logged as well as
+misses, because a miss-only table has rows and no denominator — no miss rate,
+and no score distribution to tune a floor against, which is exactly how the dead
+floor above survived four months of looking like it worked.
+
+Alongside it: changing a bot's embedding vendor now says so — per document in
+Sources, and by degrading to the plain prompt rather than searching a corpus
+built in a different embedding space — instead of returning confident nonsense
+forever. Two racing re-indexes no longer leave a red `failed` row on a document
+that is indexed and working. A vendor rate limit part-way through a document
+retries with backoff on a bounded budget instead of discarding every batch
+already embedded. And `hnsw.ef_search` is set before the vector search, which is
+the cheap half of a recall trap that is invisible at today's row counts.
+
+Still open, and each has a written brief: conversational query rewriting, hybrid
+retrieval with RRF, re-ranking, heading context in prose chunks, URL refresh,
+near-duplicate suppression, folding `hasChunks` into `match_chunks`, and
+pgvector 0.8 `iterative_scan`. Also still outstanding, and a run rather than a
+build: `npm run eval:rag --vendor=… --sweep=…` per vendor, so the floors for
+every non-bge embedder stop being the documented guess.
 
 Full audit, measurements and remaining work: [rag-hardening.md](rag-hardening.md).
+Retention and the privacy surface `retrieval_log` adds: [tenancy.md](tenancy.md).
 
 ## Phase 2 — original scope (reference)
 

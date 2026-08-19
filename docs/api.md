@@ -109,7 +109,7 @@ belongs where.
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| `GET` | `/v1/admin/bots/:id/documents` | List indexed sources |
+| `GET` | `/v1/admin/bots/:id/documents` | List indexed sources, plus the embedding model that would run **today** |
 | `POST` | `/v1/admin/bots/:id/documents` | Add a `text`, `markdown` or `url` source (`202`) |
 | `POST` | `/v1/admin/bots/:id/documents/upload` | Add a file source (multipart `file`). PDF/DOCX, 10 MB |
 | `POST` | `/v1/admin/documents/:docId/reindex` | Re-chunk and re-embed (`202`) |
@@ -121,6 +121,7 @@ belongs where.
 | `DELETE` | `/v1/admin/faq/:itemId` | Delete an item (`204`) |
 | `POST` | `/v1/admin/bots/:id/faq/reorder` | `{ "order": ["id", …] }`. Ids only — the reorder path cannot edit content |
 | `POST` | `/v1/admin/bots/:id/retrieve-preview` | `{ "query": "…" }` → the passages the bot would retrieve, which channel found them, and the exact prompt section |
+| `GET` | `/v1/admin/bots/:id/retrieval?days=30` | The miss report — what visitors asked that the bot could not answer |
 | `POST` | `/v1/admin/bots/:id/knowledge/migrate` | Move `services` and `faq` into the corpus. `?dry_run=1` reports the plan without writing |
 | `POST` | `/v1/admin/bots/:id/knowledge/revert` | Put them back in the prompt |
 
@@ -128,6 +129,51 @@ belongs where.
 a preview that is only approximately what production does is worse than none,
 because it is trusted. Nothing is sent to the AI model and no conversation is
 recorded.
+
+**`GET /v1/admin/bots/:id/documents` returns an `embedding` block** alongside the
+list: `{ documents, embedding: { vendor, model } | null }`. Each document already
+carries the model it was indexed *with*; this is the one that would run *now*,
+and comparing the two is what makes embedding-model drift visible. Two
+768-dimension models from different vendors pass every check the pipeline has and
+still store vectors in different spaces, so without this the bot answers
+confidently and wrongly with nothing anywhere reporting it. `null` means the
+bot's embedding config could not be resolved at all — a Providers problem, and
+not a reason to fail the source list.
+
+**`POST /v1/admin/documents/:docId/reindex` answers `409`** when a run is already
+in flight. That check is a courtesy and is racy by construction; the guarantee is
+a compare-and-set claim on `documents.ingest_started_at` inside the ingest
+itself, whose loser refuses without touching the winner's status. A claim older
+than 10 minutes is treated as abandoned, so a Worker that died mid-`waitUntil`
+does not leave a document nobody can ever re-index.
+
+**`GET /v1/admin/bots/:id/retrieval`** returns totals, the grouped questions that
+missed with counts and last-asked, which channel answered, and the score
+distribution against the floor in force:
+
+```jsonc
+{
+  "range":    { "days": 30, "from": "…", "to": "…" },
+  "totals":   { "queries": 412, "misses": 57, "missRate": 0.138 },
+  "questions": [{ "text": "Do you do implants?", "count": 9, "lastAsked": "…" }],
+  "channels": { "vector": 341, "lexical": 14, "missed": 57 },
+  // hitMedian against floor is the eval sweep's measurement, taken
+  // continuously against real traffic instead of a fixture corpus.
+  "scores":   { "hitMedian": 0.71, "missMax": null, "floor": 0.6 },
+  "truncated": false
+}
+```
+
+`days` is clamped to 7–90 like the stats route, and the row cap is surfaced as
+`truncated` rather than silently under-reporting. It answers `501` when
+migration `012_retrieval.sql` has not been applied — a deployment state, not a
+tenant error.
+
+**The queries are stored verbatim and pruned at 90 days** by a daily Cron
+Trigger. `retrieval_log` is the first table here whose purpose is keeping what
+visitors typed, so the reasoning, what the row does *not* contain, and why the
+retention window is clamped inside Postgres rather than in the Worker are all in
+[tenancy.md](tenancy.md#data-retention).
 
 `knowledge/migrate` embeds everything **before** it stamps
 `bots.knowledge_migrated_at`, and that order is the safety property: a failure

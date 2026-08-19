@@ -361,16 +361,54 @@ export interface PreviewChunk {
   channel: 'vector' | 'lexical' | null;
 }
 
+/** Which embedding model ran, and where its similarity floor came from.
+ *  Reported rather than recomputed: the floor depends on the resolved
+ *  embedder, so a number rebuilt in the browser would be a different one
+ *  from the one the query was actually filtered by. */
+export interface EffectiveRetrieval {
+  min_similarity: number;
+  embedding_model: string;
+  /** 'tenant'  — an explicit min_similarity on this bot.
+   *  'model'   — measured for the resolved embedding model.
+   *  'default' — the unmeasured fallback; nothing knows this model. */
+  floor_source: 'tenant' | 'model' | 'default';
+}
+
 export interface RetrievePreview {
   query: string;
   channel: 'vector' | 'lexical' | null;
-  skipped: 'disabled' | 'empty-query' | null;
+  /** 'stale-index' means the corpus was built with a different
+   *  embedding model, so nothing was searched at all. */
+  skipped: 'disabled' | 'empty-query' | 'stale-index' | null;
   error: string | null;
   settings: Required<Pick<RagConfig,
     'top_k' | 'min_similarity' | 'priority_boost' | 'lexical_fallback' | 'context_chars'>>;
+  effective: EffectiveRetrieval | null;
   chunks: PreviewChunk[];
   /** Exactly what would be pasted into the system prompt. */
   context: string;
+  rendered_count: number;
+}
+
+// ── The miss report (012) ────────────────────────────────────────
+export interface MissQuestion { text: string; count: number; lastAsked: string }
+
+export interface MissReport {
+  range: { days: number; from: string; to: string };
+  totals: { queries: number; misses: number; missRate: number | null };
+  questions: MissQuestion[];
+  channels: { vector: number; lexical: number; missed: number };
+  scores: {
+    /** Median cosine score on turns the vector channel answered. */
+    hitMedian: number | null;
+    /** Highest score on a turn that still showed the model nothing.
+     *  Usually null — the floor rejects inside the database. */
+    missMax: number | null;
+    /** The floor those scores were tested against. Without it a median
+     *  is a number with no meaning. */
+    floor: number | null;
+  };
+  truncated: boolean;
 }
 
 export interface MigrateResult {
@@ -456,12 +494,19 @@ export const endpoints = {
                      `/v1/admin/bots/${id}/conversations`
                      + (sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''),
                    ),
-  documents:     (id: string) => api.get<{ documents: Doc[] }>(`/v1/admin/bots/${id}/documents`),
+  // `embedding` is the model that would resolve TODAY. Each document
+  // carries the one it was indexed with, and comparing the two is what
+  // makes drift visible — see the "Re-index required" badge in Sources.
+  documents:     (id: string) => api.get<{
+                   documents: Doc[];
+                   embedding: { vendor: string; model: string } | null;
+                 }>(`/v1/admin/bots/${id}/documents`),
   addDocument:   (id: string, b: Record<string, unknown>) => api.post<Doc>(`/v1/admin/bots/${id}/documents`, b),
   reindex:       (docId: string) => api.post<Doc>(`/v1/admin/documents/${docId}/reindex`),
   deleteDoc:     (docId: string) => api.del<null>(`/v1/admin/documents/${docId}`),
   chunks:        (docId: string) => api.get<{ chunks: Chunk[] }>(`/v1/admin/documents/${docId}/chunks`),
   stats:         (id: string, days = 30) => api.get<Stats>(`/v1/admin/bots/${id}/stats?days=${days}`),
+  missReport:    (id: string, days = 30) => api.get<MissReport>(`/v1/admin/bots/${id}/retrieval?days=${days}`),
   preview:       (id: string, body: { message: string; history: PreviewTurn[] }) =>
                    api.post<PreviewReply>(`/v1/admin/bots/${id}/preview`, body),
 

@@ -46,7 +46,9 @@ await build({
     join(ROOT, 'src/rag/chunk.ts'),
     join(ROOT, 'src/rag/retrieve.ts'),
     join(ROOT, 'src/rag/ingest.ts'),
+    join(ROOT, 'src/supabase.ts'),
     join(ROOT, 'src/providers/catalog.ts'),
+    join(ROOT, 'src/providers/errors.ts'),
     join(ROOT, 'src/prompt.ts'),
     join(ROOT, 'src/config.ts'),
   ],
@@ -54,9 +56,11 @@ await build({
 });
 
 const { chunkQA, parseFaqText } = await import(`file://${OUT}/rag/chunk.js`);
-const { renderContext, selectContext, retrieve, isTooShortToRetrieve } =
+const { renderContext, selectContext, retrieve, isTooShortToRetrieve, retrievalLogRow } =
   await import(`file://${OUT}/rag/retrieve.js`);
-const { ragConfigFor } = await import(`file://${OUT}/rag/ingest.js`);
+const { ragConfigFor, retryDelayMs, ingestDocument } = await import(`file://${OUT}/rag/ingest.js`);
+const { claimDocument } = await import(`file://${OUT}/supabase.js`);
+const { parseRetryAfter } = await import(`file://${OUT}/providers/errors.js`);
 const { similarityFloorFor, resolveSimilarityFloor, DEFAULT_SIMILARITY_FLOOR } =
   await import(`file://${OUT}/providers/catalog.js`);
 const { buildSystemPrompt } = await import(`file://${OUT}/prompt.js`);
@@ -491,6 +495,276 @@ console.log('\nThe floor that actually ran');
   const payload = seen.payloads.find((p) => p && 'p_min_similarity' in p);
   eq('a known model brings its measured floor', payload.p_min_similarity, 0.60);
   eq('attributed to the model', out.effective.floor_source, 'model');
+}
+
+// ── Embedding-model drift (B2) ───────────────────────────────────
+//
+// Two 768-dimension models from different vendors pass every check this
+// pipeline has and still occupy different embedding spaces, so a bot
+// whose vendor was switched searched its own corpus with a ruler from
+// another universe — silently, permanently. The gate has to fire on a
+// mismatch and, just as importantly, NOT fire on an unknown stamp:
+// every corpus indexed before 012 has one, and reading unknown as
+// drifted would switch retrieval off across the whole platform.
+console.log('\nEmbedding-model drift');
+{
+  const seen = stubFetch({ match: [row(0)] });
+  const bot = evalBot();
+  bot.embedding_model_indexed = 'text-embedding-004';
+  const out = await retrieve(ENV, DB, bot, 'how much does whitening cost');
+  eq('a corpus built by another model is not searched', out.skipped, 'stale-index');
+  eq('and nothing is embedded to discover that', seen.embeddings, 0);
+  eq('nor is the index queried', seen.match, 0);
+  eq('the model that would have run is still reported',
+     out.effective.embedding_model, 'stub-embed');
+}
+{
+  const seen = stubFetch({ match: [row(0)] });
+  const bot = evalBot();
+  bot.embedding_model_indexed = 'stub-embed';
+  const out = await retrieve(ENV, DB, bot, 'how much does whitening cost');
+  eq('a matching stamp retrieves normally', out.channel, 'vector');
+  eq('having embedded the query', seen.embeddings, 1);
+}
+{
+  const seen = stubFetch({ match: [row(0)] });
+  // No stamp at all — a corpus indexed before 012.
+  const out = await retrieve(ENV, DB, evalBot(), 'how much does whitening cost');
+  eq('an unknown stamp is not drift', out.skipped, undefined);
+  eq('and retrieval proceeds', out.channel, 'vector');
+  eq('embedding the query as usual', seen.embeddings, 1);
+}
+
+// ── What gets logged (M1) ────────────────────────────────────────
+//
+// Pure, so it is checked directly rather than through the chat handler.
+// Both failure modes here corrupt the one number the report exists to
+// produce: logging only misses removes the denominator, and logging
+// skipped turns inflates the numerator with turns nobody expected an
+// answer to.
+console.log('\nRetrieval logging');
+const logArgs = { botId: 'bot-1', sessionId: 's1', query: 'Do you do implants?', renderedCount: 2 };
+{
+  const outcome = { chunks: [row(0), row(1)], channel: 'vector', effective: { min_similarity: 0.6, embedding_model: 'stub-embed' } };
+  const logged = retrievalLogRow(outcome, logArgs);
+  eq('a hit is logged as matched', logged.matched, true);
+  eq('with the channel that answered', logged.channel, 'vector');
+  eq('and the top score retrieval returned', logged.top_score, 0.9);
+  eq('the floor that ran is recorded beside it', logged.min_similarity, 0.6);
+  eq('as is the model', logged.embedding_model, 'stub-embed');
+  eq('the query is stored verbatim', logged.query, 'Do you do implants?');
+  eq('chunk_count is what the model was shown', logged.chunk_count, 2);
+}
+{
+  const outcome = { chunks: [], effective: { min_similarity: 0.6, embedding_model: 'stub-embed' } };
+  const logged = retrievalLogRow(outcome, { ...logArgs, renderedCount: 0 });
+  eq('a miss is logged too — it is the denominator', logged.matched, false);
+  eq('with no channel', logged.channel, null);
+  eq('and no score', logged.top_score, null);
+}
+for (const skipped of ['disabled', 'empty-query', 'stale-index']) {
+  const logged = retrievalLogRow({ chunks: [], skipped }, logArgs);
+  eq(`a '${skipped}' turn logs nothing at all`, logged, null);
+}
+{
+  eq('and neither does a turn where retrieval never ran',
+     retrievalLogRow(null, logArgs), null);
+}
+{
+  // Chunks came back and the budget dropped every one of them. Not the
+  // same failure as finding nothing, and the report tells them apart.
+  const outcome = { chunks: [row(0)], channel: 'vector', effective: { min_similarity: 0.6, embedding_model: 'e' } };
+  const logged = retrievalLogRow(outcome, { ...logArgs, renderedCount: 0 });
+  eq('a dropped-by-budget turn is a miss', logged.matched, false);
+  eq('but keeps the score that was found', logged.top_score, 0.9);
+}
+
+// ── The re-index claim (B4) ──────────────────────────────────────
+//
+// The stub models PostgREST's conditional PATCH rather than
+// short-circuiting it, because the thing that can be wrong here is the
+// URL the Worker builds — an `or=` filter that never matches would
+// claim nothing and an always-matching one would claim everything, and
+// both look identical from inside claimDocument.
+console.log('\nThe re-index claim');
+
+function stubDocuments(row) {
+  const doc = { ...row };
+  globalThis.fetch = async (url, init) => {
+    const path = String(url);
+    if (init?.method !== 'PATCH') throw new Error(`unexpected fetch: ${path}`);
+
+    const or = /or=\(([^)]*)\)/.exec(decodeURIComponent(path));
+    // No conditional filter: an unconditional write, not a claim.
+    if (!or) throw new Error(`claim without an or= filter: ${path}`);
+
+    const cutoff = /ingest_started_at\.lt\.([^,)]+)/.exec(or[1])?.[1];
+    const free = doc.ingest_started_at === null
+      || (cutoff !== undefined && doc.ingest_started_at < cutoff);
+
+    if (!free) return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+    doc.ingest_started_at = JSON.parse(init.body).ingest_started_at;
+    return new Response(JSON.stringify([{ id: doc.id }]), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  return doc;
+}
+
+const STALE_MS = 10 * 60_000;
+{
+  const doc = stubDocuments({ id: 'd1', ingest_started_at: null });
+  eq('an unclaimed document can be claimed', await claimDocument(DB, 'd1', STALE_MS), true);
+  check('and the claim is stamped', typeof doc.ingest_started_at === 'string');
+  eq('a second claim inside the window is refused',
+     await claimDocument(DB, 'd1', STALE_MS), false);
+}
+{
+  // A Worker that died mid-waitUntil leaves a claim nobody will
+  // release. Without a stale window the document is unindexable
+  // forever, which is a worse failure than the double index.
+  const old = new Date(Date.now() - 11 * 60_000).toISOString();
+  stubDocuments({ id: 'd2', ingest_started_at: old });
+  eq('an abandoned claim is reclaimable',
+     await claimDocument(DB, 'd2', STALE_MS), true);
+}
+
+// ── Ingest retry with backoff (B5) ───────────────────────────────
+//
+// The schedule, the vendor's own answer, and the cap are three separate
+// decisions and each can be wrong on its own — so the delay is tested
+// as a pure function rather than by waiting for it.
+console.log('\nIngest retry');
+eq('the first retry waits a second', retryDelayMs(1, null), 1000);
+eq('then two', retryDelayMs(2, null), 2000);
+eq('then four', retryDelayMs(3, null), 4000);
+eq("the vendor's own answer wins over the schedule", retryDelayMs(1, 5), 5000);
+eq('but is still capped', retryDelayMs(1, 3600), 10_000);
+eq('and so is the schedule', retryDelayMs(9, null), 10_000);
+eq('a zero from the vendor is honoured, not treated as absent', retryDelayMs(2, 0), 0);
+
+eq('Retry-After in seconds parses', parseRetryAfter('30'), 30);
+eq('whitespace is tolerated', parseRetryAfter(' 30 '), 30);
+eq('an absent header is absent, not zero', parseRetryAfter(null), null);
+eq('and so is nonsense', parseRetryAfter('soon'), null);
+check('an HTTP date parses to a positive delay',
+      parseRetryAfter(new Date(Date.now() + 20_000).toUTCString()) > 15);
+eq('a date in the past clamps to now',
+   parseRetryAfter(new Date(Date.now() - 60_000).toUTCString()), 0);
+
+/**
+ * Run the real ingestDocument against a stubbed PostgREST and a stubbed
+ * embedding vendor, and report what it did.
+ *
+ * Through the real function rather than a reimplementation, for the
+ * reason the retrieval tests above give: the claim, the retry, the
+ * release and the stamp are four things that have to happen in the
+ * right order relative to each other, and a stub of the middle proves
+ * nothing about the order.
+ *
+ * @param embedFailures Responses to serve before the successful one.
+ */
+async function runIngest({ embedFailures = [], claimed = false } = {}) {
+  const seen = { embeddings: 0, status: [], released: false, stamped: null, error: null, threw: null };
+  const failures = [...embedFailures];
+  let claimHeld = claimed;
+
+  const json = (data) => new Response(JSON.stringify(data), {
+    status: 200, headers: { 'Content-Type': 'application/json' },
+  });
+  // `null` body, not '': 204 is a null-body status and undici's
+  // Response constructor rejects a string one outright.
+  const empty = () => new Response(null, { status: 204 });
+
+  globalThis.fetch = async (url, init) => {
+    const path = decodeURIComponent(String(url));
+    const body = init?.body ? JSON.parse(init.body) : null;
+
+    if (path.endsWith('/embeddings')) {
+      seen.embeddings++;
+      const fail = failures.shift();
+      if (fail) {
+        return new Response('vendor said no', {
+          status: fail.status,
+          headers: fail.retryAfter === undefined ? {} : { 'Retry-After': fail.retryAfter },
+        });
+      }
+      return json({ data: [{ index: 0, embedding: Array(768).fill(0.1) }], model: 'stub-embed' });
+    }
+
+    // The claim, checked before the generic document PATCH below —
+    // both target /documents and only the `or=` filter tells them apart.
+    if (path.includes('or=(')) {
+      if (claimHeld) return json([]);
+      claimHeld = true;
+      return json([{ id: 'd1' }]);
+    }
+
+    if (path.includes('/documents?select=*')) {
+      return json([{
+        id: 'd1', bot_id: 'bot-1', org_id: 'o1', source: 'text', title: 'Pricing',
+        url: null, content: 'Whitening costs 250 pounds. Implants start at 1800.',
+        status: 'pending', error: null, chunk_count: 0,
+        embedding_model: null, embedding_dimensions: null,
+        created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        ingest_started_at: null,
+      }]);
+    }
+
+    if (path.includes('/documents?id=eq.')) {
+      if (body.status) seen.status.push(body.status);
+      if (body.error) seen.error = body.error;
+      if (body.ingest_started_at === null) seen.released = true;
+      return empty();
+    }
+
+    if (path.includes('/bots?id=eq.')) { seen.stamped = body.embedding_model_indexed; return empty(); }
+    if (path.includes('/chunks'))      return empty();
+
+    throw new Error(`unexpected fetch: ${path}`);
+  };
+
+  try {
+    await ingestDocument(ENV, DB, 'd1', evalBot());
+  } catch (err) {
+    seen.threw = err.name;
+  }
+  return seen;
+}
+
+// The whole path, through the real ingestDocument: claim, retry,
+// release and stamp. What matters is that a transient 429 does NOT
+// discard the run — the failure the file's own header claimed to
+// survive and did not.
+{
+  const seen = await runIngest({ embedFailures: [{ status: 429, retryAfter: '0' }] });
+  eq('a 429 then a 200 embeds in two attempts', seen.embeddings, 2);
+  eq('and the document ends ready', seen.status.at(-1), 'ready');
+  check('with the claim released', seen.released === true);
+  eq('and the corpus stamped with the model that built it',
+     seen.stamped, 'stub-embed');
+}
+{
+  const seen = await runIngest({ embedFailures: [{ status: 400 }] });
+  eq('a 400 fails on the first attempt', seen.embeddings, 1);
+  eq('and the document is marked failed', seen.status.at(-1), 'failed');
+  check('with the claim released even so', seen.released === true);
+  check("the vendor's own reason survives", /HTTP 400/.test(seen.error ?? ''), seen.error);
+  check('unwrapped, because it was not a retry exhaustion',
+        !/attempt/.test(seen.error ?? ''), seen.error);
+}
+{
+  const seen = await runIngest({ embedFailures: [{ status: 429, retryAfter: '0' }, { status: 429, retryAfter: '0' }, { status: 429, retryAfter: '0' }] });
+  eq('three failures exhaust the attempts', seen.embeddings, 3);
+  eq('and the document fails', seen.status.at(-1), 'failed');
+  check('naming the batch, so "throttled" reads differently from "broken"',
+        /batch 1 of 1/.test(seen.error ?? ''), seen.error);
+}
+{
+  const seen = await runIngest({ claimed: true });
+  eq('a document already claimed is refused', seen.threw, 'AlreadyIndexing');
+  eq('and its status is left exactly as the other run set it', seen.status.length, 0);
 }
 
 globalThis.fetch = realFetch;

@@ -33,7 +33,22 @@ const STATUS = {
  *  these exist so a mistake is caught while it is being typed. */
 const FALLBACK_LIMITS = { items: 200, question: 300, answer: 2000 };
 
-export function FaqEditor({ bot }: { bot: Bot }) {
+export function FaqEditor({
+  bot, draftQuestion = null, onDraftTaken,
+}: {
+  bot: Bot;
+  /**
+   * A question handed over from the miss report — something a visitor
+   * actually asked that the bot could not answer. Fills the Question
+   * field so the tenant only has to write the answer, which is the
+   * whole point of the loop: seeing the gap and closing it are one
+   * action rather than two screens and a copy-paste.
+   */
+  draftQuestion?: string | null;
+  /** Called once the draft has been taken, so returning to this tab
+   *  later does not re-fill a question already dealt with. */
+  onDraftTaken?: () => void;
+}) {
   const [items, setItems] = useState<FaqItem[] | null>(null);
   const [doc, setDoc] = useState<Doc | null>(null);
   const [limits, setLimits] = useState(FALLBACK_LIMITS);
@@ -142,7 +157,13 @@ export function FaqEditor({ bot }: { bot: Bot }) {
 
   return (
     <>
-      <AddFaqItem limits={limits} disabled={busy || (items?.length ?? 0) >= limits.items} onAdd={add} />
+      <AddFaqItem
+        limits={limits}
+        disabled={busy || (items?.length ?? 0) >= limits.items}
+        onAdd={add}
+        draftQuestion={draftQuestion}
+        onDraftTaken={onDraftTaken}
+      />
 
       <Card>
         <CardHeader>
@@ -202,14 +223,28 @@ export function FaqEditor({ bot }: { bot: Bot }) {
 }
 
 function AddFaqItem({
-  limits, disabled, onAdd,
+  limits, disabled, onAdd, draftQuestion = null, onDraftTaken,
 }: {
   limits: { items: number; question: number; answer: number };
   disabled: boolean;
   onAdd: (q: string, a: string) => Promise<boolean>;
+  draftQuestion?: string | null;
+  onDraftTaken?: () => void;
 }) {
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
+
+  // Prefill from the miss report, then hand focus to the Answer field —
+  // the question is already written, and the cursor should be where the
+  // work is. Truncated to the limit rather than rejected: a visitor's
+  // question is not obliged to fit, and losing it here would undo the
+  // one action this whole loop exists for.
+  useEffect(() => {
+    if (!draftQuestion) return;
+    setQuestion(draftQuestion.slice(0, limits.question));
+    onDraftTaken?.();
+    document.getElementById('ck-faq-answer')?.focus();
+  }, [draftQuestion, limits.question, onDraftTaken]);
 
   async function submit() {
     if (!question.trim() || !answer.trim()) {
@@ -245,6 +280,7 @@ function AddFaqItem({
         </Field>
         <Field label="Answer" hint={`${answer.length} / ${limits.answer}`}>
           <Textarea
+            id="ck-faq-answer"
             rows={4}
             maxLength={limits.answer}
             value={answer}

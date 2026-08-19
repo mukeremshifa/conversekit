@@ -10,7 +10,7 @@
 // for a business reading its own numbers, but there is nowhere to store
 // one yet; when there is, only `dayKey` changes.
 // ----------------------------------------------------------------
-import type { StatMessageRow, StatLeadRow, StatDocRow } from './supabase';
+import type { StatMessageRow, StatLeadRow, StatDocRow, RetrievalLogRow } from './supabase';
 
 export interface DayPoint {
   date: string;        // YYYY-MM-DD
@@ -172,5 +172,169 @@ export function buildStats(opts: {
       messages: messages.length >= caps.messages,
       leads: leads.length >= caps.leads,
     },
+  };
+}
+
+// ── The miss report ───────────────────────────────────────────────
+//
+// "Here are the questions your visitors asked that your bot could not
+// answer." Built here rather than in a module of its own for two
+// reasons that are both about reuse rather than tidiness: it groups
+// questions with the same `normalise` the overview already uses, so
+// "What are your hours?" and "what are your hours" count once in both
+// places; and it inherits the offline test harness that already bundles
+// this file, which is where an aggregate like this actually gets
+// checked.
+//
+// Pure over rows the caller fetched, same as buildStats.
+
+export interface MissQuestion {
+  /** The first spelling seen, not the normalised form — it reads better
+   *  in a list someone is about to write an FAQ answer for. */
+  text: string;
+  count: number;
+  /** ISO timestamp of the most recent time it was asked. */
+  lastAsked: string;
+}
+
+export interface MissReport {
+  range: { days: number; from: string; to: string };
+  totals: {
+    queries: number;
+    misses: number;
+    /** 0–1. Null when nothing was asked — a rate over no denominator is
+     *  not zero, it is unknown, and rendering it as 0% would say the
+     *  bot is doing well when it has done nothing at all. */
+    missRate: number | null;
+  };
+  /** Misses only, grouped and ranked. The list a tenant acts on. */
+  questions: MissQuestion[];
+  /** What actually answered. `missed` is the complement of the other
+   *  two, so the three sum to `totals.queries`. */
+  channels: { vector: number; lexical: number; missed: number };
+  scores: {
+    /** Median top score on turns the vector channel answered. Cosine,
+     *  so it is comparable with `floor` below and with nothing else. */
+    hitMedian: number | null;
+    /**
+     * Highest score recorded on a turn that still counted as a miss.
+     *
+     * Usually null, and that is correct rather than broken: the floor
+     * is applied inside match_chunks, so a rejected chunk never reaches
+     * the Worker to be scored. A NON-null value here means chunks came
+     * back and the model was still shown nothing — a rendering or
+     * budget problem, not a retrieval one, and worth seeing as such.
+     */
+    missMax: number | null;
+    /**
+     * The similarity floor those scores were tested against, from the
+     * most recent row that recorded one.
+     *
+     * Carried because `hitMedian` alone is a number with no meaning: a
+     * median of 0.62 is comfortable against a floor of 0.30 and
+     * marginal against 0.60. This pair is the same measurement the eval
+     * sweep makes, taken continuously against real traffic instead of a
+     * fixture corpus — which is the whole reason this report stores
+     * scores rather than only questions.
+     */
+    floor: number | null;
+  };
+  /** True when the row cap was hit, so the UI can say so rather than
+   *  presenting a partial count as complete. */
+  truncated: boolean;
+}
+
+/** Middle value, averaging the two middles on an even count. */
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+export function buildMissReport(opts: {
+  days: number;
+  now?: Date;
+  rows: RetrievalLogRow[];
+  cap: number;
+  /** How many grouped questions to return. */
+  limit?: number;
+}): MissReport {
+  const { days, rows, cap } = opts;
+  const now = opts.now ?? new Date();
+  const limit = opts.limit ?? 20;
+
+  // Same window arithmetic as buildStats, and deliberately the same
+  // day-key membership test rather than a string comparison on the
+  // timestamps: PostgREST renders `created_at` with a numeric offset
+  // and microsecond precision, which does not order lexicographically
+  // against an ISO string built here.
+  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const from = new Date(todayUtc.getTime() - (days - 1) * 86_400_000);
+  const inWindow = new Set<string>();
+  for (let i = 0; i < days; i++) {
+    inWindow.add(new Date(from.getTime() + i * 86_400_000).toISOString().slice(0, 10));
+  }
+
+  const questions = new Map<string, MissQuestion>();
+  const hitScores: number[] = [];
+  let queries = 0;
+  let misses = 0;
+  let vector = 0;
+  let lexical = 0;
+  let missMax: number | null = null;
+  let floor: number | null = null;
+
+  for (const r of rows) {
+    if (!inWindow.has(dayKey(r.created_at))) continue;
+    queries++;
+
+    // Read from the newest row that has one. Rows arrive newest-first,
+    // so the first sighting is the current value — and it can legitimately
+    // change mid-window when a tenant edits min_similarity or switches
+    // embedder, in which case the newest is the one the tenant is
+    // reading the report against.
+    if (floor === null && typeof r.min_similarity === 'number') floor = r.min_similarity;
+
+    if (r.matched) {
+      if (r.channel === 'lexical') lexical++;
+      else vector++;
+      // Only the vector channel's scores are pooled: a ts_rank_cd from
+      // the lexical channel is not on the cosine scale, and averaging
+      // the two would produce a number that reads like a measurement
+      // and is not one.
+      if (r.channel !== 'lexical' && typeof r.top_score === 'number') hitScores.push(r.top_score);
+      continue;
+    }
+
+    misses++;
+    if (typeof r.top_score === 'number' && (missMax === null || r.top_score > missMax)) {
+      missMax = r.top_score;
+    }
+
+    const norm = normalise(r.query);
+    if (norm.length < 3) continue;
+    const seen = questions.get(norm);
+    if (seen) {
+      seen.count++;
+      // Rows come back newest-first, so the first sighting is already
+      // the latest — but the caller is not required to sort, and a
+      // report whose "last asked" depends on fetch order is a bug
+      // waiting for someone to change the query.
+      if (r.created_at > seen.lastAsked) seen.lastAsked = r.created_at;
+    } else {
+      questions.set(norm, { text: r.query.trim(), count: 1, lastAsked: r.created_at });
+    }
+  }
+
+  return {
+    range: { days, from: from.toISOString(), to: now.toISOString() },
+    totals: { queries, misses, missRate: queries ? misses / queries : null },
+    questions: [...questions.values()]
+      .sort((a, b) => b.count - a.count || b.lastAsked.localeCompare(a.lastAsked))
+      .slice(0, limit),
+    channels: { vector, lexical, missed: misses },
+    scores: { hitMedian: median(hitScores), missMax, floor },
+    truncated: rows.length >= cap,
   };
 }

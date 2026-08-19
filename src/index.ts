@@ -37,16 +37,22 @@ import {
   setKnowledgeMigrated,
   countSessionMessages,
   countTrailingMisses,
-  getDocumentTitles,
   getStatMessages,
   getStatLeads,
   getStatDocuments,
+  logRetrieval,
+  getRetrievalLog,
+  pruneRetrievalLog,
   STATS_MESSAGE_CAP,
   STATS_LEAD_CAP,
+  RETRIEVAL_LOG_CAP,
   type ServiceDb,
   type UserDb,
+  type RetrievalLogInsert,
 } from './supabase';
-import { ingestDocument, ingestFaq, ragConfigFor } from './rag/ingest';
+import {
+  ingestDocument, ingestFaq, ragConfigFor, AlreadyIndexing, CLAIM_STALE_MS,
+} from './rag/ingest';
 import {
   detectFileType,
   objectKeyFor,
@@ -55,7 +61,10 @@ import {
   ORG_STORAGE_CAP_BYTES,
   SNIFF_BYTES,
 } from './rag/files';
-import { retrieve, renderContext, selectContext, type RetrievedChunk } from './rag/retrieve';
+import {
+  retrieve, renderContext, selectContext, retrievalLogRow,
+  type RetrievedChunk, type RetrievalOutcome,
+} from './rag/retrieve';
 import { parseFaqText } from './rag/chunk';
 import {
   validateWidgetConfig, validateBehaviorConfig, validateLeadConfig, validateFaqItem,
@@ -74,6 +83,7 @@ import { buildSystemPrompt } from './prompt';
 import { verifyToken, bearerFrom, AuthError } from './auth';
 import {
   resolveChatProvider,
+  resolveEmbeddingProvider,
   ProviderError,
   httpStatusFor,
   VENDORS,
@@ -83,7 +93,7 @@ import {
 } from './providers';
 import { extractLead, type ExtractedLead } from './leads';
 import { notifyLead, webhookHost } from './notify';
-import { buildStats } from './stats';
+import { buildStats, buildMissReport } from './stats';
 import { LeadStreamFilter } from './lead-stream';
 import { issueSessionId, verifySessionId } from './session';
 import { isOriginAllowed, validateOrigins, validateSuggestions } from './origin';
@@ -304,6 +314,11 @@ type Preflight =
        *  undefined when escalation is off, so a Worker running ahead of
        *  009 never writes the column. */
       retrievalMiss?: boolean;
+      /** One row for the retrieval log, or undefined when retrieval did
+       *  not run at all. Computed here because preparePrompt is the only
+       *  place that knows all of it; written from `waitUntil` by the
+       *  routes, never on the request path. See logRetrieval. */
+      retrieval?: RetrievalLogInsert;
       /** This bot's lead settings, read once here. The routes need them
        *  for the marker shape, the tag and the webhook, and all three
        *  have to agree with the prompt that was actually sent. */
@@ -403,6 +418,7 @@ async function preflight(
   // full result set would then name a document the model never saw.
   // Everything downstream reads this one. See docs/rag-hardening.md B6.
   let rendered: RetrievedChunk[] = [];
+  let outcome: RetrievalOutcome | null = null;
   try {
     hasCorpus = await hasChunks(db, botId);
     if (hasCorpus) {
@@ -412,7 +428,7 @@ async function preflight(
       // search alone would count every lexical save as a miss, and the
       // escalation below would then fire on questions the bot has just
       // answered correctly.
-      const outcome = await retrieve(c.env, db, bot, userMessage);
+      outcome = await retrieve(c.env, db, bot, userMessage);
       const budget = ragConfigFor(bot).context_chars;
       rendered = selectContext(outcome.chunks, budget);
       // Already selected, so this re-budgets nothing.
@@ -421,12 +437,39 @@ async function preflight(
   } catch (err) {
     console.error('[rag] skipped (non-fatal):', err);
   }
+
+  // A STALE INDEX IS NOT A MISS, and getting that wrong is worse than
+  // the drift it reports. The corpus was built by a different embedding
+  // model, so nothing was searched at all — counting it as a miss would
+  // fire `fallback_message` on literally every turn and escalate every
+  // conversation, on a bot that is otherwise answering perfectly well
+  // from its knowledge-base fields. Drift is closer to "this bot has no
+  // corpus" than to "this bot could not answer", and it is logged as
+  // its own thing rather than folded into the miss rate. See B2.
+  const staleIndex = outcome?.skipped === 'stale-index';
+
   // "The model was shown nothing from this business's own material" —
   // which is what the fallback message and the escalation below both
   // mean by a miss, and which is now reachable: before B1 the floor sat
   // below the embedder's noise floor and never rejected anything, so
   // this was permanently false and all three features were dead.
-  const missedRetrieval = hasCorpus && rendered.length === 0;
+  const missedRetrieval = hasCorpus && !staleIndex && rendered.length === 0;
+
+  // The retrieval log row (M1). Which turns get logged is decided in
+  // retrievalLogRow, next to the outcome it describes and unit-tested
+  // there — a greeting logged as a miss and a drifted index logged as a
+  // miss are both silent corruptions of the only number the report
+  // exists to produce.
+  //
+  // Preview traffic gets a null session rather than the literal
+  // 'preview': it is a real query worth counting, but it belongs to no
+  // visitor's conversation.
+  const retrievalRow = retrievalLogRow(outcome, {
+    botId:      bot.id,
+    sessionId:  opts.ephemeral ? null : resolvedSession,
+    query:      userMessage,
+    renderedCount: rendered.length,
+  }) ?? undefined;
 
   const behavior = behaviorConfigFor(bot);
   const widget = widgetConfigFor(bot);
@@ -508,23 +551,24 @@ async function preflight(
   }
 
   // ── Citations ──────────────────────────────────────────────────
-  // Off by default. Titles are looked up rather than carried by
-  // match_chunks, which returns document_id only — folding them into
-  // the RPC would drop this round trip, but that means changing the
-  // signature of a versioned SQL function, so it waits for the next
-  // migration rather than riding along here.
-  let citations: string[] = [];
-  if (widget.show_citations && rendered.length) {
-    try {
-      const titles = await getDocumentTitles(db, [...new Set(rendered.map((ch) => ch.document_id))]);
-      // ONE ENTRY PER RENDERED EXCERPT, in marker order: citations[n-1]
-      // is what the model's "[n]" refers to. Duplicates are kept on
-      // purpose — three chunks from one document are three markers
-      // pointing at that document, and collapsing them would renumber
-      // the list out of step with the prompt the model was given.
-      citations = rendered.map((ch) => titles.get(ch.document_id) ?? '');
-    } catch (err) { console.error('[citations] title lookup failed (non-fatal):', err); }
-  }
+  // Off by default, and since 012 free: the title rides on the row
+  // match_chunks already returned, so this is no longer a second round
+  // trip on the hot path of every turn with citations on. That fold is
+  // the half of S2 B6 could not take without changing the signature of
+  // a versioned SQL function.
+  //
+  // ONE ENTRY PER RENDERED EXCERPT, in marker order: citations[n-1] is
+  // what the model's "[n]" refers to. Duplicates are kept on purpose —
+  // three chunks from one document are three markers pointing at that
+  // document, and collapsing them would renumber the list out of step
+  // with the prompt the model was given.
+  //
+  // An absent title reads as '' exactly as the lookup version did, so
+  // a Worker running ahead of 012 degrades to unnamed citations rather
+  // than to a crash.
+  const citations: string[] = widget.show_citations
+    ? rendered.map((ch) => ch.document_title ?? '')
+    : [];
 
   return {
     ok:       true,
@@ -544,6 +588,7 @@ async function preflight(
     // Only recorded when the feature that reads it is on — which also
     // guarantees behavior_config exists, and therefore that 009 ran.
     retrievalMiss: behavior.escalate_after_misses ? missedRetrieval : undefined,
+    retrieval: retrievalRow,
   };
 }
 
@@ -656,7 +701,17 @@ app.post('/v1/chat', async (c) => {
     return c.json({ error: 'Too many messages — please slow down.' }, 429);
   }
 
-  const { provider, system, messages, sessionId, userMessage, bot, db, citations, retrievalMiss, lead } = pre;
+  const {
+    provider, system, messages, sessionId, userMessage, bot, db,
+    citations, retrievalMiss, retrieval, lead,
+  } = pre;
+
+  // Off the request path, beside announceLead and for the same reason
+  // the note at the top of src/notify.ts gives: a visitor's reply must
+  // never wait on bookkeeping. Dispatched before generation because the
+  // row is already known and an AI failure below is not a reason to
+  // lose the record that the question was asked.
+  if (retrieval) c.executionCtx.waitUntil(logRetrieval(db, retrieval));
 
   let rawReply: string;
   try {
@@ -695,7 +750,15 @@ app.post('/v1/chat/stream', async (c) => {
     return c.json({ error: 'Too many messages — please slow down.' }, 429);
   }
 
-  const { provider, system, messages, sessionId, userMessage, bot, db, citations, retrievalMiss, lead } = pre;
+  const {
+    provider, system, messages, sessionId, userMessage, bot, db,
+    citations, retrievalMiss, retrieval, lead,
+  } = pre;
+
+  // Dispatched before the stream opens rather than inside it: once
+  // streamSSE has started, the response is committed, and there is
+  // nothing to be gained by holding a row that is already complete.
+  if (retrieval) c.executionCtx.waitUntil(logRetrieval(db, retrieval));
 
   return streamSSE(c, async (stream) => {
     const filter = new LeadStreamFilter();
@@ -1127,10 +1190,39 @@ app.post('/v1/admin/bots/:id/preview', async (c) => {
 // may write. Ingestion is kicked off with waitUntil so the request
 // returns immediately — the client polls document.status.
 // ================================================================
+// The `embedding` block is what makes drift visible to the tenant
+// (B2). Each document already carries the model it was indexed with;
+// what nothing could see was the model that would resolve TODAY, so a
+// row saying `bge-base-en-v1.5` looked correct whatever the bot had
+// since been switched to.
+//
+// Per document rather than per bot, because a mixed corpus is real —
+// bots.embedding_model_indexed is the last ingest, and the per-document
+// column is the detail. It also covers the case the bot column cannot:
+// changing the platform default EMBEDDING_VENDOR in wrangler.toml
+// alters no bot row at all, and every corpus on the deployment goes
+// stale at once.
+//
+// Resolution failure is reported as `null`, not as a 502: a bot with a
+// broken embedding_config still has a Sources list worth showing, and
+// the Providers screen is where that gets fixed.
 app.get('/v1/admin/bots/:id/documents', async (c) => {
+  const botId = c.req.param('id');
   try {
-    const docs = await listDocuments(c.get('db'), c.req.param('id'));
-    return c.json({ documents: docs });
+    const docs = await listDocuments(c.get('db'), botId);
+
+    let embedding: { vendor: string; model: string } | null = null;
+    try {
+      const bot = await getBotForAdmin(c.get('db'), botId);
+      if (bot) {
+        const embedder = resolveEmbeddingProvider(c.env, bot.embedding_config);
+        embedding = { vendor: embedder.vendor, model: embedder.model };
+      }
+    } catch (err) {
+      console.error('[documents] could not resolve the embedder (non-fatal):', err);
+    }
+
+    return c.json({ documents: docs, embedding });
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
@@ -1312,6 +1404,20 @@ function mb(bytes: number): string {
   return `${Math.round(bytes / 1024 / 1024)} MB`;
 }
 
+// TWO CHECKS, AND THEY DO DIFFERENT JOBS.
+//
+// The one below is a courtesy and is racy by construction: it reads the
+// document, decides nobody is indexing it, and returns 409 if someone
+// is — but two clicks a millisecond apart both read "free" and both
+// pass. It exists so the common case (a tenant clicking Reindex twice)
+// gets told what happened instead of a 202 for work that will not
+// happen.
+//
+// The CORRECTNESS guarantee is the claim inside ingestDocument, which
+// is a single conditional UPDATE and therefore atomic. The loser there
+// throws AlreadyIndexing and touches nothing — which is the actual bug
+// B4 describes: before it, the loser marked a document `failed` while
+// the winner's chunks sat there indexed and working.
 app.post('/v1/admin/documents/:docId/reindex', async (c) => {
   const docId = c.req.param('docId');
 
@@ -1321,9 +1427,30 @@ app.post('/v1/admin/documents/:docId/reindex', async (c) => {
   const bot = await getBotForAdmin(c.get('db'), doc.bot_id).catch(() => null);
   if (!bot) return c.json({ error: 'Bot not found' }, 404);
 
+  // Bounded by the same stale window the claim uses, so a run that died
+  // mid-`waitUntil` and left the row at `processing` is still
+  // re-indexable. Without that, a crashed ingest would turn Reindex —
+  // the only remedy this screen offers — into a permanent 409.
+  const runningSince = Date.parse(doc.updated_at);
+  const running = (doc.status === 'processing' || doc.status === 'pending')
+    && Number.isFinite(runningSince)
+    && Date.now() - runningSince < CLAIM_STALE_MS;
+  if (running) {
+    return c.json({ error: 'This source is already being indexed. Wait for that to finish.' }, 409);
+  }
+
   c.executionCtx.waitUntil(
     ingestDocument(c.env, serviceDb(c.env), docId, bot)
-      .catch((err) => console.error('[rag] reindex failed:', err)),
+      .catch((err) => {
+        // Expected whenever the pre-check above lost its race. Not an
+        // error to shout about: the document is being indexed, which is
+        // what the caller asked for.
+        if (err instanceof AlreadyIndexing) {
+          console.log('[rag] reindex skipped, already claimed:', docId);
+          return;
+        }
+        console.error('[rag] reindex failed:', err);
+      }),
   );
 
   return c.json({ ...doc, status: 'pending' }, 202);
@@ -1374,14 +1501,52 @@ app.delete('/v1/admin/documents/:docId', async (c) => {
 // the price of not running a second ingestion state machine.
 // ================================================================
 
-/** Re-embed a bot's FAQ in the background. Never awaited on a request:
- *  embedding takes seconds and the editor must stay responsive. */
+/**
+ * Re-embed a bot's FAQ in the background. Never awaited on a request:
+ * embedding takes seconds and the editor must stay responsive.
+ *
+ * THIS ONE RETRIES A LOST CLAIM, and the reindex route deliberately
+ * does not. The difference is whether the refused run was redundant.
+ * Clicking Reindex twice asks for the same work twice, so refusing the
+ * second is the right answer and 409 says so. But an FAQ re-index is
+ * triggered by an EDIT, and a tenant fixing three answers in a row is
+ * the ordinary case — the second run reads different items from the
+ * first. Refusing it outright would leave the corpus one edit behind
+ * while the editor showed `ready`, which is a quieter version of
+ * exactly the lie B4 is about.
+ *
+ * Retrying rather than queueing because ingestFaq re-reads every item
+ * when it starts: one later run subsumes any number of edits made
+ * while it was blocked, so the work never needs to be done twice.
+ */
 function reindexFaq(c: { env: Env; executionCtx: ExecutionContext }, botId: string, bot: Bot): void {
-  c.executionCtx.waitUntil(
-    ingestFaq(c.env, serviceDb(c.env), botId, bot)
-      .catch((err) => console.error('[rag] FAQ ingest failed:', err)),
-  );
+  c.executionCtx.waitUntil((async () => {
+    for (let attempt = 1; attempt <= FAQ_CLAIM_ATTEMPTS; attempt++) {
+      try {
+        await ingestFaq(c.env, serviceDb(c.env), botId, bot);
+        return;
+      } catch (err) {
+        if (!(err instanceof AlreadyIndexing) || attempt === FAQ_CLAIM_ATTEMPTS) {
+          if (err instanceof AlreadyIndexing) {
+            // Out of attempts. The run that beat us is still going and
+            // may not have seen this edit — say so, because the next
+            // symptom is a tenant swearing their answer is not live.
+            console.error('[rag] FAQ ingest gave up waiting for the claim:', botId);
+          } else {
+            console.error('[rag] FAQ ingest failed:', err);
+          }
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, FAQ_CLAIM_RETRY_MS));
+      }
+    }
+  })());
 }
+
+/** Long enough to outlast a small FAQ re-embed, short enough to stay
+ *  well inside the `waitUntil` this runs in. */
+const FAQ_CLAIM_ATTEMPTS = 4;
+const FAQ_CLAIM_RETRY_MS = 2500;
 
 app.get('/v1/admin/bots/:id/faq', async (c) => {
   const botId = c.req.param('id');
@@ -1663,11 +1828,6 @@ app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
     const db = serviceDb(c.env);
     const outcome = await retrieve(c.env, db, bot, query);
 
-    const titles = outcome.chunks.length
-      ? await getDocumentTitles(db, [...new Set(outcome.chunks.map((ch) => ch.document_id))])
-          .catch(() => new Map<string, string>())
-      : new Map<string, string>();
-
     return c.json({
       query,
       channel: outcome.channel ?? null,
@@ -1695,7 +1855,11 @@ app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
       chunks: outcome.chunks.map((ch) => ({
         id: ch.id,
         document_id: ch.document_id,
-        document_title: titles.get(ch.document_id) ?? null,
+        // Carried by both RPCs since 012, so the preview and the chat
+        // path now name a source from exactly the same field. This is
+        // also what scripts/eval-rag.mjs asserts on, which makes the
+        // golden set an unchanged regression test for the join.
+        document_title: ch.document_title ?? null,
         ordinal: ch.ordinal,
         content: ch.content,
         // A cosine score on the vector channel and a ts_rank on the
@@ -1746,6 +1910,48 @@ app.get('/v1/admin/bots/:id/stats', async (c) => {
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
+// ================================================================
+// GET /v1/admin/bots/:id/retrieval — the miss report (M1)
+//
+// Modelled on the stats route above and sharing its shape deliberately:
+// same day clamping, same UserDb so RLS scopes it to the caller's own
+// orgs, same row cap surfaced rather than hidden.
+//
+// The report is two things at once, and the second is the reason it
+// stores scores as well as questions. For a tenant it answers "what
+// should I write next". For whoever tunes this pipeline it is the
+// similarity floor measured continuously against real traffic, rather
+// than once against a fixture corpus — which is the gap that let a
+// floor below the embedder's noise floor survive four months of looking
+// like it worked.
+// ================================================================
+app.get('/v1/admin/bots/:id/retrieval', async (c) => {
+  const botId = c.req.param('id');
+
+  const raw = Number(c.req.query('days') ?? 30);
+  const days = Number.isFinite(raw) ? Math.min(90, Math.max(7, Math.trunc(raw))) : 30;
+
+  // One window, not two: there is no comparison period here, so the
+  // fetch reaches back exactly as far as the report shows.
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+  try {
+    const rows = await getRetrievalLog(c.get('db'), botId, since);
+    return c.json(buildMissReport({ days, rows, cap: RETRIEVAL_LOG_CAP }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Deployed ahead of its migration. The generic 502 sends whoever is
+    // debugging it looking at RLS instead of at the schema — the same
+    // trap the upload route names 008 for.
+    if (/retrieval_log/.test(message)) {
+      console.error('[retrieval] 012 not applied:', message);
+      return c.json({ error: 'The retrieval report needs database migration 012_retrieval.sql, which has not been applied yet.' }, 501);
+    }
+    console.error(err);
+    return c.json({ error: 'Database error' }, 502);
+  }
+});
+
 // `?session_id=` narrows to one transcript, which is what the drawer on
 // the Leads screen asks for. Additive: without it the route returns the
 // bot's last 100 messages exactly as before.
@@ -1758,4 +1964,41 @@ app.get('/v1/admin/bots/:id/conversations', async (c) => {
 });
 
 
-export default app;
+// ================================================================
+// Scheduled — retention for retrieval_log, and NOTHING ELSE
+//
+// This is the only cron on the deployment and it must stay that way.
+// A "daily maintenance" handler accretes: the next thing that wants a
+// timer lands here, then the one after it, and a single failure takes
+// down work that has nothing to do with the failure. When something
+// else needs a schedule, it gets its own cron expression and its own
+// branch on `event.cron`, not another line in this function.
+//
+// retrieval_log is the first table on this platform whose PURPOSE is
+// keeping what visitors typed, so retention is not housekeeping — it is
+// the thing that makes storing the query verbatim defensible. The
+// 90-day window is documented in docs/tenancy.md.
+//
+// The day count is clamped inside prune_retrieval_log, not here. A
+// scheduled handler holding a service-role key is exactly the caller
+// that should not be trusted with a number that can truncate a table.
+// ================================================================
+const RETRIEVAL_LOG_RETENTION_DAYS = 90;
+
+const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) => {
+  ctx.waitUntil((async () => {
+    try {
+      const deleted = await pruneRetrievalLog(serviceDb(env), RETRIEVAL_LOG_RETENTION_DAYS);
+      console.log(`[cron ${event.cron}] pruned ${deleted} retrieval_log row(s) older than ${RETRIEVAL_LOG_RETENTION_DAYS} days`);
+    } catch (err) {
+      // Logged, never thrown. A failed prune is a retention window that
+      // slipped by a day, and Cloudflare retries the schedule; throwing
+      // here buys an alert nobody has wired up.
+      console.error('[cron] retrieval_log prune failed:', err);
+    }
+  })());
+};
+
+// `app.fetch` rather than the app itself, because a Worker with a
+// scheduled handler exports an object rather than a Hono instance.
+export default { fetch: app.fetch, scheduled };
