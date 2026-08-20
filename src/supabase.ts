@@ -1096,6 +1096,110 @@ export function getRetrievalLog(
   );
 }
 
+// ----------------------------------------------------------------
+// Usage log (017)
+//
+// Same split as retrieval_log and for the same reason: written by the
+// chat, preview and ingest paths with the service client, read by the
+// dashboard as the user so RLS scopes it. There is no tenant write
+// policy on the table at all — this is derived data, and a tenant
+// editing their own meter is not a state worth allowing.
+//
+// ONE ROW PER PROVIDER CALL, not per turn. See the table comment in
+// 017_usage.sql.
+// ----------------------------------------------------------------
+export interface UsageLogInsert {
+  bot_id: string;
+  /** Null for ingest and preview: neither belongs to a visitor's
+   *  conversation. */
+  session_id: string | null;
+  /** Free text in the column on purpose (017), so a fourth kind —
+   *  rerank is the obvious next one — needs no migration. */
+  kind: 'chat' | 'embed' | 'preview';
+  vendor: string;
+  model: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  /** 'reported' when the vendor returned these counts, 'estimated'
+   *  when they came from the character estimator. The column that
+   *  keeps a shape from being mistaken for a bill — see usageTokens in
+   *  src/stats.ts. */
+  source: 'reported' | 'estimated';
+  /** Omitted means 'ok' (the column default), so a Worker running
+   *  ahead of a database without the column still inserts cleanly. */
+  outcome?: 'ok' | 'error';
+}
+
+/**
+ * Record one provider call's token spend. NEVER THROWS.
+ *
+ * Byte-for-byte the logRetrieval treatment, and the reason is the same
+ * one stated more strongly: A METERING FAILURE MUST NEVER COST A
+ * VISITOR THEIR ANSWER. Metering is the platform's own bookkeeping;
+ * the tenant's customer is mid-sentence. Called from `waitUntil` on
+ * every chat path, so a rejection here would be an unhandled one in a
+ * context the request has already left.
+ *
+ * `return=minimal` because nothing reads the row back.
+ */
+export async function logUsage(db: ServiceDb, row: UsageLogInsert): Promise<void> {
+  try {
+    await pgFetch<unknown>(db, '/usage_log',
+      { method: 'POST',
+        body: JSON.stringify(row),
+        headers: { 'Prefer': 'return=minimal' } }
+    );
+  } catch (err) {
+    console.error('[usage-log] write failed (non-fatal):', err);
+  }
+}
+
+/**
+ * Delete rows older than `days`, returning how many went.
+ *
+ * Clamped INSIDE the function into [30, 800] — see 017_usage.sql. The
+ * bounds are wider than prune_retrieval_log's because this table is
+ * billing history rather than a privacy commitment, and a tenant
+ * comparing this March against last March needs more than a year of
+ * rows to compare.
+ */
+export async function pruneUsageLog(db: ServiceDb, days: number): Promise<number> {
+  const deleted = await pgFetch<number | string>(db, '/rpc/prune_usage_log',
+    { method: 'POST', body: JSON.stringify({ p_days: days }) }
+  );
+  return Number(deleted) || 0;
+}
+
+/** Same ceiling reasoning as RETRIEVAL_LOG_CAP: past it the report
+ *  would silently under-report, so it is surfaced rather than hidden.
+ *  Move to an RPC when a bot regularly hits it — not before. */
+export const USAGE_LOG_CAP = 4000;
+
+export interface UsageLogRow {
+  kind: string;
+  vendor: string;
+  model: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  source: string;
+  outcome: string;
+  created_at: string;
+}
+
+/** `cached_input_tokens` is deliberately not selected: it exists in
+ *  the schema so prompt caching lands as a type change rather than a
+ *  migration against a populated table, and nothing writes it yet. */
+export function getUsageLog(
+  db: UserDb, botId: string, since: string, cap = USAGE_LOG_CAP,
+): Promise<UsageLogRow[]> {
+  return pgFetch<UsageLogRow[]>(db,
+    `/usage_log?select=kind,vendor,model,input_tokens,output_tokens,source,outcome,created_at` +
+    `&bot_id=eq.${encodeURIComponent(botId)}` +
+    `&created_at=gte.${encodeURIComponent(since)}` +
+    `&order=created_at.desc&limit=${cap}`
+  );
+}
+
 // ── Overview statistics ───────────────────────────────────────────
 //
 // Aggregated in the Worker rather than in Postgres. A `group by` here

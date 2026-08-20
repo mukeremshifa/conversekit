@@ -373,12 +373,28 @@ behind it (position, logo, greeting, theme, citations, escalation).
 
 ## Phase 5 — Operations
 
-- **Usage metering** — token counts already flow back through `Usage` on every
-  call and are currently discarded. Persist per-org and per-bot.
+- **Usage metering** ✅ shipped — `supabase/017_usage.sql` (`usage_log`, RLS,
+  `prune_usage_log`), `logUsage` on both chat routes, the preview route and both
+  ingest paths, `resolvePrice` in the provider catalog, `buildUsage` in
+  `src/stats.ts`, `GET /v1/admin/bots/:id/usage`, and a **Usage** screen. Every
+  row records whether its numbers were reported by the vendor or estimated from
+  text length, because on the platform default three of the four adapter paths
+  report nothing — see [usage-metering.md](usage-metering.md).
+- **Test connection** ✅ shipped alongside it —
+  `POST /v1/admin/bots/:id/provider/test` and a button on AI Providers. One
+  five-token prompt, and it answers the second question nothing else could:
+  whether that vendor reports token counts at all.
 - **Rate limiting** — per-bot and per-session, at the edge
 - **Retention policy** — conversations and leads are PII stored forever today.
   Per-org retention window + delete endpoint.
 - **Alerting** — ingestion failures, provider error-rate spikes
+
+**Built:** see [usage-metering.md](usage-metering.md) for the decisions behind
+every column and the landmines the implementation is shaped around. What it
+deliberately leaves out is still out: budget caps and quota enforcement
+(`idx_usage_log_org` is there for them), cross-vendor failover, prompt caching
+(`usage_log.cached_input_tokens` is reserved and unused), and billing of any
+kind. This is measurement.
 
 ---
 

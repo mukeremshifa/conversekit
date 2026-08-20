@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   LayoutDashboard,
-  BookText, Building2, Cable, Cpu, HelpCircle, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
+  BookText, Building2, Cable, Coins, Cpu, HelpCircle, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
 } from 'lucide-react';
 import { clearSession, currentSession } from '@/lib/auth';
 import { endpoints, type Bot, type Me } from '@/lib/api';
@@ -13,6 +13,7 @@ import { BusinessProfile } from '@/screens/BusinessProfile';
 import { Knowledge, TAB_ROUTES, knowledgeTabFor } from '@/screens/Knowledge';
 import { Retrieval } from '@/screens/Retrieval';
 import { Providers } from '@/screens/Providers';
+import { Usage } from '@/screens/Usage';
 import { Leads } from '@/screens/Leads';
 import { Conversations } from '@/screens/Conversations';
 import { Install } from '@/screens/Install';
@@ -43,6 +44,9 @@ const NAV: NavItem[] = [
   { id: 'knowledge',     label: 'Knowledge Base',    icon: BookText },
   { id: 'retrieval',     label: 'Retrieval',         icon: Search },
   { id: 'providers',     label: 'AI Providers',      icon: Cpu },
+  // Directly under AI Providers, because it is the same question one
+  // step later: which model answers, and what that model costs.
+  { id: 'usage',         label: 'Usage',             icon: Coins },
   { id: 'leads',         label: 'Leads',             icon: Target },
   { id: 'conversations', label: 'Conversations',     icon: MessageSquareText },
   { id: 'install',       label: 'Install',           icon: Plug },
@@ -57,7 +61,7 @@ const KNOWLEDGE_ROUTES = new Set<string>(Object.values(TAB_ROUTES));
  *  Both Knowledge Base tabs are wide together: a page that changes
  *  width as you switch tabs reads as a rendering bug. */
 const WIDE_ROUTES = new Set([
-  'overview', 'leads', 'conversations', 'retrieval', ...KNOWLEDGE_ROUTES,
+  'overview', 'leads', 'conversations', 'retrieval', 'usage', ...KNOWLEDGE_ROUTES,
 ]);
 
 /** Routes that were renamed. The old id stays a working URL: #settings and
@@ -226,6 +230,7 @@ export default function App() {
             )}
             {route === 'retrieval'     && <Retrieval bot={bot} onSaved={patchBot} onAddFaq={addAsFaq} />}
             {route === 'providers'     && <Providers bot={bot} onSaved={patchBot} />}
+            {route === 'usage'         && <Usage bot={bot} onNavigate={navigate} />}
             {route === 'leads'         && <Leads bot={bot} />}
             {route === 'conversations' && <Conversations bot={bot} />}
             {route === 'install'       && <Install bot={bot} />}

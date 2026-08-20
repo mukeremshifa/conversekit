@@ -11,6 +11,28 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Read a response body that is *supposed* to be JSON.
+ *
+ * Not every body that reaches here is. Hono answers an unrouted path
+ * with the bare text `404 Not Found`, which JSON.parse reads as the
+ * number 404 followed by rubbish — so a dashboard calling an endpoint
+ * its deployed Worker is too old to have reported "Unexpected
+ * non-whitespace character after JSON at position 4" and said nothing
+ * whatsoever about the 404. A proxy's HTML error page does the same
+ * thing with a different offset. The status is the part that actually
+ * says what went wrong, so anything unparseable is reported by it.
+ */
+function parseBody(text: string, status: number, statusText: string): unknown {
+  if (!text) return null;
+  try { return JSON.parse(text); } catch { /* reported by status below */ }
+
+  if (status === 404) {
+    throw new ApiError(404, 'That endpoint does not exist on the deployed API — it needs a newer Worker build.');
+  }
+  throw new ApiError(status, `The API returned a non-JSON response (${status} ${statusText || 'error'}).`);
+}
+
 async function send(method: string, path: string, body: unknown, token: string) {
   return fetch(`${API}${path}`, {
     method,
@@ -36,7 +58,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (res.status === 204) return null as T;
 
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = parseBody(text, res.status, res.statusText);
 
   if (!res.ok) {
     throw new ApiError(res.status, (data as { error?: string })?.error ?? res.statusText);
@@ -108,7 +130,7 @@ export async function uploadDocument(
     }
   }
 
-  const data = res.text ? JSON.parse(res.text) : null;
+  const data = parseBody(res.text, res.status, '');
   if (res.status < 200 || res.status >= 300) {
     throw new ApiError(res.status, (data as { error?: string })?.error ?? `Upload failed (${res.status})`);
   }
@@ -143,7 +165,7 @@ export async function uploadLogo(
     }
   }
 
-  const data = res.text ? JSON.parse(res.text) : null;
+  const data = parseBody(res.text, res.status, '');
   if (res.status < 200 || res.status >= 300) {
     throw new ApiError(res.status, (data as { error?: string })?.error ?? `Upload failed (${res.status})`);
   }
@@ -591,6 +613,80 @@ export interface Stats {
   truncated: { messages: boolean; leads: boolean };
 }
 
+// ── Usage metering (017) ─────────────────────────────────────────
+export interface UsageGroup {
+  /** A vendor id, a model name, or a kind, depending on the grouping. */
+  key: string;
+  /** Only present on `byModel` — a bare model name is ambiguous when
+   *  two vendors serve the same one at different prices. */
+  vendor?: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  /** Indicative spend, or null when nothing in the group has a known
+   *  rate. Never conflate that with a spend of zero. */
+  cost: number | null;
+}
+
+export interface UsageDayPoint {
+  date: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  calls: number;
+}
+
+export interface UsageReport {
+  range: { days: number; from: string; to: string };
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    /** PROVIDER CALLS, not conversations. One visitor question can
+     *  produce two when the widget falls back from streaming. */
+    calls: number;
+    /** The split, never a blended total: how much of the number above
+     *  the vendor actually confirmed. */
+    reportedTokens: number;
+    estimatedTokens: number;
+    reportedCalls: number;
+    estimatedCalls: number;
+    /** Calls that failed and were charged for anyway. */
+    errorCalls: number;
+  };
+  /** 0–1 share of TOKENS that came from the character estimator rather
+   *  than from the vendor. Null when nothing was recorded. Never render
+   *  it without the sentence that explains it. */
+  estimatedShare: number | null;
+  /** Null when no call in the window resolved a price at all. */
+  cost: {
+    amount: number;
+    currency: 'USD';
+    pricedCalls: number;
+    unpricedCalls: number;
+    /** Oldest rate-check date behind `amount`. */
+    pricedAt: string | null;
+  } | null;
+  byVendor: UsageGroup[];
+  byModel: UsageGroup[];
+  byKind: UsageGroup[];
+  series: UsageDayPoint[];
+  truncated: boolean;
+}
+
+/** What `POST /v1/admin/bots/:id/provider/test` returns. Always 200 —
+ *  a failure here is the answer, not an outage. */
+export type ProviderTest =
+  | {
+      ok: true; vendor: string; model: string; latencyMs: number;
+      usage: { inputTokens: number | null; outputTokens: number | null };
+      /** False means every usage row from this vendor will be an
+       *  estimate. */
+      reportsUsage: boolean;
+    }
+  | { ok: false; vendor?: string; model?: string; latencyMs?: number; kind: string; error: string };
+
 export const endpoints = {
   me:            () => api.get<Me>('/v1/admin/me'),
   createOrg:     (name: string) => api.post<Org>('/v1/admin/orgs', { name }),
@@ -620,6 +716,11 @@ export const endpoints = {
   chunks:        (docId: string) => api.get<{ chunks: Chunk[] }>(`/v1/admin/documents/${docId}/chunks`),
   stats:         (id: string, days = 30) => api.get<Stats>(`/v1/admin/bots/${id}/stats?days=${days}`),
   missReport:    (id: string, days = 30) => api.get<MissReport>(`/v1/admin/bots/${id}/retrieval?days=${days}`),
+  // Up to 365 days here, unlike stats and the miss report: usage_log is
+  // kept for 400 days because year-over-year is the ordinary question
+  // about spend.
+  usage:         (id: string, days = 30) => api.get<UsageReport>(`/v1/admin/bots/${id}/usage?days=${days}`),
+  testProvider:  (id: string) => api.post<ProviderTest>(`/v1/admin/bots/${id}/provider/test`),
   preview:       (id: string, body: { message: string; history: PreviewTurn[] }) =>
                    api.post<PreviewReply>(`/v1/admin/bots/${id}/preview`, body),
 

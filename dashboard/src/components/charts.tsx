@@ -28,6 +28,22 @@ function niceMax(value: number): number {
   return step * mag;
 }
 
+/**
+ * 1240000 → "1.2M". Exported because the Usage screen needs the same
+ * abbreviation in its tables and stat tiles as on its axis, and two
+ * roundings of the same number on one screen read as a bug.
+ *
+ * Deliberately lossy. Token counts are large and, on any deployment
+ * with an estimated share, approximate anyway — rendering them to the
+ * unit would claim a precision the number does not have.
+ */
+export function compactNumber(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
+  if (abs >= 1_000) return `${(n / 1_000).toFixed(abs >= 10_000 ? 0 : 1)}k`;
+  return String(Math.round(n));
+}
+
 const fmtDay = (iso: string) =>
   new Date(iso + 'T00:00:00Z').toLocaleDateString(undefined, {
     month: 'short', day: 'numeric', timeZone: 'UTC',
@@ -127,21 +143,42 @@ function LegendSwatch({ color, label }: { color: string; label: string }) {
   );
 }
 
-// ── Stacked area: messages per day ────────────────────────────────
-export function MessagesChart({ data }: { data: { date: string; visitor: number; assistant: number }[] }) {
+// ── Stacked area ──────────────────────────────────────────────────
+//
+// Two series, upper stacked on lower, one point per day. Generalised
+// out of MessagesChart when the Usage screen needed the same form for
+// input and output tokens — same 2px surface-coloured gap between the
+// bands, same crosshair, same axis. Both callers below are thin: they
+// name their series and map their rows onto `lower`/`upper`.
+//
+// `format` exists because the two callers count different things.
+// Messages are small integers and read fine raw; tokens run to the
+// millions and an axis label of 1240000 is unreadable at 10px.
+interface StackPoint { date: string; lower: number; upper: number }
+
+function StackedArea({
+  data, labels, format = (n: number) => String(n), label,
+}: {
+  data: StackPoint[];
+  /** [lower, upper] — legend and tooltip both read these. */
+  labels: [string, string];
+  format?: (n: number) => string;
+  /** The accessible description of the whole chart. */
+  label: string;
+}) {
   const gid = useId();
   const [box, W] = useWidth();
-  const H = 200, PAD_L = 34, PAD_R = 8, PAD_T = 10, PAD_B = 22;
+  const H = 200, PAD_L = 44, PAD_R = 8, PAD_T = 10, PAD_B = 22;
   const plotW = W - PAD_L - PAD_R, plotH = H - PAD_T - PAD_B;
 
-  const max = useMemo(() => niceMax(Math.max(...data.map((d) => d.visitor + d.assistant), 0)), [data]);
+  const max = useMemo(() => niceMax(Math.max(...data.map((d) => d.lower + d.upper), 0)), [data]);
   const { ref, hover, onMove, clear } = useNearest(data.length, PAD_L, plotW);
 
   if (!data.length) return null;
   const x = (i: number) => PAD_L + (i / Math.max(1, data.length - 1)) * plotW;
   const y = (v: number) => PAD_T + plotH - (v / max) * plotH;
 
-  const path = (pick: (d: (typeof data)[number]) => number, base: (d: (typeof data)[number]) => number) => {
+  const path = (pick: (d: StackPoint) => number, base: (d: StackPoint) => number) => {
     const top = data.map((d, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(pick(d)).toFixed(1)}`).join(' ');
     const bottom = [...data].reverse()
       .map((d, i) => `L${x(data.length - 1 - i).toFixed(1)} ${y(base(d)).toFixed(1)}`).join(' ');
@@ -154,15 +191,15 @@ export function MessagesChart({ data }: { data: { date: string; visitor: number;
   return (
     <div className="relative" ref={box}>
       <div className="mb-3 flex items-center gap-4">
-        <LegendSwatch color={S1} label="Visitor" />
-        <LegendSwatch color={S2} label="Assistant" />
+        <LegendSwatch color={S1} label={labels[1]} />
+        <LegendSwatch color={S2} label={labels[0]} />
       </div>
 
       <svg
         ref={ref} viewBox={`0 0 ${W} ${H}`} width="100%" height={H}
         onPointerMove={onMove} onPointerLeave={clear}
         role="img"
-        aria-label={`Messages per day. ${data.length} days, peak ${max} messages.`}
+        aria-label={label}
       >
         <defs>
           <linearGradient id={`${gid}-a`} x1="0" y1="0" x2="0" y2="1">
@@ -177,15 +214,16 @@ export function MessagesChart({ data }: { data: { date: string; visitor: number;
                   stroke="var(--color-chart-grid)" strokeWidth="1" />
             <text x={PAD_L - 7} y={y(t) + 3.5} textAnchor="end"
                   className="fill-faint" style={{ fontSize: 10 }}>
-              {t}
+              {format(t)}
             </text>
           </g>
         ))}
 
-        {/* Assistant sits under visitor; the 2px surface-coloured stroke on
-            the upper band is the gap that keeps the two fills from bleeding. */}
-        <path d={path((d) => d.assistant, () => 0)} fill={S2} fillOpacity="0.75" />
-        <path d={path((d) => d.visitor + d.assistant, (d) => d.assistant)}
+        {/* The lower band sits under the upper one; the 2px
+            surface-coloured stroke on the upper band is the gap that
+            keeps the two fills from bleeding. */}
+        <path d={path((d) => d.lower, () => 0)} fill={S2} fillOpacity="0.75" />
+        <path d={path((d) => d.lower + d.upper, (d) => d.lower)}
               fill={`url(#${gid}-a)`} stroke="var(--color-surface)" strokeWidth="2" />
 
         {data.map((d, i) => (
@@ -200,7 +238,7 @@ export function MessagesChart({ data }: { data: { date: string; visitor: number;
           <g pointerEvents="none">
             <line x1={x(hover!.i)} x2={x(hover!.i)} y1={PAD_T} y2={PAD_T + plotH}
                   stroke="var(--color-border-strong)" strokeWidth="1" />
-            <circle cx={x(hover!.i)} cy={y(active.visitor + active.assistant)} r="4.5"
+            <circle cx={x(hover!.i)} cy={y(active.lower + active.upper)} r="4.5"
                     fill={S1} stroke="var(--color-surface)" strokeWidth="2" />
           </g>
         )}
@@ -212,18 +250,49 @@ export function MessagesChart({ data }: { data: { date: string; visitor: number;
           <div className="mt-1 space-y-0.5">
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-[2px]" style={{ background: S1 }} />
-              <span className="text-muted">Visitor</span>
-              <span className="ml-auto font-semibold">{active.visitor}</span>
+              <span className="text-muted">{labels[1]}</span>
+              <span className="ml-auto font-semibold">{format(active.upper)}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="h-2 w-2 rounded-[2px]" style={{ background: S2 }} />
-              <span className="text-muted">Assistant</span>
-              <span className="ml-auto font-semibold">{active.assistant}</span>
+              <span className="text-muted">{labels[0]}</span>
+              <span className="ml-auto font-semibold">{format(active.lower)}</span>
             </div>
           </div>
         </Tooltip>
       )}
     </div>
+  );
+}
+
+/** Messages per day — visitor turns stacked over the replies to them. */
+export function MessagesChart({ data }: { data: { date: string; visitor: number; assistant: number }[] }) {
+  const max = Math.max(...data.map((d) => d.visitor + d.assistant), 0);
+  return (
+    <StackedArea
+      data={data.map((d) => ({ date: d.date, lower: d.assistant, upper: d.visitor }))}
+      labels={['Assistant', 'Visitor']}
+      label={`Messages per day. ${data.length} days, peak ${max} messages.`}
+    />
+  );
+}
+
+/** Tokens per day — output stacked over input.
+ *
+ *  Input is the LOWER band on purpose: it is the larger number on
+ *  almost every deployment (a retrieval prompt carries thousands of
+ *  characters of context, a reply carries hundreds), so putting it
+ *  underneath keeps the chart from looking like a thin line with a
+ *  cliff on top. */
+export function TokensChart({ data }: { data: { date: string; inputTokens: number; outputTokens: number }[] }) {
+  const max = Math.max(...data.map((d) => d.inputTokens + d.outputTokens), 0);
+  return (
+    <StackedArea
+      data={data.map((d) => ({ date: d.date, lower: d.inputTokens, upper: d.outputTokens }))}
+      labels={['Input', 'Output']}
+      format={compactNumber}
+      label={`Tokens per day. ${data.length} days, peak ${max} tokens.`}
+    />
   );
 }
 

@@ -6,10 +6,13 @@
 // — was captured and never shown. This is the screen that answers
 // "is it working?" before you go looking for a specific transcript.
 //
-// Token spend is deliberately absent: usage comes back from the
-// provider on every turn but is not persisted anywhere, so charting it
-// would mean a schema change and a write-path change. Noted rather than
-// faked.
+// Token spend has its OWN screen (017) rather than a panel here, and
+// the link below is the whole of its presence on this one. The
+// interesting cut for spend is by vendor and model, which does not fit
+// any shape on this page, and the number needs the estimated/measured
+// caveat travelling with it — a stat tile reading "≈ $4" with no room
+// for the sentence explaining what is estimated would be exactly the
+// blended figure the Usage screen exists to avoid.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -212,8 +215,15 @@ function Loaded({ stats, loading, onNavigate }:
       </Card>
 
       <Muted className="text-xs">
-        Days are bucketed in UTC. Token usage is not shown because it is not stored —
-        providers return it per turn, but nothing persists it yet.
+        Days are bucketed in UTC. Token spend and estimated cost are on the{' '}
+        <button
+          type="button"
+          onClick={() => onNavigate('usage')}
+          className="cursor-pointer font-semibold text-accent-ink hover:underline"
+        >
+          Usage
+        </button>{' '}
+        screen.
       </Muted>
     </div>
   );

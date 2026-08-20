@@ -288,3 +288,158 @@ export function resolveSimilarityFloor(
   if (preset !== undefined) return { floor: preset, source: 'model' };
   return { floor: DEFAULT_SIMILARITY_FLOOR, source: 'default' };
 }
+
+
+// ----------------------------------------------------------------
+// Prices
+//
+// `costTier` is a vibe — 'paid' | 'free-tier' | 'local' — and tokens
+// cannot become money without actual rates. This block adds them, and
+// it deliberately mirrors the similarity-floor block above rather than
+// inventing a second shape for the same problem: a property of the
+// MODEL, defaulted by the VENDOR, reported with its provenance.
+//
+// A FLAT `pricePer1M` ON VendorPreset WOULD BE WRONG. A tenant on
+// gpt-4o pays roughly sixteen times a tenant on gpt-4o-mini and both
+// are `vendor: 'openai'`, so the rate has to key off the model first.
+//
+// COST IS COMPUTED AT READ TIME AND NEVER STORED. A stored figure
+// freezes a wrong rate permanently and cannot be corrected;
+// recomputing means a price fix applies to the whole history. The
+// number is indicative regardless — BYOK tenants and negotiated rates
+// make it so — which is why the UI leads with '≈' and surfaces
+// `pricedAt`.
+//
+// ── ON THE NUMBERS BELOW ──────────────────────────────────────────
+// They are published list rates entered by hand, NOT read off a live
+// vendor page during a verification pass. Treat every one of them as
+// indicative until someone re-checks it and moves `pricedAt` forward;
+// that field exists precisely so the staleness is visible rather than
+// implied. Anything the platform presents as money already carries a
+// '≈' for the estimator's sake, and these rates are the second reason
+// it has to.
+// ----------------------------------------------------------------
+
+export interface Price {
+  inputPer1M: number;
+  outputPer1M: number;
+  /** Embedding calls have no output side. Absent means "priced as
+   *  input", which is what an embedding call actually is. */
+  embedPer1M?: number;
+  currency: 'USD';
+  /** ISO date these were last checked against the vendor's page. */
+  pricedAt: string;
+}
+
+/** Last hand-entry date for every rate in this file. */
+const PRICED_AT = '2026-08-20';
+
+const usd = (inputPer1M: number, outputPer1M: number, embedPer1M?: number): Price =>
+  ({ inputPer1M, outputPer1M, embedPer1M, currency: 'USD', pricedAt: PRICED_AT });
+
+/** A local model costs nothing to run, and that is a MEASUREMENT
+ *  rather than an absence — which is the whole difference between a
+ *  zero cost and a null one. */
+const FREE = usd(0, 0, 0);
+
+/**
+ * Model-name patterns, checked BEFORE the vendor preset.
+ *
+ * ORDER MATTERS in exactly one way, and it is easy to get wrong:
+ * `flash-lite` must be tested before `flash`, and `gpt-4o-mini` before
+ * `gpt-4o`, because the cheaper model's name contains the dearer
+ * one's. Everything else here is disjoint.
+ *
+ * Deliberately NOT keyed on embedding models that several vendors
+ * serve at different rates — bge-base-en-v1.5 is $0.008/1M on Together
+ * and around $0.02/1M on Workers AI, so its price is a property of the
+ * host rather than of the model and it belongs in VENDOR_PRICES below.
+ * That is the one place this table's premise does not hold, and
+ * leaving those entries out is how it stays honest.
+ */
+const MODEL_PRICES: Array<{ pattern: RegExp; price: Price }> = [
+  // OpenAI. The mini pattern must precede the full one.
+  { pattern: /gpt-4o-mini/i,          price: usd(0.15, 0.60) },
+  { pattern: /gpt-4o/i,               price: usd(2.50, 10.00) },
+  { pattern: /text-embedding-3-small/i, price: usd(0.02, 0, 0.02) },
+  { pattern: /text-embedding-3-large/i, price: usd(0.13, 0, 0.13) },
+
+  // Anthropic tiers. Disjoint, so the order among them is cosmetic.
+  { pattern: /claude.*haiku/i,        price: usd(0.80, 4.00) },
+  { pattern: /claude.*sonnet/i,       price: usd(3.00, 15.00) },
+  { pattern: /claude.*opus/i,         price: usd(15.00, 75.00) },
+
+  // Google. flash-lite before flash, or every Lite bot is billed at
+  // the Flash rate — which is the platform default, so this one
+  // ordering decides whether the headline number on most deployments
+  // is right.
+  { pattern: /gemini.*flash-lite/i,   price: usd(0.10, 0.40) },
+  { pattern: /gemini.*flash/i,        price: usd(0.30, 2.50) },
+  { pattern: /gemini.*pro/i,          price: usd(1.25, 10.00) },
+  { pattern: /gemini-embedding/i,     price: usd(0.15, 0, 0.15) },
+
+  // OpenRouter routes to hundreds of models at hundreds of rates, so
+  // the vendor has no default price at all (see below). The ':free'
+  // suffix is the one thing about it that IS knowable, and it is what
+  // the preset points at.
+  { pattern: /:free$/i,               price: FREE },
+];
+
+/**
+ * The vendor's default chat model, plus its embedding rate where it
+ * has one. Second resolution step, after the model patterns.
+ *
+ * A vendor absent from here resolves to `null` rather than to zero:
+ * openrouter and custom both point at endpoints whose price nobody on
+ * this side of the connection knows, and guessing produces a figure
+ * that looks like a measurement and is not one.
+ */
+const VENDOR_PRICES: Record<string, Price> = {
+  openai:       usd(0.15, 0.60, 0.02),
+  anthropic:    usd(3.00, 15.00),
+  google:       usd(0.10, 0.40, 0.15),
+  groq:         usd(0.59, 0.79),
+  deepseek:     usd(0.27, 1.10),
+  mistral:      usd(0.20, 0.60, 0.10),
+  together:     usd(0.88, 0.88, 0.008),
+  'workers-ai': usd(0.28, 0.83, 0.02),
+};
+
+/**
+ * The rate for a resolved provider, plus where it came from.
+ *
+ * Resolution order: model pattern, then vendor preset, then the local
+ * tier, then nothing. The provenance is not decoration — it is the
+ * difference between "this is the rate for the model you are running"
+ * and "this is the rate for whatever your vendor sells by default",
+ * and a tenant on a non-default model is reading a number that means
+ * the second while it looks like the first.
+ *
+ * `null` is a real answer and the honest one for a custom endpoint:
+ * nobody here knows what a self-hosted vLLM behind someone's proxy
+ * charges, and buildUsage counts those calls separately rather than
+ * folding them in at zero.
+ */
+export function resolvePrice(
+  ref: { vendor: string; model: string },
+): { price: Price | null; source: 'model' | 'vendor' | 'none' } {
+  for (const { pattern, price } of MODEL_PRICES) {
+    if (pattern.test(ref.model)) return { price, source: 'model' };
+  }
+
+  const vendorPrice = VENDOR_PRICES[ref.vendor];
+  if (vendorPrice) return { price: vendorPrice, source: 'vendor' };
+
+  // `costTier: 'local'` is free, and free is a number. The one
+  // exception is `custom`, which carries the local tier because it
+  // takes any key and any base URL — and is precisely the vendor whose
+  // price is unknowable. An explicit exclusion rather than a cleverer
+  // predicate, because the next person to read this needs to see that
+  // the case was considered.
+  const preset = getPreset(ref.vendor);
+  if (preset && preset.costTier === 'local' && preset.id !== 'custom') {
+    return { price: FREE, source: 'vendor' };
+  }
+
+  return { price: null, source: 'none' };
+}

@@ -43,12 +43,17 @@ import {
   logRetrieval,
   getRetrievalLog,
   pruneRetrievalLog,
+  logUsage,
+  getUsageLog,
+  pruneUsageLog,
   STATS_MESSAGE_CAP,
   STATS_LEAD_CAP,
   RETRIEVAL_LOG_CAP,
+  USAGE_LOG_CAP,
   type ServiceDb,
   type UserDb,
   type RetrievalLogInsert,
+  type UsageLogInsert,
 } from './supabase';
 import {
   ingestDocument, ingestFaq, ragConfigFor, AlreadyIndexing, CLAIM_STALE_MS,
@@ -96,7 +101,7 @@ import {
 } from './providers';
 import { extractLead, defangLeadMarker, type ExtractedLead } from './leads';
 import { notifyLead, webhookHost } from './notify';
-import { buildStats, buildMissReport } from './stats';
+import { buildStats, buildMissReport, buildUsage, usageTokens } from './stats';
 import { LeadStreamFilter } from './lead-stream';
 import { issueSessionId, verifySessionId } from './session';
 import { isOriginAllowed, validateOrigins, validateSuggestions } from './origin';
@@ -717,6 +722,69 @@ async function persistTurn(
   return saved;
 }
 
+// ── Usage metering (017) ──────────────────────────────────────────
+//
+// Every write below goes through `waitUntil` and every one of them is
+// non-fatal, for the reason stated once here rather than three times:
+// A METERING FAILURE MUST NEVER COST A VISITOR THEIR ANSWER. Metering
+// is the platform's bookkeeping; the tenant's customer is mid-sentence.
+//
+// Rows count CALLS, not turns — the widget falling back from the
+// streaming endpoint to the buffered one files two of them for one
+// question, which is right for cost and wrong for volume. See the
+// table comment in supabase/017_usage.sql.
+
+/** The text the vendor actually read, for the estimator: the system
+ *  prompt plus every message in the window, which is what an input
+ *  token count covers. */
+function promptText(system: string, messages: Message[]): string {
+  return [system, ...messages.map((m) => m.content)].join('\n');
+}
+
+/**
+ * One usage row for one chat or preview call.
+ *
+ * `usage` is whatever the adapter handed back — `{ null, null }` on
+ * every streamed turn from a vendor with `supportsStreamUsage: false`,
+ * and on every error path, where nothing was reported because nothing
+ * finished. usageTokens turns that into an estimate and stamps the row
+ * `estimated`, which is what keeps the shape from being read as a bill.
+ *
+ * The RAW reply is measured, not the cleaned one: the vendor generated
+ * and charged for the lead marker too.
+ */
+function usageRow(opts: {
+  botId: string;
+  /** Null for preview: authenticated testing belongs to no visitor. */
+  sessionId: string | null;
+  kind: 'chat' | 'preview';
+  provider: ChatProvider;
+  usage: Usage;
+  prompt: string;
+  reply: string;
+  outcome?: 'ok' | 'error';
+}): UsageLogInsert {
+  return {
+    bot_id:     opts.botId,
+    session_id: opts.sessionId,
+    kind:       opts.kind,
+    vendor:     opts.provider.vendor,
+    model:      opts.provider.model,
+    ...usageTokens(opts.usage, { input: opts.prompt, output: opts.reply }),
+    // Omitted on the ok path so the column default applies, which keeps
+    // the insert valid against a database that has not had 017 applied
+    // — the same shape persistTurn uses for retrieval_miss.
+    ...(opts.outcome === 'error' && { outcome: 'error' as const }),
+  };
+}
+
+/** A call that never produced a reply. The vendor still read the input
+ *  it was sent and still charged for it, so the row is filed with what
+ *  was spent rather than not filed at all (D7) — otherwise the meter
+ *  reads lowest exactly when a tenant is burning money retrying against
+ *  a misconfigured vendor. */
+const NO_USAGE_REPORTED: Usage = { inputTokens: null, outputTokens: null };
+
 /**
  * Hand a captured lead to the configured webhook, off the request path.
  *
@@ -789,17 +857,31 @@ app.post('/v1/chat', async (c) => {
   // lose the record that the question was asked.
   if (retrieval) c.executionCtx.waitUntil(logRetrieval(db, retrieval));
 
+  // Built before the call rather than after it, because the error path
+  // below needs it too and the messages array does not change.
+  const prompt = promptText(system, messages);
+
   let rawReply: string;
+  let usage: Usage;
   try {
     const result = await provider.generate({ system, messages });
     rawReply = result.text;
+    usage = result.usage;
   } catch (err) {
     console.error(err);
+    c.executionCtx.waitUntil(logUsage(db, usageRow({
+      botId: bot.id, sessionId, kind: 'chat', provider,
+      usage: NO_USAGE_REPORTED, prompt, reply: '', outcome: 'error',
+    })));
     if (err instanceof ProviderError) {
       return c.json({ error: 'AI service error', kind: err.kind }, httpStatusFor(err));
     }
     return c.json({ error: 'AI service error' }, 502);
   }
+
+  c.executionCtx.waitUntil(logUsage(db, usageRow({
+    botId: bot.id, sessionId, kind: 'chat', provider, usage, prompt, reply: rawReply,
+  })));
 
   const { cleanReply } = extractLead(rawReply, lead.fields);
   const captured = await persistTurn(
@@ -836,6 +918,8 @@ app.post('/v1/chat/stream', async (c) => {
   // nothing to be gained by holding a row that is already complete.
   if (retrieval) c.executionCtx.waitUntil(logRetrieval(db, retrieval));
 
+  const prompt = promptText(system, messages);
+
   return streamSSE(c, async (stream) => {
     const filter = new LeadStreamFilter();
     let usage: Usage = { inputTokens: null, outputTokens: null };
@@ -855,6 +939,17 @@ app.post('/v1/chat/stream', async (c) => {
       }
     } catch (err) {
       console.error(err);
+      // L2: A STREAM THAT DIES MID-REPLY SPENT TOKENS AND REPORTS NONE.
+      // Usage arrives on a frame after the last delta, so on a
+      // mid-stream failure that frame never comes and `usage` is still
+      // { null, null } — while the vendor charges for everything
+      // generated up to the failure. Estimating from the text that did
+      // arrive is the only number available, and it is the case where a
+      // tenant's bill and this meter disagree and they come asking why.
+      c.executionCtx.waitUntil(logUsage(db, usageRow({
+        botId: bot.id, sessionId, kind: 'chat', provider,
+        usage: NO_USAGE_REPORTED, prompt, reply: visible, outcome: 'error',
+      })));
       const kind = err instanceof ProviderError ? err.kind : 'unknown';
       await stream.writeSSE({ event: 'error', data: JSON.stringify({ error: 'AI service error', kind }) });
       return;
@@ -868,6 +963,15 @@ app.post('/v1/chat/stream', async (c) => {
     }
 
     const reply = visible.trim();
+
+    // `usage` is still { null, null } for every vendor with
+    // supportsStreamUsage: false — Ollama, LM Studio, anything custom —
+    // so on those the row is estimated rather than absent. That is the
+    // ordinary case here, not the exception.
+    c.executionCtx.waitUntil(logUsage(db, usageRow({
+      botId: bot.id, sessionId, kind: 'chat', provider, usage, prompt, reply: raw || reply,
+    })));
+
     const captured = await persistTurn(
       db, bot.id, sessionId, userMessage, reply, raw, lead, retrievalMiss,
     );
@@ -1258,11 +1362,27 @@ app.post('/v1/admin/bots/:id/preview', async (c) => {
     ? body.history.filter((m) => (m?.role === 'user' || m?.role === 'assistant') && typeof m.content === 'string').slice(-20)
     : [];
 
+  const messages = [...history, { role: 'user' as const, content: pre.userMessage }];
+  const prompt = promptText(pre.system, messages);
+
+  // D6: PREVIEW TRAFFIC IS METERED, under its own kind.
+  //
+  // The turn is ephemeral — no transcript, no lead — but it spends real
+  // tokens on somebody's real key, and an operator testing thirty
+  // prompts in the Playground is real money. Tagging it rather than
+  // dropping it is what lets a tenant-facing chart exclude it AND lets
+  // a reconciliation against the vendor's own invoice include it. That
+  // reconciliation is the only end-to-end check this feature has, and
+  // it fails by exactly the preview volume if preview is not recorded.
+  const meter = (usage: Usage, reply: string, outcome?: 'ok' | 'error') =>
+    c.executionCtx.waitUntil(logUsage(pre.db, usageRow({
+      botId: pre.bot.id, sessionId: null, kind: 'preview',
+      provider: pre.provider, usage, prompt, reply, outcome,
+    })));
+
   try {
-    const result = await pre.provider.generate({
-      system: pre.system,
-      messages: [...history, { role: 'user', content: pre.userMessage }],
-    });
+    const result = await pre.provider.generate({ system: pre.system, messages });
+    meter(result.usage, result.text);
     const { cleanReply } = extractLead(result.text, pre.lead.fields);
     return c.json({
       reply: cleanReply,
@@ -1272,6 +1392,7 @@ app.post('/v1/admin/bots/:id/preview', async (c) => {
     });
   } catch (err) {
     console.error(err);
+    meter(NO_USAGE_REPORTED, '', 'error');
     if (err instanceof ProviderError) {
       return c.json({ error: err.message, kind: err.kind }, httpStatusFor(err));
     }
@@ -2198,6 +2319,122 @@ app.get('/v1/admin/bots/:id/retrieval', async (c) => {
   }
 });
 
+// ================================================================
+// GET /v1/admin/bots/:id/usage — the meter (017)
+//
+// Modelled on the retrieval route above and sharing its shape
+// deliberately: same UserDb so RLS scopes it to the caller's own orgs,
+// same row cap surfaced rather than hidden, same 501 branch when the
+// migration is missing.
+//
+// ONE DELIBERATE DIFFERENCE: the window clamps at 365 days rather than
+// 90. The other two routes read tables pruned at 90 days, so a longer
+// window there would return a shrinking answer; usage_log is kept for
+// 400 days precisely because "this March against last March" is the
+// ordinary question a tenant asks about spend, and a 90-day ceiling
+// would make the extra retention unreadable. The row cap still bounds
+// what one request can pull, and `truncated` says when it bit.
+// ================================================================
+app.get('/v1/admin/bots/:id/usage', async (c) => {
+  const botId = c.req.param('id');
+
+  const raw = Number(c.req.query('days') ?? 30);
+  const days = Number.isFinite(raw) ? Math.min(365, Math.max(7, Math.trunc(raw))) : 30;
+
+  const since = new Date(Date.now() - days * 86_400_000).toISOString();
+
+  try {
+    const rows = await getUsageLog(c.get('db'), botId, since);
+    return c.json(buildUsage({ days, rows, cap: USAGE_LOG_CAP }));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Deployed ahead of its migration. A generic 502 sends whoever is
+    // debugging it looking at RLS instead of at the schema — the same
+    // trap the retrieval route names 012 for.
+    if (/usage_log/.test(message)) {
+      console.error('[usage] 017 not applied:', message);
+      return c.json({ error: 'The usage report needs database migration 017_usage.sql, which has not been applied yet.' }, 501);
+    }
+    console.error(err);
+    return c.json({ error: 'Database error' }, 502);
+  }
+});
+
+// ================================================================
+// POST /v1/admin/bots/:id/provider/test — does this vendor work
+//
+// Named in the Phase 3 dashboard scope and never built. Today a wrong
+// BYOK key is discovered by a real visitor's turn failing, which is the
+// worst possible place to find out.
+//
+// It also answers the question this whole metering arc is built around
+// and that nothing else can answer cheaply: DOES THIS VENDOR REPORT
+// USAGE AT ALL. Three of the four adapter paths on the platform default
+// do not, and `reportsUsage` here is how a tenant learns that their
+// numbers will be estimates before they go looking for the reason.
+//
+// A five-token prompt, so confirming a key costs almost nothing. The
+// call is metered like any other — it is real spend on a real key.
+// ================================================================
+app.post('/v1/admin/bots/:id/provider/test', async (c) => {
+  const botId = c.req.param('id');
+
+  // RLS decides whether this user may see the bot at all.
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  let provider: ChatProvider;
+  try { provider = resolveChatProvider(c.env, bot.provider_config); }
+  catch (err) {
+    // A resolution failure is a config error, not a runtime one, and
+    // it is the answer the tenant came for — so it is a 200 with a
+    // kind rather than a 502 that reads like an outage.
+    const message = err instanceof Error ? err.message : String(err);
+    return c.json({ ok: false, kind: 'config', error: message });
+  }
+
+  const started = Date.now();
+  try {
+    const result = await provider.generate({
+      system: 'Reply with the single word: ok.',
+      messages: [{ role: 'user', content: 'ping' }],
+      maxTokens: 5,
+    });
+    const latencyMs = Date.now() - started;
+
+    let db: ServiceDb | null = null;
+    try { db = serviceDb(c.env); } catch { /* metering is optional here */ }
+    if (db) {
+      c.executionCtx.waitUntil(logUsage(db, usageRow({
+        botId: bot.id, sessionId: null, kind: 'preview', provider,
+        usage: result.usage, prompt: 'ping', reply: result.text,
+      })));
+    }
+
+    return c.json({
+      ok: true,
+      vendor: provider.vendor,
+      model: result.model,
+      latencyMs,
+      usage: result.usage,
+      // The whole point of the endpoint for anyone reading the Usage
+      // screen: a vendor that reports nothing here will report nothing
+      // there, and every row it produces will be an estimate.
+      reportsUsage: result.usage.inputTokens !== null || result.usage.outputTokens !== null,
+    });
+  } catch (err) {
+    console.error('[provider-test]', err);
+    return c.json({
+      ok: false,
+      vendor: provider.vendor,
+      model: provider.model,
+      latencyMs: Date.now() - started,
+      kind: err instanceof ProviderError ? err.kind : 'unknown',
+      error: err instanceof Error ? err.message : 'AI service error',
+    });
+  }
+});
+
 // `?session_id=` narrows to one transcript, which is what the drawer on
 // the Leads screen asks for. Additive: without it the route returns the
 // bot's last 100 messages exactly as before.
@@ -2211,35 +2448,56 @@ app.get('/v1/admin/bots/:id/conversations', async (c) => {
 
 
 // ================================================================
-// Scheduled — retention for retrieval_log, and NOTHING ELSE
+// Scheduled — retention, ONE TABLE PER CRON EXPRESSION
 //
-// This is the only cron on the deployment and it must stay that way.
-// A "daily maintenance" handler accretes: the next thing that wants a
-// timer lands here, then the one after it, and a single failure takes
-// down work that has nothing to do with the failure. When something
-// else needs a schedule, it gets its own cron expression and its own
-// branch on `event.cron`, not another line in this function.
+// Two jobs now, and they are two SCHEDULES rather than two lines in one
+// function. The note that used to stand here predicted exactly this
+// moment: a "daily maintenance" handler accretes, and a single failure
+// then takes down work that has nothing to do with the failure. Adding
+// a second prune to the retrieval branch would have been the obvious
+// move and the wrong one — so each expression owns its own branch, its
+// own try/catch, and its own log line, and a Supabase hiccup at 03:17
+// cannot cost the 03:41 job its run.
 //
 // retrieval_log is the first table on this platform whose PURPOSE is
-// keeping what visitors typed, so retention is not housekeeping — it is
-// the thing that makes storing the query verbatim defensible. The
-// 90-day window is documented in docs/tenancy.md.
+// keeping what visitors typed, so its retention is not housekeeping —
+// it is what makes storing the query verbatim defensible. usage_log
+// holds no PII at all and is kept far longer, because it is billing
+// history and a year-over-year comparison is the ordinary question.
+// Both windows are documented in docs/tenancy.md.
 //
-// The day count is clamped inside prune_retrieval_log, not here. A
-// scheduled handler holding a service-role key is exactly the caller
-// that should not be trusted with a number that can truncate a table.
+// NEITHER day count is trusted to this file. Both are clamped inside
+// their SECURITY DEFINER function, because a scheduled handler holding
+// a service-role key is exactly the caller that should not be trusted
+// with a number that can truncate a table.
 // ================================================================
 const RETRIEVAL_LOG_RETENTION_DAYS = 90;
+const USAGE_LOG_RETENTION_DAYS = 400;
+
+/** Must match the second entry in `triggers.crons` in wrangler.toml.
+ *  The branch below is a string comparison, so the two are one edit —
+ *  change the schedule and this moves with it. */
+const USAGE_PRUNE_CRON = '41 3 * * *';
 
 const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) => {
   ctx.waitUntil((async () => {
+    // Logged, never thrown, on both branches. A failed prune is a
+    // retention window that slipped by a day, and Cloudflare retries
+    // the schedule; throwing here buys an alert nobody has wired up.
+    if (event.cron === USAGE_PRUNE_CRON) {
+      try {
+        const deleted = await pruneUsageLog(serviceDb(env), USAGE_LOG_RETENTION_DAYS);
+        console.log(`[cron ${event.cron}] pruned ${deleted} usage_log row(s) older than ${USAGE_LOG_RETENTION_DAYS} days`);
+      } catch (err) {
+        console.error('[cron] usage_log prune failed:', err);
+      }
+      return;
+    }
+
     try {
       const deleted = await pruneRetrievalLog(serviceDb(env), RETRIEVAL_LOG_RETENTION_DAYS);
       console.log(`[cron ${event.cron}] pruned ${deleted} retrieval_log row(s) older than ${RETRIEVAL_LOG_RETENTION_DAYS} days`);
     } catch (err) {
-      // Logged, never thrown. A failed prune is a retention window that
-      // slipped by a day, and Cloudflare retries the schedule; throwing
-      // here buys an alert nobody has wired up.
       console.error('[cron] retrieval_log prune failed:', err);
     }
   })());

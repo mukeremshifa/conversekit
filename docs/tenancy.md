@@ -48,17 +48,43 @@ tab.
 
 Three tables hold text a visitor typed. They are listed together here because
 the answer differs per table, and "the conversation is stored anyway" is not a
-reason to stop thinking about the others.
+reason to stop thinking about the others. `usage_log` is listed with them for
+the opposite reason: it holds *no* visitor text at all, and that is exactly why
+its window is so much longer.
 
 | Table | What it holds | Retention |
 |---|---|---|
 | `conversations` | The full transcript, both sides | Kept until the bot is deleted |
 | `leads` | Name, email, and whatever else the visitor volunteered | Kept until the bot is deleted |
 | `retrieval_log` | The visitor's question, verbatim, plus what retrieval did with it | **Pruned at 90 days** |
+| `usage_log` | Token counts per provider call. Vendor, model, integers — no text, no key material | **Pruned at 400 days** |
 
-All three cascade on `ON DELETE CASCADE` from `bots`, so deleting a bot removes
+All four cascade on `ON DELETE CASCADE` from `bots`, so deleting a bot removes
 everything it ever recorded. There is no per-visitor erasure endpoint yet; the
 unit a tenant can act on is the bot.
+
+### Why `usage_log` is kept for 400 days and not 90
+
+The 90-day window on `retrieval_log` is a privacy commitment: that table exists
+to keep what visitors typed, so the shortest window that still makes the report
+useful is the right one. `usage_log` is the opposite kind of table. It holds
+`kind`, `vendor`, `model`, four integers and a timestamp — no query, no reply,
+no `session_id` for ingest or preview rows, and **no key material ever**, which
+matters because `provider_config` may hold a BYOK key and this table is read by
+browsers.
+
+So the question is not "how little can we keep" but "how much does the tenant
+need". Spend is a year-over-year question — *this March against last March* —
+and 400 days is the shortest window that answers it. Applying the stricter
+window here would force a privacy rule onto data that has no privacy exposure,
+and throw away the platform's own billing history four times a year for nothing.
+
+`prune_usage_log(p_days integer default 400)` in
+[`017_usage.sql`](../supabase/017_usage.sql) clamps into **`[30, 800]`** inside
+its own body, on exactly the reasoning below — wider bounds than
+`prune_retrieval_log`, same placement and the same reason for it. It runs on its
+**own cron expression** (`41 3 * * *`), with its own branch in the scheduled
+handler, so a failure pruning one table cannot take down the other.
 
 ### Why `retrieval_log` stores the query verbatim
 

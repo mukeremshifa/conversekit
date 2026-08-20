@@ -24,8 +24,9 @@ export * from './errors';
 export {
   VENDORS, getPreset, embeddingCapableVendors,
   similarityFloorFor, resolveSimilarityFloor, DEFAULT_SIMILARITY_FLOOR,
+  resolvePrice,
 } from './catalog';
-export type { VendorPreset, AdapterKind, CostTier } from './catalog';
+export type { VendorPreset, AdapterKind, CostTier, Price } from './catalog';
 
 /** Used when neither the tenant nor the env expresses a preference. */
 const FALLBACK_VENDOR = 'google';

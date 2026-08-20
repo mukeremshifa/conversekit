@@ -9,8 +9,8 @@
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { CircleAlert, KeyRound } from 'lucide-react';
-import { endpoints, type Bot, type Vendor, type VendorConfig } from '@/lib/api';
+import { CheckCircle2, CircleAlert, KeyRound, Plug, XCircle } from 'lucide-react';
+import { endpoints, type Bot, type ProviderTest, type Vendor, type VendorConfig } from '@/lib/api';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   Field, Input, ListSkeleton, Muted, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -24,6 +24,18 @@ const TIER_TONE = { 'free-tier': 'ok', local: 'neutral', paid: 'wait' } as const
 const CAN_TRUNCATE = new Set(['openai', 'google']);
 const REQUIRED_DIMENSIONS = 768;
 const TIER_LABEL = { 'free-tier': 'free tier', local: 'local', paid: 'paid' } as const;
+
+/**
+ * "Inherit the platform default" as a selectable option.
+ *
+ * The placeholder alone was not one: it shows only while nothing has
+ * been chosen, so once a tenant picked a vendor there was no way back
+ * to blank and the card's own instruction — "leave a field blank to
+ * inherit the platform default" — could not be followed. Radix forbids
+ * an empty-string item value, hence a sentinel that maps back to no
+ * config at all.
+ */
+const PLATFORM_DEFAULT = '__platform__';
 
 export function Providers({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => void }) {
   const [vendors, setVendors] = useState<Vendor[] | null>(null);
@@ -80,7 +92,10 @@ export function Providers({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => voi
         vendors={vendors}
         config={chat}
         onChange={setChat}
+        storedKey={!!bot.provider_config?.hasApiKey}
       />
+
+      <TestConnection bot={bot} />
 
       <VendorCard
         title="Embedding model"
@@ -89,8 +104,101 @@ export function Providers({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => voi
         config={embed}
         onChange={setEmbed}
         showDimensions
+        storedKey={!!bot.embedding_config?.hasApiKey}
       />
     </>
+  );
+}
+
+/**
+ * Does this vendor actually work — and does it report token counts.
+ *
+ * Before this, a wrong BYOK key was discovered by a real visitor's turn
+ * failing, which is the worst place for anyone to find out. One
+ * five-token prompt against the SAVED configuration answers it for
+ * roughly nothing.
+ *
+ * `reportsUsage` is the second answer and the less obvious one. Three
+ * of the four adapter paths on the platform default report no usage at
+ * all, so a tenant looking at an "80% estimated" figure on the Usage
+ * screen has no way to find out which of their providers is the silent
+ * one. This is that way.
+ *
+ * Tests what is STORED, not what is typed above — an unsaved key has
+ * not been sent anywhere, and testing the draft would report a pass on
+ * a configuration the bot is not running.
+ */
+function TestConnection({ bot }: { bot: Bot }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ProviderTest | null>(null);
+
+  // A saved change makes any previous verdict describe a configuration
+  // that is no longer in force.
+  useEffect(() => { setResult(null); }, [bot.provider_config]);
+
+  async function run() {
+    setBusy(true);
+    setResult(null);
+    try {
+      setResult(await endpoints.testProvider(bot.id));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not reach the provider test');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>Test connection</CardTitle>
+          <CardDescription>
+            Sends one tiny prompt to the saved chat provider. Confirms the key works, and
+            tells you whether this vendor reports token counts — which decides how much of
+            your Usage screen is measured rather than estimated.
+          </CardDescription>
+        </div>
+        <Button variant="outline" size="sm" onClick={run} disabled={busy}>
+          <Plug className="h-3.5 w-3.5" /> {busy ? 'Testing…' : 'Test connection'}
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {!result ? (
+          <Muted className="text-xs">Not tested yet.</Muted>
+        ) : result.ok ? (
+          <div className="space-y-2">
+            <p className="flex items-center gap-2 text-sm font-semibold text-success">
+              <CheckCircle2 className="h-4 w-4" />
+              {result.vendor} · {result.model} replied in {result.latencyMs} ms
+            </p>
+            <p className="text-xs text-muted">
+              {result.reportsUsage ? (
+                <>
+                  Reports token counts
+                  {result.usage.inputTokens !== null && <> ({result.usage.inputTokens} in
+                    {result.usage.outputTokens !== null && <>, {result.usage.outputTokens} out</>})</>}
+                  {' '}— your chat usage will be measured, not estimated.
+                </>
+              ) : (
+                <>
+                  Does <strong>not</strong> report token counts, so chat usage from this
+                  vendor is estimated from text length. That is expected for local servers
+                  and for streamed replies on some vendors.
+                </>
+              )}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-1">
+            <p className="flex items-center gap-2 text-sm font-semibold text-danger">
+              <XCircle className="h-4 w-4" /> Failed{result.kind ? ` (${result.kind})` : ''}
+            </p>
+            <p className="break-words text-xs text-muted">{result.error}</p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -107,7 +215,7 @@ function clean(cfg: VendorConfig): VendorConfig | null {
 }
 
 function VendorCard({
-  title, description, vendors, config, onChange, showDimensions,
+  title, description, vendors, config, onChange, showDimensions, storedKey,
 }: {
   title: string;
   description: string;
@@ -115,6 +223,10 @@ function VendorCard({
   config: VendorConfig;
   onChange: (c: VendorConfig) => void;
   showDimensions?: boolean;
+  /** Whether the SAVED bot has a key for this slot. Local state cannot
+   *  answer it: picking the platform default empties the config, which
+   *  is exactly when the warning needs to appear. */
+  storedKey?: boolean;
 }) {
   const selected = vendors.find((v) => v.id === config.vendor);
   const set = (patch: Partial<VendorConfig>) => onChange({ ...config, ...patch });
@@ -128,10 +240,22 @@ function VendorCard({
         </div>
       </CardHeader>
       <CardContent>
-        <Field label="Vendor" hint="blank = platform default">
-          <Select value={config.vendor ?? ''} onValueChange={(v) => set({ vendor: v, model: undefined })}>
+        <Field label="Vendor" hint="pick Platform default to hand it back">
+          <Select
+            value={config.vendor ?? PLATFORM_DEFAULT}
+            onValueChange={(v) => (v === PLATFORM_DEFAULT
+              // Reset to {} rather than deleting `vendor`, because the
+              // server MERGES an incoming config over the stored one
+              // (mergeConfigs, src/supabase.ts) — a partial object
+              // would leave the old vendor in place. An empty object is
+              // what clean() turns into the explicit null that clears
+              // the column, key included.
+              ? onChange({})
+              : set({ vendor: v, model: undefined }))}
+          >
             <SelectTrigger><SelectValue placeholder="Platform default" /></SelectTrigger>
             <SelectContent>
+              <SelectItem value={PLATFORM_DEFAULT}>Platform default</SelectItem>
               {vendors.map((v) => (
                 <SelectItem key={v.id} value={v.id}>
                   <span className="flex items-center gap-2">
@@ -237,6 +361,7 @@ function VendorCard({
           <Muted className="flex items-center gap-2 text-xs">
             <KeyRound className="h-3.5 w-3.5" />
             Using the platform default vendor and key.
+            {storedKey && ' Saving now also removes the key stored on this bot.'}
           </Muted>
         )}
       </CardContent>

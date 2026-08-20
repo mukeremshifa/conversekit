@@ -37,9 +37,12 @@ import type { ServiceDb, ChunkInsert } from '../supabase';
 import {
   getDocumentForChat, updateDocument, replaceChunks,
   listFaqItemsForIngest, getFaqDocument,
-  claimDocument, setBotIndexedModel,
+  claimDocument, setBotIndexedModel, logUsage,
 } from '../supabase';
-import { resolveEmbeddingProvider, ProviderError, DEFAULT_SIMILARITY_FLOOR } from '../providers';
+import { usageTokens } from '../stats';
+import {
+  resolveEmbeddingProvider, ProviderError, DEFAULT_SIMILARITY_FLOOR, type Usage,
+} from '../providers';
 import { chunkText, chunkQA, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP } from './chunk';
 import { fetchUrl, markdownToText, ExtractError } from './extract';
 import { storedFileToText } from './files';
@@ -106,6 +109,24 @@ export interface IngestResult {
   chunkCount: number;
   model: string;
   dimensions: number;
+}
+
+/**
+ * What one embedding run produced, including what it cost.
+ *
+ * `usage` is carried out of embedPieces rather than discarded there,
+ * which is the whole of F2 in docs/usage-metering.md: this is the
+ * larger of the two token numbers on the platform and it used to end
+ * at the `res.usage` that nobody read.
+ */
+interface EmbedRun {
+  vectors: number[][];
+  model: string;
+  dimensions: number;
+  vendor: string;
+  /** `inputTokens` null when no batch reported one — the platform
+   *  default embedder never does. */
+  usage: Usage;
 }
 
 /** Ceiling on the rendered retrieval section, in characters. Roughly
@@ -222,12 +243,20 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 async function embedPieces(
   env: Env, bot: Bot, pieces: string[],
-): Promise<{ vectors: number[][]; model: string; dimensions: number }> {
+): Promise<EmbedRun> {
   const embedder = resolveEmbeddingProvider(env, bot.embedding_config);
 
   const vectors: number[][] = [];
   const batches = Math.ceil(pieces.length / EMBED_BATCH);
   let budget = EMBED_RETRY_BUDGET_MS;
+
+  // Accumulated across batches, and NULL until some batch actually
+  // reports something. Null is what tells the caller to estimate —
+  // zero would be a claim that the vendor read nothing at all, which
+  // on the platform default embedder (@cf/baai/bge-base-en-v1.5,
+  // NO_USAGE) would be the number it reports for every ingest ever
+  // run. See F3 in docs/usage-metering.md.
+  let inputTokens: number | null = null;
 
   for (let i = 0; i < pieces.length; i += EMBED_BATCH) {
     const batch = pieces.slice(i, i + EMBED_BATCH);
@@ -237,6 +266,9 @@ async function embedPieces(
       try {
         const res = await embedder.embed({ input: batch });
         vectors.push(...res.vectors);
+        if (res.usage.inputTokens !== null) {
+          inputTokens = (inputTokens ?? 0) + res.usage.inputTokens;
+        }
         break;
       } catch (err) {
         if (!(err instanceof ProviderError) || !err.retryable) throw err;
@@ -276,7 +308,48 @@ async function embedPieces(
     );
   }
 
-  return { vectors, model: embedder.model, dimensions };
+  return {
+    vectors,
+    model: embedder.model,
+    dimensions,
+    vendor: embedder.vendor,
+    // Output is undefined rather than null: an embedding call has no
+    // output side at all, and usageTokens keeps that distinct from
+    // "produced zero output tokens".
+    usage: { inputTokens, outputTokens: null },
+  };
+}
+
+/**
+ * Write the one `kind: 'embed'` row an ingest produces. NEVER THROWS —
+ * logUsage swallows its own failures, and this runs after the corpus
+ * is already durable.
+ *
+ * INGEST IS WHERE A TENANT'S TOKENS ACTUALLY GO. One document is
+ * thousands of input tokens and one chat turn is hundreds, so a meter
+ * that counts only chat under-reports the bill in the direction that
+ * matters. It is also the path that reports nothing on the platform
+ * default, which is why the estimator is the PRIMARY route here rather
+ * than a fallback — see L1.
+ *
+ * Success only. A run that dies on batch 7 of 13 did spend tokens, but
+ * nothing in hand says how many, and a row guessing at it would be
+ * worse than the gap.
+ */
+async function logEmbedUsage(
+  db: ServiceDb, botId: string, run: EmbedRun, pieces: string[],
+): Promise<void> {
+  if (!run.model) return;   // nothing was embedded
+  await logUsage(db, {
+    bot_id: botId,
+    // Ingest belongs to no visitor's conversation.
+    session_id: null,
+    kind: 'embed',
+    vendor: run.vendor,
+    model: run.model,
+    // The text the vendor was handed, joined the way it was sent.
+    ...usageTokens(run.usage, { input: pieces.join('\n') }),
+  });
 }
 
 export async function ingestDocument(
@@ -326,7 +399,8 @@ export async function ingestDocument(
       throw new ExtractError(`Document produces ${pieces.length} chunks, over the ${MAX_CHUNKS} limit. Split it up.`);
     }
 
-    const { vectors, model, dimensions } = await embedPieces(env, bot, pieces);
+    const run = await embedPieces(env, bot, pieces);
+    const { vectors, model, dimensions } = run;
 
     await replaceChunks(db, {
       documentId,
@@ -356,6 +430,12 @@ export async function ingestDocument(
     // bot's last-known-good stamp rather than a claim about vectors
     // that were never written.
     await stampIndexedModel(db, doc.bot_id, model);
+
+    // After the document row and the model stamp, for the same reason
+    // both of those are ordered the way they are: the corpus is the
+    // durable result, and the meter must never be the thing that turns
+    // a successful ingest into a failed one.
+    await logEmbedUsage(db, doc.bot_id, run, pieces);
 
     return { chunkCount: pieces.length, model, dimensions };
   } catch (err) {
@@ -472,7 +552,9 @@ export async function ingestFaq(
       );
     }
 
-    const { vectors, model, dimensions } = await embedPieces(env, bot, rows.map((r) => r.content));
+    const pieces = rows.map((r) => r.content);
+    const run = await embedPieces(env, bot, pieces);
+    const { vectors, model, dimensions } = run;
 
     await replaceChunks(db, {
       documentId: doc.id,
@@ -490,6 +572,11 @@ export async function ingestFaq(
     });
 
     await stampIndexedModel(db, botId, model);
+
+    // Every FAQ edit re-embeds the whole FAQ (see the note above), so
+    // this is the row that makes an expensive editing habit visible
+    // rather than mysterious.
+    await logEmbedUsage(db, botId, run, pieces);
 
     return { chunkCount: rows.length, model, dimensions };
   } catch (err) {

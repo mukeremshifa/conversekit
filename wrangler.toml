@@ -48,15 +48,20 @@ type = "ratelimit"
 namespace_id = "1001"
 simple = { limit = 30, period = 60 }
 
-# Retention for retrieval_log (supabase/012). One job, deliberately:
-# see the scheduled handler in src/index.ts for why this must not grow
-# into a general maintenance hook.
+# Retention. ONE EXPRESSION PER TABLE, and the scheduled handler in
+# src/index.ts branches on `event.cron` rather than doing both in one
+# pass — see the note above it for why a shared "daily maintenance"
+# function is the thing this arrangement exists to avoid.
 #
-# 03:17 UTC — off the hour on purpose. Every cron on every platform
-# fires at :00, and this one is competing for the same Supabase
-# connection pool as real traffic.
+#   17 3  retrieval_log, pruned at 90 days  (supabase/012)
+#   41 3  usage_log,     pruned at 400 days (supabase/017)
+#
+# Both off the hour on purpose: every cron on every platform fires at
+# :00, and these compete for the same Supabase connection pool as real
+# traffic. Twenty-four minutes apart so the second is not waiting on the
+# first's connections either.
 [triggers]
-crons = ["17 3 * * *"]
+crons = ["17 3 * * *", "41 3 * * *"]
 
 [observability]
 enabled = true
