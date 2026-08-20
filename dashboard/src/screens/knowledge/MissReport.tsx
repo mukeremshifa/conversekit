@@ -145,6 +145,9 @@ export function MissReport({
 function Summary({ report }: { report: Report }) {
   const { totals, channels, scores } = report;
   const rate = totals.missRate === null ? null : Math.round(totals.missRate * 100);
+  const noSearch = totals.noSearchRate === null || totals.noSearchRate === undefined
+    ? null
+    : Math.round(totals.noSearchRate * 100);
 
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted">
@@ -167,6 +170,22 @@ function Summary({ report }: { report: Report }) {
         <span>
           <strong className="text-ink tabular-nums">{channels.hybrid}</strong> answered by the
           merged search
+        </span>
+      )}
+      {channels.faqDirect > 0 && (
+        <span>
+          <strong className="text-ink tabular-nums">{channels.faqDirect}</strong> answered straight
+          from your FAQ
+        </span>
+      )}
+      {/* The number that says whether skipping pointless searches is
+          working. It counts every turn that did not search — the
+          router, one-word messages, and anything retrieval declined —
+          so read it next to the miss rate rather than on its own. */}
+      {noSearch !== null && (
+        <span>
+          <strong className="text-ink tabular-nums">{noSearch}%</strong> of messages answered
+          without a search
         </span>
       )}
       {scores.hitMedian !== null && (

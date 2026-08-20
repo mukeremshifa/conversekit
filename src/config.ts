@@ -20,6 +20,9 @@ import type {
   Bot, BehaviorConfig, WidgetConfig, WidgetPosition, WidgetTheme,
   LeadConfig, LeadFields, LeadTrigger, LeadFieldMode, WebhookFormat,
   FaqItemPayload,
+  BusinessProfile, DayKey, HoursException, HoursInterval, ProfileLink,
+  ProfileHours, ProfileLocation, ProfileContact, ProfileLinks,
+  ProfilePolicies, ProfileIdentity,
 } from './types';
 
 export const POSITIONS: WidgetPosition[] = ['bottom-right', 'bottom-left'];
@@ -82,6 +85,33 @@ export const LIMITS = {
   faqItems: 200,
   faqQuestion: 300,
   faqAnswer: 2000,
+
+  // ── Business profile (015) ──
+  //
+  // The profile is PROMPT-RESIDENT ON EVERY TURN — that is the whole
+  // point of Tier 0 — so unlike the corpus it has no budget to spend
+  // and needs a ceiling of its own.
+  //
+  // Truncated rather than rejected, per the clamp-don't-reject rule at
+  // the top of this file: six sections save independently against one
+  // jsonb column, and a save that fails on the length of one field
+  // takes every other edit in that section down with it.
+  profile: {
+    /** Per free-text field — tagline, notes, cancellation, parking.
+     *  Matched to `consentText` and `greeting`: one or two spoken
+     *  lines, not a paragraph. */
+    text: 300,
+    /** The whole rendered block, in characters. Past this a tenant is
+     *  writing a document, and documents have a corpus to live in. */
+    rendered: 2000,
+    customLinks: 6,
+    socials: 6,
+    /** A year of bank holidays with room to spare. */
+    exceptions: 20,
+    /** Also the cap on `languages` — both are short lists of one-word
+     *  entries and there is no reason for two numbers. */
+    paymentMethods: 12,
+  },
 
   // ── Public chat path ──
   //
@@ -528,6 +558,476 @@ export function validateLeadConfig(input: unknown): Ok<LeadConfig | null> | Err 
     if (r.value) out.email_recipients = r.value;
   }
 
+  return { ok: true, value: orNull(out) };
+}
+
+// ----------------------------------------------------------------
+// Business profile (bots.profile, 015)
+//
+// The largest validator in this file, and structurally the simplest:
+// six independent sections, every field optional, unknown keys
+// rejected, free text trimmed to LIMITS.profile.text, URLs through
+// validateUrl.
+//
+// TWO RULES THAT ARE NOT NEGOTIABLE AND ARE EASY TO GET BACKWARDS:
+//
+//   * TEXT IS CLAMPED, URLS ARE REJECTED. Slicing a URL produces a
+//     different, silently broken one — the exception LIMITS.url already
+//     records. Slicing a tagline produces a shorter tagline.
+//
+//   * TIMES AND DATES ARE REJECTED, NOT CLAMPED. "25:99" is not a time
+//     that can be shortened into one, and a clamp would put a number
+//     into the prompt that the tenant never typed and cannot see is
+//     wrong. This is the same call validateFaqItem makes for the same
+//     reason: it is content, not a slider.
+//
+// The whole object is REPLACED WHOLESALE on save — see mergeConfigs in
+// src/supabase.ts, and note that unlike widget_config and lead_config
+// it needs no carried-forward key, because it holds no secret.
+// ----------------------------------------------------------------
+const PROFILE_KEYS = ['identity', 'location', 'contact', 'hours', 'links', 'policies'] as const;
+
+const IDENTITY_KEYS = ['legal_name', 'tagline', 'industry'] as const;
+const LOCATION_KEYS = [
+  'line1', 'line2', 'city', 'region', 'postal', 'country',
+  'map_url', 'service_area', 'parking', 'notes',
+] as const;
+const CONTACT_KEYS = ['phone', 'whatsapp', 'email', 'support_email', 'notes', 'socials'] as const;
+const HOURS_KEYS = ['timezone', 'regular', 'exceptions', 'notes'] as const;
+const LINKS_KEYS = ['booking_url', 'pricing_url', 'portal_url', 'custom'] as const;
+const POLICY_KEYS = [
+  'payment_methods', 'cancellation', 'deposit', 'accessibility', 'languages',
+] as const;
+
+export const DAY_KEYS: DayKey[] = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'];
+
+/** 24-hour `"HH:MM"`. Anchored, so "9:00pm" and "09:00 " are both out. */
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+/** `"YYYY-MM-DD"`. Shape only — 2026-02-31 passes here and is a date
+ *  nobody will ever have an exception on, which is cheaper to allow
+ *  than a calendar in a validator. */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const unknownKey = (key: string, allowed: readonly string[], where: string): Err | null =>
+  allowed.includes(key) ? null : { ok: false, error: `Unknown ${where} field '${key}'` };
+
+/** An object, not an array, not null — the shape every section must be. */
+function profileSection(raw: unknown, field: string): Ok<Record<string, unknown>> | Err {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { ok: false, error: `\`profile.${field}\` must be an object` };
+  }
+  return { ok: true, value: raw as Record<string, unknown> };
+}
+
+/** Trim-and-clamp, into `out[key]` only when something survived. */
+function assignText(
+  out: Record<string, unknown>, src: Record<string, unknown>, key: string, label: string,
+): Err | null {
+  if (src[key] === undefined) return null;
+  const r = text(src[key], LIMITS.profile.text, label);
+  if (!r.ok) return r;
+  if (r.value !== undefined) out[key] = r.value;
+  return null;
+}
+
+function assignUrl(
+  out: Record<string, unknown>, src: Record<string, unknown>, key: string, label: string,
+): Err | null {
+  if (src[key] === undefined) return null;
+  const r = validateUrl(src[key], label, { secure: false });
+  if (!r.ok) return r;
+  if (r.value !== undefined) out[key] = r.value;
+  return null;
+}
+
+/** A label/url pair list — socials and custom links, which differ only
+ *  in their cap and their error message. */
+function validateLinkRows(
+  raw: unknown, max: number, label: string,
+): Ok<ProfileLink[] | undefined> | Err {
+  if (!Array.isArray(raw)) return { ok: false, error: `\`${label}\` must be an array` };
+  if (raw.length > max) return { ok: false, error: `At most ${max} ${label}` };
+
+  const out: ProfileLink[] = [];
+  for (const row of raw) {
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      return { ok: false, error: `Each entry in \`${label}\` must be an object` };
+    }
+    const src = row as Record<string, unknown>;
+    for (const key of Object.keys(src)) {
+      const bad = unknownKey(key, ['label', 'url'], label);
+      if (bad) return bad;
+    }
+    const name = text(src.label ?? '', LIMITS.profile.text, `${label}.label`);
+    if (!name.ok) return name;
+    const url = validateUrl(src.url ?? '', `${label}.url`, { secure: false });
+    if (!url.ok) return url;
+    // A half-filled row is what an empty "Add link" row looks like
+    // before anyone types in it. Dropped rather than rejected — the
+    // form should not refuse to save because a blank row is open.
+    if (!name.value || !url.value) continue;
+    out.push({ label: name.value, url: url.value });
+  }
+  return { ok: true, value: out.length ? out : undefined };
+}
+
+/** A list of short labels — payment methods, languages spoken. */
+function validateLabels(raw: unknown, max: number, label: string): Ok<string[] | undefined> | Err {
+  if (!Array.isArray(raw)) return { ok: false, error: `\`${label}\` must be an array` };
+  if (raw.length > max) return { ok: false, error: `At most ${max} ${label}` };
+
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'string') {
+      return { ok: false, error: `Each entry in \`${label}\` must be a string` };
+    }
+    const value = entry.trim().slice(0, LIMITS.profile.text);
+    if (!value || out.includes(value)) continue;
+    out.push(value);
+  }
+  return { ok: true, value: out.length ? out : undefined };
+}
+
+/**
+ * One day's opening intervals.
+ *
+ * CLOSE MUST BE AFTER OPEN, AND INTERVALS MUST NOT OVERLAP. Neither is
+ * pedantry: the computed open/closed line in src/profile.ts walks them
+ * in order and answers with the first that contains the current minute,
+ * so a reversed pair silently means "never open" and an overlapping
+ * pair means "closes at whichever one you happened to list first".
+ */
+function validateDay(raw: unknown, day: DayKey): Ok<HoursInterval[] | undefined> | Err {
+  if (!Array.isArray(raw)) return { ok: false, error: `\`hours.regular.${day}\` must be an array` };
+
+  const out: HoursInterval[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return { ok: false, error: `Each interval on ${day} must be an object` };
+    }
+    const src = entry as Record<string, unknown>;
+    for (const key of Object.keys(src)) {
+      const bad = unknownKey(key, ['open', 'close'], `hours.regular.${day}`);
+      if (bad) return bad;
+    }
+    const open = typeof src.open === 'string' ? src.open.trim() : '';
+    const close = typeof src.close === 'string' ? src.close.trim() : '';
+    // A row with neither is an empty one the form left open.
+    if (!open && !close) continue;
+    if (!TIME_RE.test(open) || !TIME_RE.test(close)) {
+      return {
+        ok: false,
+        error: `Times on ${day} must be HH:MM, 24-hour — got '${open || '(empty)'}' to '${close || '(empty)'}'`,
+      };
+    }
+    if (close <= open) {
+      return { ok: false, error: `On ${day}, ${close} is not after ${open}` };
+    }
+    out.push({ open, close });
+  }
+
+  // Sorted before the overlap check, so a tenant listing the afternoon
+  // first is corrected rather than refused — and so the renderer's
+  // "first interval that contains now" walk is in clock order.
+  out.sort((a, b) => a.open.localeCompare(b.open));
+  for (let i = 1; i < out.length; i++) {
+    if (out[i].open < out[i - 1].close) {
+      return {
+        ok: false,
+        error: `Opening hours on ${day} overlap: ${out[i - 1].open}-${out[i - 1].close} and ${out[i].open}-${out[i].close}`,
+      };
+    }
+  }
+
+  return { ok: true, value: out.length ? out : undefined };
+}
+
+function validateExceptions(raw: unknown): Ok<HoursException[] | undefined> | Err {
+  if (!Array.isArray(raw)) return { ok: false, error: '`hours.exceptions` must be an array' };
+  if (raw.length > LIMITS.profile.exceptions) {
+    return { ok: false, error: `At most ${LIMITS.profile.exceptions} date exceptions` };
+  }
+
+  const out: HoursException[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return { ok: false, error: 'Each date exception must be an object' };
+    }
+    const src = entry as Record<string, unknown>;
+    for (const key of Object.keys(src)) {
+      const bad = unknownKey(key, ['date', 'closed', 'open', 'close', 'label'], 'hours.exceptions');
+      if (bad) return bad;
+    }
+
+    const date = typeof src.date === 'string' ? src.date.trim() : '';
+    if (!date) continue;                    // an empty row the form left open
+    if (!DATE_RE.test(date)) {
+      return { ok: false, error: `Exception dates must be YYYY-MM-DD — got '${date}'` };
+    }
+
+    const ex: HoursException = { date };
+    if (src.closed !== undefined) {
+      const r = bool(src.closed, 'closed');
+      if (!r.ok) return r;
+      if (r.value) ex.closed = true;
+    }
+
+    const open = typeof src.open === 'string' ? src.open.trim() : '';
+    const close = typeof src.close === 'string' ? src.close.trim() : '';
+    if (open || close) {
+      if (!TIME_RE.test(open) || !TIME_RE.test(close)) {
+        return { ok: false, error: `Times on ${date} must be HH:MM, 24-hour` };
+      }
+      if (close <= open) return { ok: false, error: `On ${date}, ${close} is not after ${open}` };
+      ex.open = open;
+      ex.close = close;
+    }
+
+    if (src.label !== undefined) {
+      const r = text(src.label, LIMITS.profile.text, 'label');
+      if (!r.ok) return r;
+      if (r.value !== undefined) ex.label = r.value;
+    }
+
+    // Neither closed nor a pair of times says nothing at all, and the
+    // renderer would emit "hours differ" with no answer to the obvious
+    // follow-up. Rejected here so it is a sentence in the form rather
+    // than a shrug in the prompt.
+    if (!ex.closed && !ex.open) {
+      return {
+        ok: false,
+        error: `The exception on ${date} needs either "closed" or an open and close time`,
+      };
+    }
+    out.push(ex);
+  }
+
+  return { ok: true, value: out.length ? out : undefined };
+}
+
+/**
+ * An IANA zone name.
+ *
+ * Checked against `Intl.supportedValuesOf('timeZone')` where the
+ * runtime has it, and against the Area/City shape where it does not.
+ * The Workers runtime ships full ICU, but the introspection API is a
+ * separate proposal and BotConfiguration.tsx already guards it the same
+ * way — depending on it here would be depending on it twice.
+ */
+function validateTimezone(raw: unknown): Ok<string | undefined> | Err {
+  if (typeof raw !== 'string') return { ok: false, error: '`hours.timezone` must be a string' };
+  const value = raw.trim();
+  if (!value) return { ok: true, value: undefined };
+
+  const supported = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] })
+    .supportedValuesOf;
+  if (typeof supported === 'function') {
+    let zones: string[] = [];
+    try { zones = supported.call(Intl, 'timeZone'); } catch { zones = []; }
+    if (zones.length) {
+      // UTC is not in the list on every runtime, and it is the one zone
+      // a tenant can name that is certainly valid.
+      if (value !== 'UTC' && !zones.includes(value)) {
+        return { ok: false, error: `'${value}' is not a known time zone` };
+      }
+      return { ok: true, value };
+    }
+  }
+
+  if (value !== 'UTC' && !/^[A-Za-z_+-]+\/[A-Za-z0-9_+\-/]+$/.test(value)) {
+    return { ok: false, error: `'${value}' is not a known time zone` };
+  }
+  return { ok: true, value };
+}
+
+function validateHours(input: unknown): Ok<ProfileHours | undefined> | Err {
+  const s = profileSection(input, 'hours');
+  if (!s.ok) return s;
+  const src = s.value;
+  const out: ProfileHours = {};
+
+  for (const key of Object.keys(src)) {
+    const bad = unknownKey(key, HOURS_KEYS, 'hours');
+    if (bad) return bad;
+  }
+
+  if (src.timezone !== undefined) {
+    const r = validateTimezone(src.timezone);
+    if (!r.ok) return r;
+    if (r.value) out.timezone = r.value;
+  }
+
+  if (src.regular !== undefined) {
+    const days = profileSection(src.regular, 'hours.regular');
+    if (!days.ok) return days;
+    const regular: Partial<Record<DayKey, HoursInterval[]>> = {};
+    for (const key of Object.keys(days.value)) {
+      if (!DAY_KEYS.includes(key as DayKey)) {
+        return {
+          ok: false,
+          error: `\`hours.regular\` keys must be one of: ${DAY_KEYS.join(', ')} — got '${key}'`,
+        };
+      }
+    }
+    for (const day of DAY_KEYS) {
+      if (days.value[day] === undefined) continue;
+      const r = validateDay(days.value[day], day);
+      if (!r.ok) return r;
+      // A day with no intervals is CLOSED, and closed is the absence of
+      // the key rather than an empty array — the same rule orNull
+      // applies to the object as a whole.
+      if (r.value) regular[day] = r.value;
+    }
+    if (Object.keys(regular).length) out.regular = regular;
+  }
+
+  if (src.exceptions !== undefined) {
+    const r = validateExceptions(src.exceptions);
+    if (!r.ok) return r;
+    if (r.value) out.exceptions = r.value;
+  }
+
+  const bad = assignText(out as Record<string, unknown>, src, 'notes', 'hours.notes');
+  if (bad) return bad;
+
+  return { ok: true, value: Object.keys(out).length ? out : undefined };
+}
+
+export function validateProfile(input: unknown): Ok<BusinessProfile | null> | Err {
+  if (input === null || input === undefined) return { ok: true, value: null };
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    return { ok: false, error: '`profile` must be an object or null' };
+  }
+
+  const src = input as Record<string, unknown>;
+  const out: BusinessProfile = {};
+
+  for (const key of Object.keys(src)) {
+    const bad = unknownKey(key, PROFILE_KEYS, 'profile');
+    if (bad) return bad;
+  }
+
+  // ── identity ──
+  if (src.identity !== undefined) {
+    const s = profileSection(src.identity, 'identity');
+    if (!s.ok) return s;
+    const o: Record<string, unknown> = {};
+    for (const key of Object.keys(s.value)) {
+      const bad = unknownKey(key, IDENTITY_KEYS, 'identity');
+      if (bad) return bad;
+    }
+    for (const key of IDENTITY_KEYS) {
+      const bad = assignText(o, s.value, key, `identity.${key}`);
+      if (bad) return bad;
+    }
+    if (Object.keys(o).length) out.identity = o as ProfileIdentity;
+  }
+
+  // ── location ──
+  if (src.location !== undefined) {
+    const s = profileSection(src.location, 'location');
+    if (!s.ok) return s;
+    const o: Record<string, unknown> = {};
+    for (const key of Object.keys(s.value)) {
+      const bad = unknownKey(key, LOCATION_KEYS, 'location');
+      if (bad) return bad;
+    }
+    for (const key of LOCATION_KEYS) {
+      const bad = key === 'map_url'
+        ? assignUrl(o, s.value, key, 'location.map_url')
+        : assignText(o, s.value, key, `location.${key}`);
+      if (bad) return bad;
+    }
+    if (Object.keys(o).length) out.location = o as ProfileLocation;
+  }
+
+  // ── contact ──
+  if (src.contact !== undefined) {
+    const s = profileSection(src.contact, 'contact');
+    if (!s.ok) return s;
+    const o: Record<string, unknown> = {};
+    for (const key of Object.keys(s.value)) {
+      const bad = unknownKey(key, CONTACT_KEYS, 'contact');
+      if (bad) return bad;
+    }
+    // Phone numbers are NOT pattern-checked. Every strict format
+    // rejects somebody's real number, and the only test that settles it
+    // is whether the call connects — the same judgement
+    // validateRecipients makes about email addresses above.
+    for (const key of CONTACT_KEYS) {
+      if (key === 'socials') {
+        if (s.value.socials === undefined) continue;
+        const r = validateLinkRows(s.value.socials, LIMITS.profile.socials, 'contact.socials');
+        if (!r.ok) return r;
+        if (r.value) o.socials = r.value;
+      } else {
+        const bad = assignText(o, s.value, key, `contact.${key}`);
+        if (bad) return bad;
+      }
+    }
+    if (Object.keys(o).length) out.contact = o as ProfileContact;
+  }
+
+  // ── hours ──
+  if (src.hours !== undefined) {
+    const r = validateHours(src.hours);
+    if (!r.ok) return r;
+    if (r.value) out.hours = r.value;
+  }
+
+  // ── links ──
+  if (src.links !== undefined) {
+    const s = profileSection(src.links, 'links');
+    if (!s.ok) return s;
+    const o: Record<string, unknown> = {};
+    for (const key of Object.keys(s.value)) {
+      const bad = unknownKey(key, LINKS_KEYS, 'links');
+      if (bad) return bad;
+    }
+    for (const key of LINKS_KEYS) {
+      if (key === 'custom') {
+        if (s.value.custom === undefined) continue;
+        const r = validateLinkRows(s.value.custom, LIMITS.profile.customLinks, 'links.custom');
+        if (!r.ok) return r;
+        if (r.value) o.custom = r.value;
+      } else {
+        const bad = assignUrl(o, s.value, key, `links.${key}`);
+        if (bad) return bad;
+      }
+    }
+    if (Object.keys(o).length) out.links = o as ProfileLinks;
+  }
+
+  // ── policies ──
+  if (src.policies !== undefined) {
+    const s = profileSection(src.policies, 'policies');
+    if (!s.ok) return s;
+    const o: Record<string, unknown> = {};
+    for (const key of Object.keys(s.value)) {
+      const bad = unknownKey(key, POLICY_KEYS, 'policies');
+      if (bad) return bad;
+    }
+    // In POLICY_KEYS order rather than by kind, so the stored object's
+    // key order is the declared one. jsonb preserves insertion order,
+    // and a validator that reordered keys would make every save show up
+    // as a change to anything diffing the column.
+    for (const key of POLICY_KEYS) {
+      if (key === 'payment_methods' || key === 'languages') {
+        if (s.value[key] === undefined) continue;
+        const r = validateLabels(s.value[key], LIMITS.profile.paymentMethods, `policies.${key}`);
+        if (!r.ok) return r;
+        if (r.value) o[key] = r.value;
+      } else {
+        const bad = assignText(o, s.value, key, `policies.${key}`);
+        if (bad) return bad;
+      }
+    }
+    if (Object.keys(o).length) out.policies = o as ProfilePolicies;
+  }
+
+  // Empty stores as NULL, so "never configured" and "configured back to
+  // defaults" read alike — as they do for widget_config,
+  // behavior_config and lead_config, and as profileFor() depends on.
   return { ok: true, value: orNull(out) };
 }
 

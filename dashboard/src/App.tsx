@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   LayoutDashboard,
-  BookText, Cable, Cpu, HelpCircle, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
+  BookText, Building2, Cable, Cpu, HelpCircle, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
 } from 'lucide-react';
 import { clearSession, currentSession } from '@/lib/auth';
 import { endpoints, type Bot, type Me } from '@/lib/api';
 import { SignIn } from '@/screens/SignIn';
 import { Shell, NewBotDialog, type NavItem } from '@/components/Shell';
 import { BotConfiguration } from '@/screens/BotConfiguration';
+import { BusinessProfile } from '@/screens/BusinessProfile';
 import { Knowledge, TAB_ROUTES, knowledgeTabFor } from '@/screens/Knowledge';
 import { Retrieval } from '@/screens/Retrieval';
 import { Providers } from '@/screens/Providers';
@@ -27,10 +28,17 @@ import { readTheme, setTheme } from '@/lib/theme';
  * whose Sources and FAQ are tabs of one screen) and how it finds it
  * (Retrieval, which is also where the questions it missed are
  * reported).
+ *
+ * Business Profile sits directly above Bot Configuration because the
+ * two answer adjacent questions — what the business IS, and how the bot
+ * behaves — and because the Contact section used to live on the second
+ * one. Anyone going looking for it should find the new home before the
+ * old place it was not.
  */
 const NAV: NavItem[] = [
   { id: 'overview',      label: 'Overview',          icon: LayoutDashboard },
   { id: 'playground',    label: 'Playground',        icon: MessagesSquare },
+  { id: 'profile',       label: 'Business Profile',  icon: Building2 },
   { id: 'configuration', label: 'Bot Configuration', icon: Settings2 },
   { id: 'knowledge',     label: 'Knowledge Base',    icon: BookText },
   { id: 'retrieval',     label: 'Retrieval',         icon: Search },
@@ -55,7 +63,15 @@ const WIDE_ROUTES = new Set([
 /** Routes that were renamed. The old id stays a working URL: #settings and
  *  #sources are bookmarked, and a rename is not a reason to break
  *  someone's link. */
-const ALIASES: Record<string, string> = { settings: 'configuration', sources: TAB_ROUTES.sources };
+const ALIASES: Record<string, string> = {
+  settings: 'configuration',
+  sources: TAB_ROUTES.sources,
+  // The Contact section moved off Bot Configuration and onto its own
+  // screen in 015. Nobody linked to #contact, but the two names people
+  // guess for the new one are worth catching.
+  'business-profile': 'profile',
+  contact: 'profile',
+};
 
 const resolveRoute = (hash: string, fallback: string) => {
   const id = hash.slice(1) || fallback;
@@ -196,6 +212,7 @@ export default function App() {
           <div key={route} className="ck-route space-y-6">
             {route === 'overview'      && <Overview bot={bot} onNavigate={navigate} />}
             {route === 'playground'    && <Playground bot={bot} />}
+            {route === 'profile'       && <BusinessProfile bot={bot} onSaved={patchBot} />}
             {route === 'configuration' && <BotConfiguration bot={bot} onSaved={patchBot} />}
             {KNOWLEDGE_ROUTES.has(route) && (
               <Knowledge

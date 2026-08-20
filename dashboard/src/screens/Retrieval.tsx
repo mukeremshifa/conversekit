@@ -62,6 +62,12 @@ const DEFAULTS: Omit<Required<RagConfig>, 'min_similarity'> = {
   lexical_fallback: true,
   retrieval_mode: 'fallback',
   rerank: false,
+  // Both 015/016, and both default to what every bot already does. The
+  // router changes which messages search at all; the shortcut changes
+  // what answers them. Neither is a change the platform should make on
+  // a tenant's behalf during a deploy.
+  router: 'off',
+  faq_shortcut_threshold: 0,
 };
 
 /**
@@ -240,6 +246,65 @@ function RetrievalSettings({
             minimum similarity — an irrelevant FAQ item stays out however high you set it.
             The budget caps how much retrieved text may go into one message, so a long answer can
             never crowd out the conversation itself.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Skip the search when there is nothing to search for</CardTitle>
+            <CardDescription>
+              &ldquo;Thanks!&rdquo;, &ldquo;ok, sounds good&rdquo; and a phone number typed on its
+              own are not questions. With this on, those messages are answered without a search at
+              all — one less round trip before the bot starts typing, and none of your documents
+              pasted into a reply that did not need them.
+            </CardDescription>
+          </div>
+          <Switch
+            checked={cfg.router === 'on'}
+            onCheckedChange={(v) => set({ router: v ? 'on' : 'off' })}
+            aria-label="Skip pointless searches"
+          />
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs leading-relaxed text-muted">
+            It matches whole messages only, so &ldquo;thanks, but what are your hours?&rdquo; still
+            searches. It does <strong className="text-ink">not</strong> try to guess which questions
+            your business details already answer — those are in every message the bot receives
+            anyway, so there is nothing to guess.
+          </p>
+          <p className="text-xs leading-relaxed text-muted">
+            After switching it on, check the questions report above for a day. The share answered
+            without a search should go up; the miss rate should not move. If it does, tell us —
+            something is being skipped that should not be.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Answer straight from your FAQ</CardTitle>
+            <CardDescription>
+              When a visitor&rsquo;s message is close enough to a question you have already
+              answered, reply with your answer and skip the search entirely.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <Field label="Match strength" hint="0–0.95 · 0 turns it off">
+            <Input
+              type="number" step="0.05" min={0} max={0.95}
+              value={cfg.faq_shortcut_threshold}
+              onChange={(e) => set({ faq_shortcut_threshold: Number(e.target.value) })}
+            />
+          </Field>
+          <p className="text-xs leading-relaxed text-muted">
+            0.5 is a sensible place to start: close paraphrases match, different questions do not.
+            Raise it if visitors are getting the wrong FAQ answer; lower it if answers you have
+            written are being ignored. Below about 0.3 it will start matching questions that merely
+            share a few words.
           </p>
         </CardContent>
       </Card>

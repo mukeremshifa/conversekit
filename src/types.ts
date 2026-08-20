@@ -119,9 +119,18 @@ export interface Bot {
   org_id: string;
   name: string;
   business_name: string;
-  // contact / location kept for backwards compat with existing rows
+  // ── Legacy business facts (001/002, 002 Phase 1) ──────────────
+  //
+  // Read-through deprecated since 015, not dropped — the treatment
+  // `allowed_origin` got in 006. `profile` supersedes all six, but a
+  // bot with `profile IS NULL` still renders from exactly these, byte
+  // for byte as it did before 015, and that is what makes the cutover
+  // safe to do one tenant at a time. See src/profile.ts.
+  /** @deprecated superseded by `profile.hours`. */
   hours: string | null;
+  /** @deprecated superseded by `profile.location`. */
   location: string | null;
+  /** @deprecated superseded by `profile.contact`. */
   contact: string | null;
   services: string | null;
   custom_instructions: string | null;
@@ -133,11 +142,29 @@ export interface Bot {
   suggestions?: string[] | null;
   created_at: string;
   // Phase 1 knowledge base fields
+  //
+  // business_description STAYS. It is prose about the business rather
+  // than a fact about it, it is already capped by PROMPT_TEXT_CAPS, and
+  // moving it into `profile` would buy nothing.
   business_description: string | null;
   faq: string | null;
+  /** @deprecated superseded by `profile.contact.email`. */
   contact_email: string | null;
+  /** @deprecated superseded by `profile.contact.phone`. */
   contact_phone: string | null;
+  /** @deprecated superseded by `profile.location`. */
   address: string | null;
+
+  /**
+   * Structured business facts (supabase/015).
+   *
+   * NULL — including on a Worker running ahead of the migration — means
+   * the six legacy columns above are rendered into the system prompt
+   * exactly as they were before 015. Nothing stamps this: the backfill
+   * route writes it, and a tenant editing the Business Profile screen
+   * writes it. See src/profile.ts for the renderer and the contract.
+   */
+  profile?: BusinessProfile | null;
 
   // Per-tenant AI vendor selection (JSONB). Optional until the
   // migration in docs/roadmap.md task 1 lands — undefined falls back to
@@ -196,6 +223,143 @@ export interface Bot {
    * docs/rag-hardening.md.
    */
   chunk_count?: number;
+}
+
+// ----------------------------------------------------------------
+// Business profile (bots.profile, supabase/015)
+//
+// Tier 0 of the four-tier knowledge model: bounded, always relevant,
+// NEVER retrieved and always in the prompt. The question that decides
+// what belongs here is "is it bounded and always relevant, or unbounded
+// and sometimes relevant" — opening hours are the former, a
+// twelve-page treatment guide the latter, and the latter is what the
+// corpus is for.
+//
+// Every field is optional and every one of them may be absent: a
+// profile is built up over time by a tenant filling in a form, not
+// posted complete. Validated by validateProfile in src/config.ts,
+// because Postgres cannot check a jsonb shape.
+// ----------------------------------------------------------------
+
+/** A label and a URL, used for socials and for custom links. Both
+ *  halves are required — a URL with no label renders as a bare string
+ *  the model has to guess the purpose of. */
+export interface ProfileLink {
+  label: string;
+  url: string;
+}
+
+/** One continuous span of a day the business is open. `"HH:MM"`,
+ *  24-hour, validated as strings and never parsed into Date objects —
+ *  the Worker needs them as instants only in the computed-hours line,
+ *  which does its own conversion. */
+export interface HoursInterval {
+  open: string;
+  close: string;
+}
+
+export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+
+/**
+ * A date that does not follow the weekly pattern.
+ *
+ * `closed: true` is a holiday; an `open`/`close` pair is a short day.
+ * Both may be present — `closed` wins, so a tenant who ticks "closed"
+ * without clearing the times gets what they asked for.
+ */
+export interface HoursException {
+  /** `"YYYY-MM-DD"`. */
+  date: string;
+  closed?: boolean;
+  open?: string;
+  close?: string;
+  label?: string;
+}
+
+export interface ProfileHours {
+  /**
+   * IANA zone, e.g. `Europe/London`.
+   *
+   * Deliberately independent of the timezone picker on the Bot
+   * Configuration screen, which is inert by design and stores nothing.
+   * This is the field the computed open/closed line reads, and without
+   * it that line cannot be produced at all — an LLM does not know what
+   * time it is anywhere.
+   */
+  timezone?: string;
+  /** Missing days read as closed. An empty array reads as closed too. */
+  regular?: Partial<Record<DayKey, HoursInterval[]>>;
+  exceptions?: HoursException[];
+  /**
+   * The free-text escape hatch, and the backfill target for the legacy
+   * `bots.hours` column. The renderer prefers `regular` when it is
+   * present and falls back to this, so a tenant is never forced to
+   * structure their hours before the profile is usable.
+   */
+  notes?: string;
+}
+
+export interface ProfileLocation {
+  line1?: string;
+  line2?: string;
+  city?: string;
+  region?: string;
+  postal?: string;
+  country?: string;
+  map_url?: string;
+  service_area?: string;
+  parking?: string;
+  /** Lossless landing place for anything the fields above cannot hold.
+   *  Every text column being replaced needs one. */
+  notes?: string;
+}
+
+export interface ProfileContact {
+  phone?: string;
+  whatsapp?: string;
+  email?: string;
+  support_email?: string;
+  /** The backfill target for the legacy `bots.contact` column, which
+   *  was one freehand line and is not reliably either a phone or an
+   *  email. Only written when neither of those two is set. */
+  notes?: string;
+  socials?: ProfileLink[];
+}
+
+export interface ProfileLinks {
+  /**
+   * The one URL that also lives on `lead_config`. THE PROFILE OWNS IT:
+   * leadCaptureLines reads `lead_config.booking_url ?? this`, so an
+   * existing configuration keeps working and the lead form's field
+   * becomes an override.
+   */
+  booking_url?: string;
+  pricing_url?: string;
+  portal_url?: string;
+  custom?: ProfileLink[];
+}
+
+export interface ProfilePolicies {
+  payment_methods?: string[];
+  cancellation?: string;
+  deposit?: string;
+  accessibility?: string;
+  languages?: string[];
+}
+
+export interface ProfileIdentity {
+  legal_name?: string;
+  tagline?: string;
+  industry?: string;
+}
+
+export interface BusinessProfile {
+  identity?: ProfileIdentity;
+  location?: ProfileLocation;
+  contact?: ProfileContact;
+  hours?: ProfileHours;
+  links?: ProfileLinks;
+  policies?: ProfilePolicies;
 }
 
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
@@ -383,6 +547,35 @@ export interface RagConfig {
    * re-rank is on would be B1 for the third time.
    */
   rerank?: boolean;
+
+  // ── Added by 015 ──
+  /**
+   * The per-turn retrieval router (src/rag/route.ts).
+   *
+   * 'off' — every turn long enough to embed goes through retrieval,
+   *         which is what every bot has done since RAG shipped.
+   * 'on'  — turns where retrieval is POINTLESS (closings,
+   *         acknowledgements, a bare contact detail) skip the embedding
+   *         call and the vector search entirely.
+   *
+   * DEFAULTS TO 'off' SO NOBODY'S BOT CHANGES UNDER THEM ON DEPLOY,
+   * the same reasoning `retrieval_mode` defaults to 'fallback' for. A
+   * false skip is a wrong answer while a false retrieve is only
+   * latency, so watch the miss report after switching a bot on: if the
+   * miss rate moves at all, a skip rule is too aggressive.
+   */
+  router?: 'off' | 'on';
+  /**
+   * Trigram similarity above which a curated FAQ question answers the
+   * turn directly, with no embedding call at all (016).
+   *
+   * `similarity()` is normalised 0-1, which is exactly why this is
+   * trigram rather than the existing `match_chunks_lexical` — ts_rank
+   * is not normalised and cannot be thresholded meaningfully.
+   *
+   * 0 switches the shortcut off. One knob, not a knob and a boolean.
+   */
+  faq_shortcut_threshold?: number;
 }
 
 export type DocumentSource = 'text' | 'url' | 'markdown' | 'file' | 'faq';
@@ -556,4 +749,9 @@ export interface BotUpdatePayload {
   // IS a secret and the form never sends it back. Structurally the same
   // exception widget_config.logo_key already gets.
   lead_config?: LeadConfig | null;
+  // Replaced wholesale with NO carried-forward key at all — it holds no
+  // secret, the form posts the whole object, and a merge would make a
+  // cleared field un-clearable. The next person will look for the
+  // exception the two above have; there is none. See mergeConfigs.
+  profile?: BusinessProfile | null;
 }

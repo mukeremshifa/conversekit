@@ -153,6 +153,18 @@ export function ragConfigFor(bot: Bot, floor?: number): Required<RagConfig> {
       ? c.retrieval_mode
       : 'fallback',
     rerank: c.rerank ?? false,
+    // ── 015 ──
+    // Both default to today's behaviour rather than to the
+    // better-sounding one, exactly as retrieval_mode does. The router
+    // changes which turns search at all and the FAQ shortcut changes
+    // what answers them; neither is a decision the platform should make
+    // on a tenant's behalf on a deploy they did not ask for.
+    router: c.router === 'on' ? 'on' : 'off',
+    // 0 is off, which is why this is one knob and not a knob plus a
+    // boolean. Capped below 1: a threshold of 1 means "only an exact
+    // string match", which is a feature nobody wants and everybody
+    // would read as broken.
+    faq_shortcut_threshold: clamp(c.faq_shortcut_threshold ?? 0, 0, 0.95),
   };
 }
 

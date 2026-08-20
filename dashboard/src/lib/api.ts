@@ -191,6 +191,12 @@ export interface RagConfig {
    *  message. Degrades to plain similarity order if the deployment has
    *  no Workers AI binding. */
   rerank?: boolean;
+  /** Skip retrieval entirely on turns where it is pointless — closings,
+   *  acknowledgements, a bare contact detail (015). Off by default. */
+  router?: 'off' | 'on';
+  /** Trigram similarity above which a curated FAQ question answers the
+   *  turn outright, with no embedding call (016). 0 is off. */
+  faq_shortcut_threshold?: number;
 }
 
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
@@ -252,13 +258,63 @@ export interface LeadConfig {
   webhook_host?: string | null;
 }
 
+/** One label and one URL — socials and custom links. */
+export interface ProfileLink { label: string; url: string }
+/** `"HH:MM"`, 24-hour, validated as strings by the Worker. */
+export interface HoursInterval { open: string; close: string }
+export type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+export interface HoursException {
+  date: string; closed?: boolean; open?: string; close?: string; label?: string;
+}
+
+/**
+ * bots.profile (015) — the structured business facts rendered into
+ * every system prompt.
+ *
+ * REPLACED WHOLESALE ON SAVE, with nothing carried forward. Unlike
+ * widget_config and lead_config it holds no secret, so there is no
+ * exception to look for — which is also why every section of the
+ * Business Profile screen has to post the WHOLE object, not just its
+ * own keys.
+ */
+export interface BusinessProfile {
+  identity?: { legal_name?: string; tagline?: string; industry?: string };
+  location?: {
+    line1?: string; line2?: string; city?: string; region?: string;
+    postal?: string; country?: string; map_url?: string;
+    service_area?: string; parking?: string; notes?: string;
+  };
+  contact?: {
+    phone?: string; whatsapp?: string; email?: string;
+    support_email?: string; notes?: string; socials?: ProfileLink[];
+  };
+  hours?: {
+    timezone?: string;
+    regular?: Partial<Record<DayKey, HoursInterval[]>>;
+    exceptions?: HoursException[];
+    notes?: string;
+  };
+  links?: {
+    booking_url?: string; pricing_url?: string; portal_url?: string;
+    custom?: ProfileLink[];
+  };
+  policies?: {
+    payment_methods?: string[]; cancellation?: string; deposit?: string;
+    accessibility?: string; languages?: string[];
+  };
+}
+
 export interface Bot {
   id: string;
   org_id: string;
   name: string;
   business_name: string;
+  /** @deprecated superseded by `profile.hours`. Still rendered while
+   *  `profile` is null, which is every bot until it is backfilled. */
   hours: string | null;
+  /** @deprecated superseded by `profile.location`. */
   location: string | null;
+  /** @deprecated superseded by `profile.contact`. */
   contact: string | null;
   services: string | null;
   custom_instructions: string | null;
@@ -271,9 +327,15 @@ export interface Bot {
   created_at: string;
   business_description: string | null;
   faq: string | null;
+  /** @deprecated superseded by `profile.contact.email`. */
   contact_email: string | null;
+  /** @deprecated superseded by `profile.contact.phone`. */
   contact_phone: string | null;
+  /** @deprecated superseded by `profile.location`. */
   address: string | null;
+  /** NULL means the six legacy columns above are what the prompt
+   *  renders, byte for byte as it did before 015. */
+  profile: BusinessProfile | null;
   provider_config: VendorConfig | null;
   embedding_config: VendorConfig | null;
   rag_config: RagConfig | null;
@@ -371,7 +433,7 @@ export interface PreviewChunk {
   /** Never 'hybrid': a fused result is a mix, and each chunk keeps the
    *  channel that actually found it. The outcome-level channel below is
    *  where 'hybrid' appears. */
-  channel: 'vector' | 'lexical' | null;
+  channel: 'vector' | 'lexical' | 'faq-direct' | null;
 }
 
 /** Which embedding model ran, and where its similarity floor came from.
@@ -389,14 +451,20 @@ export interface EffectiveRetrieval {
 
 export interface RetrievePreview {
   query: string;
-  channel: 'vector' | 'lexical' | 'hybrid' | null;
+  channel: 'vector' | 'lexical' | 'hybrid' | 'faq-direct' | null;
   /** 'stale-index' means the corpus was built with a different
-   *  embedding model, so nothing was searched at all. */
-  skipped: 'disabled' | 'empty-query' | 'stale-index' | null;
+   *  embedding model, so nothing was searched at all. 'routed' means
+   *  the router decided this turn had nothing to search FOR. */
+  skipped: 'disabled' | 'empty-query' | 'stale-index' | 'routed' | null;
+  /** What the router decided for this query, and why — reported whether
+   *  or not the router is switched on, so "what would this do today" and
+   *  "what would this do if I turned it on" are both answerable. */
+  route: 'skip' | 'faq' | 'retrieve';
+  route_reason: string;
   error: string | null;
   settings: Required<Pick<RagConfig,
     'top_k' | 'min_similarity' | 'priority_boost' | 'lexical_fallback' | 'context_chars'
-    | 'retrieval_mode' | 'rerank'>>;
+    | 'retrieval_mode' | 'rerank' | 'router' | 'faq_shortcut_threshold'>>;
   effective: EffectiveRetrieval | null;
   chunks: PreviewChunk[];
   /** Exactly what would be pasted into the system prompt. */
@@ -409,9 +477,24 @@ export interface MissQuestion { text: string; count: number; lastAsked: string }
 
 export interface MissReport {
   range: { days: number; from: string; to: string };
-  totals: { queries: number; misses: number; missRate: number | null };
+  totals: {
+    queries: number; misses: number; missRate: number | null;
+    /** Visitor messages over the window. Null when the Worker could not
+     *  read them — the rate below is then null too. */
+    turns: number | null;
+    /** 0–1: turns answered with no search at all. Measured as turns
+     *  minus logged searches, so it counts every reason a turn did not
+     *  search, not the router alone. */
+    noSearchRate: number | null;
+  };
   questions: MissQuestion[];
-  channels: { vector: number; lexical: number; hybrid: number; missed: number };
+  channels: {
+    vector: number; lexical: number; hybrid: number;
+    /** Answered straight from a curated FAQ item, with no embedding
+     *  call at all (016). */
+    faqDirect: number;
+    missed: number;
+  };
   scores: {
     /** Median cosine score on turns the vector channel answered. */
     hitMedian: number | null;
@@ -438,6 +521,22 @@ export interface MigrateResult {
 }
 
 export interface MigratePlan { dry_run: true; plan: MigrateResult['plan'] }
+
+/** How many characters of each legacy column the backfill would move.
+ *  Keyed by the mapping itself, e.g. `"hours -> profile.hours.notes"`,
+ *  so the UI can list it without a second copy of the mapping. */
+export type ProfileBackfillPlanRows = Record<string, number>;
+export interface ProfileBackfillPlan {
+  dry_run: true;
+  plan: ProfileBackfillPlanRows;
+  profile: BusinessProfile | null;
+  detail: string;
+}
+export interface ProfileBackfillResult {
+  bot: Bot;
+  plan: ProfileBackfillPlanRows;
+  detail: string;
+}
 
 export interface PreviewTurn { role: 'user' | 'assistant'; content: string }
 export interface PreviewReply {
@@ -539,4 +638,11 @@ export const endpoints = {
                    api.post<MigratePlan>(`/v1/admin/bots/${id}/knowledge/migrate?dry_run=1`),
   migrate:       (id: string) => api.post<MigrateResult>(`/v1/admin/bots/${id}/knowledge/migrate`),
   revertMigrate: (id: string) => api.post<Bot>(`/v1/admin/bots/${id}/knowledge/revert`),
+
+  /** The plan, before anything is written. Reports what each legacy
+   *  column would become and says what a revert can and cannot undo. */
+  profileBackfillPlan: (id: string) =>
+                   api.post<ProfileBackfillPlan>(`/v1/admin/bots/${id}/profile/backfill?dry_run=1`),
+  profileBackfill: (id: string) =>
+                   api.post<ProfileBackfillResult>(`/v1/admin/bots/${id}/profile/backfill`),
 };

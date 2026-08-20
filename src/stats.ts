@@ -206,6 +206,32 @@ export interface MissReport {
      *  not zero, it is unknown, and rendering it as 0% would say the
      *  bot is doing well when it has done nothing at all. */
     missRate: number | null;
+    /**
+     * Visitor messages in the same window, from the messages table.
+     * Null when the caller did not supply them — this report is pure
+     * over the rows it is handed, and a denominator it was not given is
+     * unknown rather than zero.
+     */
+    turns: number | null;
+    /**
+     * Turns that were answered WITHOUT a search, as a 0–1 rate.
+     *
+     * MEASURED AS A DIFFERENCE, not counted directly, and the reason is
+     * worth stating because it bounds what the number means.
+     * retrievalLogRow logs nothing for a skipped turn — deliberately,
+     * since a greeting recorded as `matched: false` would inflate the
+     * miss rate — so a routed skip leaves no row anywhere to count.
+     * What CAN be counted is visitor turns minus turns that produced a
+     * log row, which is every turn that did not search for any reason:
+     * the router, the codepoint floor, retrieval switched off, a
+     * drifted index, or a bot with no corpus at all.
+     *
+     * So read it as "turns answered without a search", which is the
+     * number a tenant actually wants, and NOT as "turns the router
+     * skipped". Switching the router on should move it; if the miss
+     * rate moves with it, a skip rule is too aggressive.
+     */
+    noSearchRate: number | null;
   };
   /** Misses only, grouped and ranked. The list a tenant acts on. */
   questions: MissQuestion[];
@@ -215,8 +241,16 @@ export interface MissReport {
    *  `hybrid` (013) is its own count rather than folded into `vector`:
    *  a fused turn was answered by both channels at once, and reporting
    *  it as either would misdescribe what ran. A bot on the default mode
-   *  never records one. */
-  channels: { vector: number; lexical: number; hybrid: number; missed: number };
+   *  never records one.
+   *
+   *  `faqDirect` (016) likewise, and it is the one worth watching:
+   *  those turns cost no embedding call at all, so a tenant tuning
+   *  `faq_shortcut_threshold` is reading this number against the miss
+   *  rate to find where it stops helping and starts answering the wrong
+   *  question. */
+  channels: {
+    vector: number; lexical: number; hybrid: number; faqDirect: number; missed: number;
+  };
   scores: {
     /** Median top score on turns the VECTOR channel answered. Cosine,
      *  so it is comparable with `floor` below and with nothing else —
@@ -267,6 +301,20 @@ export function buildMissReport(opts: {
   cap: number;
   /** How many grouped questions to return. */
   limit?: number;
+  /**
+   * Message rows over at least the same window, for the no-search rate.
+   *
+   * Passed as ROWS rather than as a count so the window is applied here
+   * — once, by the same day-key membership test the retrieval rows go
+   * through. A count computed by the caller against its own `since`
+   * would be a denominator measured over a slightly different span from
+   * its numerator, which is the sort of quiet skew that makes a
+   * percentage untrustworthy without ever looking wrong.
+   *
+   * Optional: the report is complete without it, and a caller that has
+   * not fetched them gets nulls rather than a fabricated denominator.
+   */
+  messages?: StatMessageRow[];
 }): MissReport {
   const { days, rows, cap } = opts;
   const now = opts.now ?? new Date();
@@ -284,6 +332,10 @@ export function buildMissReport(opts: {
     inWindow.add(new Date(from.getTime() + i * 86_400_000).toISOString().slice(0, 10));
   }
 
+  const turns = opts.messages
+    ? opts.messages.filter((m) => m.role === 'user' && inWindow.has(dayKey(m.created_at))).length
+    : null;
+
   const questions = new Map<string, MissQuestion>();
   const hitScores: number[] = [];
   let queries = 0;
@@ -291,6 +343,7 @@ export function buildMissReport(opts: {
   let vector = 0;
   let lexical = 0;
   let hybrid = 0;
+  let faqDirect = 0;
   let missMax: number | null = null;
   let floor: number | null = null;
 
@@ -308,6 +361,7 @@ export function buildMissReport(opts: {
     if (r.matched) {
       if (r.channel === 'lexical') lexical++;
       else if (r.channel === 'hybrid') hybrid++;
+      else if (r.channel === 'faq-direct') faqDirect++;
       else vector++;
       // ONLY the vector channel's scores are pooled, and this is an
       // allow-list rather than a deny-list on purpose. A ts_rank_cd is
@@ -343,11 +397,21 @@ export function buildMissReport(opts: {
 
   return {
     range: { days, from: from.toISOString(), to: now.toISOString() },
-    totals: { queries, misses, missRate: queries ? misses / queries : null },
+    totals: {
+      queries, misses,
+      missRate: queries ? misses / queries : null,
+      turns,
+      // Clamped at zero rather than allowed to go negative. The two
+      // numbers come from two tables with independent retention, so a
+      // pruned messages table against a fuller retrieval log can
+      // legitimately produce more queries than turns — and "-4% of
+      // turns skipped a search" is a worse answer than 0%.
+      noSearchRate: turns ? Math.max(0, turns - queries) / turns : null,
+    },
     questions: [...questions.values()]
       .sort((a, b) => b.count - a.count || b.lastAsked.localeCompare(a.lastAsked))
       .slice(0, limit),
-    channels: { vector, lexical, hybrid, missed: misses },
+    channels: { vector, lexical, hybrid, faqDirect, missed: misses },
     scores: { hitMedian: median(hitScores), missMax, floor },
     truncated: rows.length >= cap,
   };

@@ -36,6 +36,39 @@ in sync, and it would freeze today's defaults into every bot.
 
 `logoUrl` is a URL this Worker serves, never the R2 object key.
 
+A `profile` object carries the business facts the widget can render as real
+affordances — a `tel:` link, a map, a booking button — rather than as a URL the
+model retypes and sometimes gets a character wrong. Same rule as `widget`: only
+the keys a tenant set, `null` when they set none, camelCase, and an older widget
+ignores it.
+
+```json
+{
+  "profile": {
+    "address": "12 Northgate, Leeds, LS1 4AB",
+    "mapUrl": "https://maps.example.com/…",
+    "phone": "0113 555 0100",
+    "email": "hello@example.com",
+    "booking": "https://book.example.com",
+    "hours": {
+      "timezone": "Europe/London",
+      "regular": { "mon": ["09:00–17:00"], "sat": ["10:00–13:00"] },
+      "notes": "Closed on bank holidays"
+    }
+  }
+}
+```
+
+`booking` resolves the one URL that lives in two places: `lead_config.booking_url`
+wins and `profile.links.booking_url` is the default beneath it, so a tenant's
+existing lead-capture configuration is what the button uses. The prompt resolves
+it the same way.
+
+The top-level `contact` field falls back through `contact_phone`, the legacy
+`contact` column, then the profile's phone and email — a tenant who signs up
+today fills in the Business Profile and nothing else, and this string is what a
+visitor is shown when the bot itself errors.
+
 ### `GET /v1/bots/:id/logo`
 Public. Streams the bot's uploaded logo from R2, or `404` when it has none. The
 only route that serves tenant-uploaded bytes to a browser — knowledge-base files
@@ -99,6 +132,21 @@ Rows are filtered by RLS, so these only ever return the caller's own orgs.
 | `DELETE` | `/v1/admin/bots/:id/logo` | Remove the logo and delete the object |
 | `GET` | `/v1/admin/bots/:id/leads` | List captured leads |
 | `GET` | `/v1/admin/bots/:id/conversations` | List recent conversation messages. `?session_id=` narrows to one transcript |
+| `POST` | `/v1/admin/bots/:id/profile/backfill` | Move the legacy `hours` / `address` / `contact*` columns into `bots.profile`. `?dry_run=1` reports the plan without writing |
+
+`PUT /v1/admin/bots/:id` accepts `profile` alongside the four config objects.
+It is **replaced wholesale with nothing carried forward** — unlike
+`widget_config` (which keeps `logo_key`) and `lead_config` (which keeps
+`webhook_url`), it holds no secret, so every save has to send the whole object.
+`null`, or an object that validates to nothing, stores as SQL NULL, and NULL
+means the legacy columns are rendered into the prompt exactly as they were
+before migration 015.
+
+`profile/backfill` refuses with `409` on a bot that already has a profile: it
+would replace what the tenant typed. It never writes the legacy columns, so
+clearing the profile puts a bot back on the prompt it has today — what a revert
+cannot bring back is any structuring done afterwards, since a weekly grid built
+by hand lives only in the profile.
 
 The old `/admin/*` routes return `410 Gone`.
 

@@ -66,11 +66,14 @@ import {
   type RetrievedChunk, type RetrievalOutcome,
 } from './rag/retrieve';
 import { parseFaqText } from './rag/chunk';
+import { routeTurn } from './rag/route';
 import {
   validateWidgetConfig, validateBehaviorConfig, validateLeadConfig, validateFaqItem,
+  validateProfile,
   behaviorConfigFor, widgetConfigFor, widgetPublicConfig, leadConfigFor,
   capPromptText, LIMITS,
 } from './config';
+import { profileFor, profilePublicCard } from './profile';
 import {
   detectLogoType,
   logoKeyFor,
@@ -234,7 +237,16 @@ app.get('/v1/bots/:id/health', async (c) => {
     botId:        bot.id,
     name:         bot.name,
     businessName: bot.business_name,
-    contact:      bot.contact_phone ?? bot.contact ?? null,
+    // The line the widget shows when the bot itself errors, so it must
+    // never go empty. The profile is the third and fourth fallback
+    // rather than the first, because the legacy columns are still
+    // populated on every bot that predates 015 — but a tenant who signs
+    // up today fills in the Business Profile and NOTHING ELSE, and
+    // without these two that visitor would be shown an error with no
+    // way to reach anyone.
+    contact:      bot.contact_phone ?? bot.contact
+                    ?? profileFor(bot)?.contact?.phone
+                    ?? profileFor(bot)?.contact?.email ?? null,
     primaryColor: bot.primary_color,
     // Null means the widget uses its own neutral defaults. Before this
     // every bot on the platform asked visitors about dental insurance.
@@ -244,6 +256,13 @@ app.get('/v1/bots/:id/health', async (c) => {
     // own — a second copy of them here is a second thing to keep in
     // sync, and an older widget ignores this object entirely.
     widget:       widgetPublicConfig(bot, logoUrlFor(bot, origin(c))),
+    // The business facts the widget can render as real affordances
+    // rather than as a URL the model retypes: hours, phone, map link,
+    // booking button (015, Phase 9). Null for a bot with no profile,
+    // which is every bot until it is backfilled. Same fixed-field
+    // discipline as the rest of this response — nothing here is
+    // reachable that a visitor could not already be told.
+    profile:      profilePublicCard(bot),
   });
 });
 
@@ -439,7 +458,38 @@ async function preflight(
     hasCorpus = typeof bot.chunk_count === 'number'
       ? bot.chunk_count > 0
       : await hasChunks(db, botId);
-    if (hasCorpus) {
+
+    // ── The router (015, Phase 5) ──────────────────────────────────
+    //
+    // The gate that actually stops the RAG calls. Until now the only
+    // one was isTooShortToRetrieve — four codepoints — so "thanks!" and
+    // "ok sounds good" each bought an embedding round-trip in front of
+    // time-to-first-token and up to context_chars of excerpts in a
+    // prompt that did not need them.
+    //
+    // OFF BY DEFAULT (rag_config.router), and conservative when on: a
+    // false skip is a wrong answer while a false retrieve is only
+    // latency. It does NOT try to recognise questions the profile can
+    // answer — the profile is in the prompt on every turn either way,
+    // so there is nothing to recognise. See src/rag/route.ts.
+    const decision = routeTurn(userMessage, bot);
+
+    // The FAQ shortcut (016) reads `faq_items` directly rather than the
+    // corpus, so it can answer on a bot with nothing indexed at all —
+    // which is precisely the bot whose embedding vendor is
+    // misconfigured, and the case a curated answer matters most in.
+    // Gating it behind `hasCorpus` would shut it out of the situation it
+    // exists for. retrieve() returns immediately after a shortcut miss
+    // when the corpus is known to be empty, so this costs nothing.
+    const faqShortcut = ragConfigFor(bot).faq_shortcut_threshold > 0;
+
+    if (decision.route === 'skip') {
+      // Not logged and not a miss. retrievalLogRow returns null for
+      // anything skipped, deliberately: a greeting recorded as
+      // `matched: false` would inflate the miss rate with turns nobody
+      // expected an answer to.
+      outcome = { chunks: [], skipped: 'routed' };
+    } else if (hasCorpus || faqShortcut) {
       // `retrieve` already tried the lexical fallback by the time it
       // returns, so its outcome is the final answer for this turn. That
       // ordering is load-bearing: computing the miss from the vector
@@ -466,12 +516,20 @@ async function preflight(
   // its own thing rather than folded into the miss rate. See B2.
   const staleIndex = outcome?.skipped === 'stale-index';
 
+  // A ROUTED SKIP IS NOT A MISS EITHER, for the same reason a stale
+  // index is not: retrieval did not run, so there is no outcome to
+  // describe. Counting it would fire `fallback_message` on "thanks" and
+  // escalate a conversation that was ending happily — R2 in
+  // docs/business-profile.md, and the single way switching the router
+  // on could make a bot look worse.
+  const routedSkip = outcome?.skipped === 'routed';
+
   // "The model was shown nothing from this business's own material" —
   // which is what the fallback message and the escalation below both
   // mean by a miss, and which is now reachable: before B1 the floor sat
   // below the embedder's noise floor and never rejected anything, so
   // this was permanently false and all three features were dead.
-  const missedRetrieval = hasCorpus && !staleIndex && rendered.length === 0;
+  const missedRetrieval = hasCorpus && !staleIndex && !routedSkip && rendered.length === 0;
 
   // The retrieval log row (M1). Which turns get logged is decided in
   // retrievalLogRow, next to the outcome it describes and unit-tested
@@ -982,6 +1040,11 @@ app.put('/v1/admin/bots/:id', async (c) => {
     const lead = validateLeadConfig(payload.lead_config);
     if (!lead.ok) return c.json({ error: lead.error }, 400);
     payload.lead_config = lead.value;
+  }
+  if ('profile' in payload) {
+    const profile = validateProfile(payload.profile);
+    if (!profile.ok) return c.json({ error: profile.error }, 400);
+    payload.profile = profile.value;
   }
 
   // The two text fields still inlined into every system prompt. Trimmed
@@ -1703,6 +1766,118 @@ app.post('/v1/admin/bots/:id/faq/reorder', async (c) => {
 });
 
 // ================================================================
+// POST /v1/admin/bots/:id/profile/backfill
+//
+// Moves the six legacy business-fact columns into `bots.profile`
+// (015), with ?dry_run=1 reporting the plan first.
+//
+// A ROUTE RATHER THAN MIGRATION SQL, mirroring /knowledge/migrate
+// above, and for the same three reasons: it is reversible (the legacy
+// columns are never written, only read), it reports a plan before it
+// acts, and a tenant who has already filled in the new form keeps what
+// they typed rather than having it overwritten by a migration that
+// cannot see the difference.
+//
+// IT DOES NOT PARSE `bots.hours`. "Mon-Fri 9-5, closed bank holidays"
+// is not machine-parseable and a half-right parse is worse than none —
+// it would produce a weekly grid that looks authoritative and quietly
+// drops the second half of the sentence. The whole mapping is a
+// lossless pass-through into `notes` and scalar fields:
+//
+//     hours         -> profile.hours.notes
+//     address       -> profile.location.line1  (or location, if null)
+//     contact_phone -> profile.contact.phone
+//     contact_email -> profile.contact.email
+//     contact       -> profile.contact.notes   (only when the two above
+//                                               are both null)
+//
+// The renderer prefers `hours.regular` over `hours.notes`, so a tenant
+// can structure their week afterwards at their own pace and the profile
+// is useful in the meantime.
+// ================================================================
+app.post('/v1/admin/bots/:id/profile/backfill', async (c) => {
+  const botId = c.req.param('id');
+  const dryRun = c.req.query('dry_run') === '1' || c.req.query('dry_run') === 'true';
+
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  if (profileFor(bot)) {
+    return c.json({
+      error: 'This bot already has a business profile. Edit it on the Business Profile screen instead — a backfill would replace what is there.',
+    }, 409);
+  }
+
+  const trimmed = (v: string | null | undefined) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+
+  const hours = trimmed(bot.hours);
+  const street = trimmed(bot.address) ?? trimmed(bot.location);
+  const phone = trimmed(bot.contact_phone);
+  const email = trimmed(bot.contact_email);
+  // Only when neither structured field is set. `bots.contact` was one
+  // freehand line and is not reliably either — copying it alongside a
+  // real phone number would put the same detail in the prompt twice.
+  const contactNotes = !phone && !email ? trimmed(bot.contact) : null;
+
+  const draft: Record<string, unknown> = {};
+  if (street) draft.location = { line1: street };
+  if (phone || email || contactNotes) {
+    draft.contact = {
+      ...(phone && { phone }),
+      ...(email && { email }),
+      ...(contactNotes && { notes: contactNotes }),
+    };
+  }
+  if (hours) draft.hours = { notes: hours };
+
+  // Through the same validator a settings save goes through, so a
+  // legacy column too long for LIMITS.profile.text is clamped here
+  // exactly as it would be if someone retyped it into the form.
+  const validated = validateProfile(Object.keys(draft).length ? draft : null);
+  if (!validated.ok) return c.json({ error: validated.error }, 400);
+
+  const plan = {
+    'hours -> profile.hours.notes': hours ? hours.length : 0,
+    'address -> profile.location.line1': street ? street.length : 0,
+    'contact_phone -> profile.contact.phone': phone ? phone.length : 0,
+    'contact_email -> profile.contact.email': email ? email.length : 0,
+    'contact -> profile.contact.notes': contactNotes ? contactNotes.length : 0,
+  };
+
+  // R4: the route is reversible in the sense that nothing is deleted —
+  // but a tenant who backfills, restructures their hours by hand, then
+  // clears the profile loses the restructuring, because the legacy
+  // columns still hold only the sentence. Say so here rather than in a
+  // support ticket, the way /knowledge/migrate does.
+  const caveat = 'Nothing is deleted: the legacy columns are read, never written, so clearing the profile puts this bot back on exactly the prompt it has today. What a revert cannot bring back is any structuring you do afterwards — a weekly grid built by hand lives only in the profile.';
+
+  if (dryRun) return c.json({ dry_run: true, plan, profile: validated.value, detail: caveat });
+
+  if (!validated.value) {
+    return c.json({
+      error: 'There is nothing to backfill — this bot has no legacy hours, address or contact details. Fill in the Business Profile screen directly.',
+    }, 409);
+  }
+
+  try {
+    const updated = await updateBot(c.get('db'), botId, { profile: validated.value });
+    if (!updated) return c.json({ error: 'Bot not found' }, 404);
+    return c.json({ bot: redactBotSecrets(updated, origin(c)), plan, detail: caveat });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Deployed ahead of its migration. The generic 502 sends whoever is
+    // debugging it looking at RLS instead of at the schema — the same
+    // trap the logo route names 009 for.
+    if (/profile/.test(message)) {
+      console.error('[profile] 015 not applied:', message);
+      return c.json({ error: 'The business profile needs database migration 015_business_profile.sql, which has not been applied yet.' }, 501);
+    }
+    console.error(err);
+    return c.json({ error: 'Database error' }, 502);
+  }
+});
+
+// ================================================================
 // Knowledge cutover
 //
 // Moves a bot's `services` and `faq` columns into the corpus and, only
@@ -1860,14 +2035,30 @@ app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
     // does. The tenant check already happened: getBotForAdmin ran under
     // RLS, so reaching this line proves they own the bot.
     const db = serviceDb(c.env);
-    const outcome = await retrieve(c.env, db, bot, query);
+
+    // The router runs here too, and that is the point (015, Phase 5).
+    // With it on, "thanks" retrieves nothing in production; a preview
+    // that searched anyway would show a tenant excerpts their visitors
+    // will never be given, which is precisely the plausible-looking
+    // wrong reading this inspector exists to prevent.
+    const decision = routeTurn(query, bot);
+    const outcome = decision.route === 'skip'
+      ? { chunks: [], skipped: 'routed' as const }
+      : await retrieve(c.env, db, bot, query);
 
     return c.json({
       query,
+      // What the router decided, and why, whether or not it is on —
+      // with `router: 'off'` this always reads 'retrieve', which is the
+      // honest answer to "what would this do today".
+      route: decision.route,
+      route_reason: decision.reason,
       channel: outcome.channel ?? null,
       skipped: outcome.skipped ?? null,
       error: outcome.error ?? null,
       settings: {
+        router: cfg.router,
+        faq_shortcut_threshold: cfg.faq_shortcut_threshold,
         top_k: cfg.top_k,
         // The floor THAT RAN, from the outcome — not a second guess at
         // it. It depends on the resolved embedding model, so a config
@@ -1977,8 +2168,22 @@ app.get('/v1/admin/bots/:id/retrieval', async (c) => {
   const since = new Date(Date.now() - days * 86_400_000).toISOString();
 
   try {
-    const rows = await getRetrievalLog(c.get('db'), botId, since);
-    return c.json(buildMissReport({ days, rows, cap: RETRIEVAL_LOG_CAP }));
+    const db = c.get('db');
+    // Two fetches, because the no-search rate is a difference between
+    // two tables: turns that happened, and turns that searched. A
+    // routed skip writes no retrieval_log row by design (see
+    // retrievalLogRow), so there is nothing in that table to count it
+    // by. The messages read is non-fatal — an older database, or a
+    // message table pruned harder than the retrieval log, drops the
+    // rate to null rather than the whole report to a 502.
+    const [rows, messages] = await Promise.all([
+      getRetrievalLog(db, botId, since),
+      getStatMessages(db, botId, since).catch((err) => {
+        console.error('[retrieval] visitor turn count failed (non-fatal):', err);
+        return undefined;
+      }),
+    ]);
+    return c.json(buildMissReport({ days, rows, cap: RETRIEVAL_LOG_CAP, messages }));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     // Deployed ahead of its migration. The generic 502 sends whoever is

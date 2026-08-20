@@ -177,6 +177,13 @@ export async function createBot(db: UserDb, payload: BotCreatePayload): Promise<
  * because a sentinel is only as reliable as the encoding it survives.
  */
 async function mergeConfigs(db: UserDb, botId: string, payload: BotUpdatePayload): Promise<BotUpdatePayload> {
+  // `profile` IS DELIBERATELY ABSENT FROM THIS LIST (015). It is
+  // replaced wholesale with nothing carried forward: it holds no
+  // secret, the Business Profile screen posts the whole object on every
+  // section save, and a merge would make a cleared field un-clearable.
+  // The next person to read this file will look for the exception
+  // widget_config.logo_key and lead_config.webhook_url get — there is
+  // none, and its absence is the design rather than an oversight.
   const touchesConfig = 'provider_config' in payload
     || 'embedding_config' in payload
     || 'widget_config' in payload
@@ -774,6 +781,39 @@ export async function matchChunksLexical(
   );
 }
 
+/** One curated Q&A that matched a visitor's message closely enough to
+ *  answer it outright (016). `similarity` is a pg_trgm score, 0-1 and
+ *  normalised — which is the whole reason this is a separate RPC from
+ *  match_chunks_lexical, whose ts_rank is neither. */
+export interface MatchedFaqItem {
+  id: string;
+  question: string;
+  answer: string;
+  similarity: number;
+}
+
+/**
+ * Trigram search over a bot's curated FAQ questions.
+ *
+ * Reads `faq_items` directly rather than the corpus, so it works before
+ * the FAQ has been ingested and on a bot whose embedding vendor is
+ * misconfigured. Disabled items are excluded in SQL.
+ */
+export async function matchFaqItems(
+  db: ServiceDb,
+  args: { botId: string; query: string; matchCount?: number; minSimilarity: number },
+): Promise<MatchedFaqItem[]> {
+  return pgFetch(db, '/rpc/match_faq_items',
+    { method: 'POST',
+      body: JSON.stringify({
+        p_bot_id:         args.botId,
+        p_query_text:     args.query,
+        p_match_count:    args.matchCount ?? 1,
+        p_min_similarity: args.minSimilarity,
+      }) }
+  );
+}
+
 /**
  * Whether a bot has anything indexed — lets the chat path skip the
  * embedding call entirely for bots with no corpus.
@@ -983,7 +1023,7 @@ export interface RetrievalLogInsert {
   matched: boolean;
   /** Free text in the column on purpose (012), so a third channel needs
    *  no migration — 013 added 'hybrid'. NULL on a miss. */
-  channel: 'vector' | 'lexical' | 'hybrid' | null;
+  channel: 'vector' | 'lexical' | 'hybrid' | 'faq-direct' | null;
   top_score: number | null;
   chunk_count: number;
   min_similarity: number | null;

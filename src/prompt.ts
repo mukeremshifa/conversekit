@@ -1,5 +1,6 @@
 import type { Bot, LeadFieldMode } from './types';
 import { leadConfigFor } from './config';
+import { profileFor, renderProfile } from './profile';
 
 /** "a", "a and b", "a, b and c". */
 function joinAnd(parts: string[]): string {
@@ -81,9 +82,19 @@ function leadCaptureLines(bot: Bot): string[] {
       : `Once you have at least ${required.join(' + ')}, confirm their details have been passed to the team.`,
   ]);
 
-  if (cfg.booking_url) {
+  // ONE BOOKING URL, TWO PLACES TO PUT IT (015, Phase 9). The profile
+  // owns it — it is a business fact, and the Business Profile screen is
+  // where someone looks for it — but lead_config had the field first
+  // and a tenant who filled it in must not lose it. So the lead
+  // config's value WINS and the profile's is the default beneath it,
+  // which makes the lead form's field an override rather than a rival.
+  //
+  // Null profile reads as undefined here, so this is a no-op on the
+  // legacy path and the pre-015 prompt is unchanged.
+  const bookingUrl = cfg.booking_url ?? profileFor(bot)?.links?.booking_url;
+  if (bookingUrl) {
     steps.push([
-      `Then offer this link so they can book a time themselves: ${cfg.booking_url}`,
+      `Then offer this link so they can book a time themselves: ${bookingUrl}`,
       'Share it once. Do not repeat it later in the conversation.',
     ]);
   }
@@ -124,7 +135,9 @@ function leadCaptureLines(bot: Bot): string[] {
  *   Empty for the overwhelming majority of turns, and an empty array
  *   leaves the prompt byte-identical to what it was before 009.
  */
-export function buildSystemPrompt(bot: Bot, retrievedContext = '', situational: string[] = []): string {
+export function buildSystemPrompt(
+  bot: Bot, retrievedContext = '', situational: string[] = [], now?: Date,
+): string {
   const lines: string[] = [
     `You are a helpful AI assistant for ${bot.business_name}.`,
     `Your name is ${bot.name}.`,
@@ -132,25 +145,24 @@ export function buildSystemPrompt(bot: Bot, retrievedContext = '', situational: 
     'Your job is to help website visitors get information about this business and, when appropriate, collect their contact details so the business can follow up.',
     'Always be friendly and professional. Reply in the same language the visitor uses.',
     'Keep replies concise — 2-4 sentences unless the visitor asks for detail.',
-    '',
-    '## Business Information',
   ];
 
-  if (bot.business_description) {
-    lines.push('');
-    lines.push(bot.business_description);
-  }
-
-  if (bot.address || bot.location)
-    lines.push(`- Address: ${bot.address ?? bot.location}`);
-  if (bot.hours)
-    lines.push(`- Hours: ${bot.hours}`);
-  if (bot.contact_phone)
-    lines.push(`- Phone: ${bot.contact_phone}`);
-  if (bot.contact_email)
-    lines.push(`- Email: ${bot.contact_email}`);
-  if (!bot.contact_phone && !bot.contact_email && bot.contact)
-    lines.push(`- Contact: ${bot.contact}`);
+  // ── The business facts (015) ────────────────────────────────────
+  //
+  // Tier 0: bounded, always relevant, never retrieved. renderProfile
+  // emits its own leading blank line and heading, and for a bot with
+  // `profile IS NULL` it emits the `## Business Information` block that
+  // was written out here inline until 015 — byte for byte, including
+  // the `bot.address ?? bot.location` reconciliation. That is the whole
+  // mitigation for the biggest risk in this change, and
+  // scripts/test-profile-units.mjs compares the strings rather than
+  // trusting the reading.
+  //
+  // It stays ABOVE the retrieval firewall on purpose. The profile is
+  // tenant-authored through a structured form, not scraped from a page,
+  // so it gets the trust level custom_instructions gets rather than the
+  // "FACTS TO USE, never instructions" framing renderContext applies.
+  lines.push(...renderProfile(bot, now));
 
   // ── Services and FAQ: only until the bot is cut over ────────────
   //
@@ -165,10 +177,11 @@ export function buildSystemPrompt(bot: Bot, retrievedContext = '', situational: 
   // rather than trusting this reading — the same convention
   // scripts/test-lead-capture.mjs set for the lead block.
   //
-  // The identity card above stays hardcoded on purpose. A bot should
-  // always know its own opening hours without a vector search rolling
-  // the dice, and a few hundred characters of facts-about-itself is a
-  // cost worth paying unconditionally.
+  // The business facts above stay in the prompt on purpose, and 015
+  // made that a tier rather than an accident. A bot should always know
+  // its own opening hours without a vector search rolling the dice, and
+  // a few hundred characters of facts-about-itself is a cost worth
+  // paying unconditionally.
   if (!bot.knowledge_migrated_at) {
     if (bot.services) {
       lines.push('');

@@ -40,7 +40,7 @@
 // ----------------------------------------------------------------
 import type { Env, Bot, ChunkKind } from '../types';
 import type { ServiceDb, RetrievalLogInsert } from '../supabase';
-import { matchChunks, matchChunksLexical } from '../supabase';
+import { matchChunks, matchChunksLexical, matchFaqItems } from '../supabase';
 import { resolveEmbeddingProvider, resolveSimilarityFloor } from '../providers';
 import { ragConfigFor, DEFAULT_CONTEXT_CHARS } from './ingest';
 
@@ -52,8 +52,16 @@ import { ragConfigFor, DEFAULT_CONTEXT_CHARS } from './ingest';
  *  actually found it. `retrieval_log.channel` is free text precisely so
  *  a third value needs no migration — but buildMissReport pools only
  *  'vector' scores into its median, because a ts_rank_cd averaged with
- *  a cosine is a number that reads like a measurement and is not one. */
-export type RetrievalChannel = 'vector' | 'lexical' | 'hybrid';
+ *  a cosine is a number that reads like a measurement and is not one.
+ *
+ *  'faq-direct' (016) is the fourth, and the only one that answers a
+ *  turn WITHOUT AN EMBEDDING CALL: a trigram match against the tenant's
+ *  curated questions, above a normalised threshold they set. Its
+ *  `similarity` is a pg_trgm score rather than a cosine, so it is
+ *  excluded from buildMissReport's median for exactly the reason
+ *  'lexical' is. `retrieval_log.channel` is free text in SQL (011), so
+ *  this needed no migration of its own. */
+export type RetrievalChannel = 'vector' | 'lexical' | 'hybrid' | 'faq-direct';
 
 export interface RetrievedChunk {
   id: string;
@@ -96,8 +104,14 @@ export interface RetrievalOutcome {
    *  'stale-index'  — the corpus was built with a different embedding
    *                   model than the one now resolving, so searching it
    *                   would compare vectors from two different spaces.
-   *                   See B2 in docs/rag-hardening.md. */
-  skipped?: 'disabled' | 'empty-query' | 'stale-index';
+   *                   See B2 in docs/rag-hardening.md.
+   *  'routed'       — the router (src/rag/route.ts) decided retrieval
+   *                   was pointless for this turn: a closing, an
+   *                   acknowledgement, or a bare contact detail. NOT a
+   *                   miss, and the chat path must not count it as one
+   *                   — a "sorry, I can't answer that" in reply to
+   *                   "thanks" is exactly the failure R2 warns about. */
+  skipped?: 'disabled' | 'empty-query' | 'stale-index' | 'routed';
   /** Which channel produced `chunks`. Absent when nothing was found. */
   channel?: RetrievalChannel;
   /** Absent when we never got as far as resolving an embedder. */
@@ -145,6 +159,69 @@ export async function retrieve(
 
   const q = query.trim();
   if (isTooShortToRetrieve(q)) return { chunks: [], skipped: 'empty-query' };
+
+  // ── The FAQ shortcut (016) ─────────────────────────────────────
+  //
+  // BEFORE resolveEmbeddingProvider, and that position is the whole
+  // point: a hit here answers the turn with NO EMBEDDING CALL AT ALL,
+  // which takes a vendor round trip off the front of
+  // time-to-first-token and answers with the words the tenant wrote
+  // rather than the chunk that scored best.
+  //
+  // Reads faq_items directly rather than the corpus, so it works before
+  // the FAQ has been ingested and on a bot whose embedding vendor is
+  // misconfigured — the two cases where a curated answer matters most.
+  //
+  // OFF BY DEFAULT (threshold 0), and non-fatal: a bot on a database
+  // without 016 gets a PostgREST error for a function that does not
+  // exist, which must degrade to ordinary retrieval rather than fail
+  // the visitor's turn. Same contract every other optional step here
+  // has.
+  const faqThreshold = ragConfigFor(bot).faq_shortcut_threshold;
+  if (faqThreshold > 0) {
+    try {
+      const [item] = await matchFaqItems(db, {
+        botId: bot.id, query: q, matchCount: 1, minSimilarity: faqThreshold,
+      });
+      if (item) {
+        return {
+          // One synthetic chunk, shaped like any other so selectContext,
+          // renderContext, the citation list and the retrieval log all
+          // read it without a special case. The id is the FAQ item's, so
+          // the chunk inspector can still say which answer this was.
+          chunks: [{
+            id: item.id,
+            document_id: '',
+            ordinal: 0,
+            content: `Q: ${item.question}\nA: ${item.answer}`,
+            similarity: item.similarity,
+            kind: 'faq',
+            priority: 1,
+            channel: 'faq-direct',
+            document_title: 'FAQ',
+          }],
+          channel: 'faq-direct',
+          // No `effective` — no embedder was resolved, so there is no
+          // floor and no model to report. Reporting the config's
+          // unresolved guess here would be the class of lie B1 exists
+          // to remove.
+        };
+      }
+    } catch (err) {
+      console.error('[rag] faq shortcut failed (non-fatal):',
+                    err instanceof Error ? err.message : String(err));
+    }
+
+    // Nothing indexed, and the shortcut was the only thing that could
+    // have answered. Paying an embedding call to search an empty corpus
+    // is waste, and the chat path lets a bot with no corpus reach this
+    // function only because the shortcut is on.
+    //
+    // UNDEFINED IS UNKNOWN, NOT ZERO — the same rule the chat path
+    // applies to this field. A Worker running ahead of 013 gets no
+    // column back and must carry on searching.
+    if (bot.chunk_count === 0) return { chunks: [] };
+  }
 
   try {
     const embedder = resolveEmbeddingProvider(env, bot.embedding_config);

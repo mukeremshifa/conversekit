@@ -60,8 +60,7 @@ type Form = {
   custom_instructions: string;
   allowed_origins: string[];
   suggestions: string[];
-  contact_phone: string; contact_email: string; address: string;
-  hours: string; primary_color: string;
+  primary_color: string;
   position: WidgetPosition;
   theme: WidgetTheme;
   greeting: string;
@@ -105,11 +104,6 @@ const from = (b: Bot): Form => ({
     ? b.allowed_origins
     : b.allowed_origin ? [b.allowed_origin] : [''],
   suggestions: b.suggestions?.length ? b.suggestions : [],
-  // The pre tenancy columns are still populated on older rows.
-  contact_phone: b.contact_phone ?? b.contact ?? '',
-  contact_email: b.contact_email ?? '',
-  address: b.address ?? b.location ?? '',
-  hours: b.hours ?? '',
   primary_color: (b.primary_color ?? '#2563EB').toUpperCase(),
 
   position: b.widget_config?.position ?? 'bottom-right',
@@ -181,7 +175,6 @@ const OWNED = {
   appearance: ['primary_color', 'position', 'theme'],
   greeting:   ['greeting', 'greeting_delay_ms', 'suggestions'],
   behaviour:  ['show_typing', 'show_citations', 'max_messages', 'fallback_message', 'escalate_after_misses'],
-  contact:    ['contact_phone', 'contact_email', 'address', 'hours'],
   leads:      [
     'lead_enabled', 'lead_trigger', 'lead_after', 'lead_phone', 'lead_company',
     'lead_inquiry', 'lead_consent', 'lead_success', 'lead_booking', 'lead_tag',
@@ -365,11 +358,7 @@ export function BotConfiguration({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot)
       : id === 'appearance' ? { primary_color: merged.primary_color, widget_config: widgetConfig(merged) }
       : id === 'greeting' ? { suggestions, widget_config: widgetConfig(merged) }
       : id === 'behaviour' ? { widget_config: widgetConfig(merged), behavior_config: behaviorConfig(merged) }
-      : id === 'leads' ? { lead_config: leadConfig(merged) }
-      : {
-          contact_phone: merged.contact_phone, contact_email: merged.contact_email,
-          address: merged.address, hours: merged.hours,
-        };
+      : { lead_config: leadConfig(merged) };
 
     setBusy(id);
     try {
@@ -1029,30 +1018,13 @@ export function BotConfiguration({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot)
         </Card>
       </Section>
 
-      <Section
-        title="Contact"
-        description="Offered to visitors when the bot cannot answer, and shown if the widget itself errors."
-      >
-        <Card>
-          <CardContent className="pb-0">
-            <Rows>
-              <SettingRow label="Phone">
-                <Input value={form.contact_phone} onChange={(e) => set({ contact_phone: e.target.value })} />
-              </SettingRow>
-              <SettingRow label="Email">
-                <Input type="email" value={form.contact_email} onChange={(e) => set({ contact_email: e.target.value })} />
-              </SettingRow>
-              <SettingRow label="Address">
-                <Input value={form.address} onChange={(e) => set({ address: e.target.value })} />
-              </SettingRow>
-              <SettingRow label="Opening hours">
-                <Input value={form.hours} onChange={(e) => set({ hours: e.target.value })} placeholder="Mon to Fri, 8am to 6pm" />
-              </SettingRow>
-            </Rows>
-          </CardContent>
-          <SaveBar busy={busy === 'contact'} dirty={isDirty('contact')} onSave={() => void saveSection('contact')} />
-        </Card>
-      </Section>
+      {/* The Contact section lived here until 015. It edited four
+          legacy columns — contact_phone, contact_email, address, hours
+          — that `bots.profile` now supersedes, and it is the Business
+          Profile screen that owns them. The columns themselves are read
+          -through deprecated rather than dropped, so a bot that has
+          never been backfilled still renders exactly the prompt it did
+          before; there is simply no longer a form pointing at them. */}
     </div>
   );
 }

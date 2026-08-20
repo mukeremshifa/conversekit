@@ -62,6 +62,51 @@
     { "query": "book me a flight to Lisbon next tuesday" }
   ],
 
+  "_routing_comment": [
+    "The retrieval router (015, src/rag/route.ts). Each case asserts the",
+    "ROUTE the preview reports, which is what the chat path would do.",
+    "",
+    "NOTE A DELIBERATE DEPARTURE FROM docs/business-profile.md. That brief",
+    "asks for profile-answerable questions (hours, address, phone,",
+    "booking) asserting route 'skip'. They do not skip, and must not: the",
+    "router explicitly does NOT do intent detection, because /what.*hours/i",
+    "will never match 你们几点开门 and the prompt tells the model to answer",
+    "in the visitor's own language. What makes those questions cheap is",
+    "that the PROFILE IS ALWAYS IN THE PROMPT, not that anything",
+    "recognised them.",
+    "",
+    "So `profile` below asserts the opposite of the brief, and asserting",
+    "it is the point: it is the regression test that stops someone",
+    "'finishing' the router with a bag of intent regexes and quietly",
+    "making the bot stop answering its most common questions.",
+    "",
+    "`skips` is the other half — turns where retrieval is genuinely",
+    "pointless. These need rag_config.router = 'on', which the harness",
+    "sets on its throwaway bot."
+  ],
+
+  "routing": {
+    "profile": [
+      { "query": "what are your opening hours", "expect_route": "retrieve" },
+      { "query": "where are you based", "expect_route": "retrieve" },
+      { "query": "what is your phone number", "expect_route": "retrieve" },
+      { "query": "how do I book an appointment", "expect_route": "retrieve" },
+      { "query": "你们几点开门", "expect_route": "retrieve" },
+      { "query": "cuales son sus horarios", "expect_route": "retrieve" },
+      { "query": "thanks, but what are your hours?", "expect_route": "retrieve" },
+      { "query": "多少钱", "expect_route": "retrieve" }
+    ],
+    "skips": [
+      { "query": "thanks", "expect_route": "skip" },
+      { "query": "ok, sounds good", "expect_route": "skip" },
+      { "query": "bye!", "expect_route": "skip" },
+      { "query": "谢谢", "expect_route": "skip" },
+      { "query": "gracias", "expect_route": "skip" },
+      { "query": "priya@example.com", "expect_route": "skip" },
+      { "query": "07700 900123", "expect_route": "skip" }
+    ]
+  },
+
   "thresholds": {
     "recall_at_k": 0.9,
     "negative_rejection": 1.0

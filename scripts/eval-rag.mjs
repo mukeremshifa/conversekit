@@ -145,6 +145,11 @@ async function main() {
   const rag = {
     chunk_size: 300,
     chunk_overlap: 60,
+    // The router is ON for this bot, because the routing assertions
+    // below are about what it does when it is switched on. It defaults
+    // to 'off' everywhere else, which is the whole point of it having a
+    // default.
+    router: 'on',
     ...(SWEEP ? { top_k: Math.max(TOP_K, 10), min_similarity: 0 } : { top_k: TOP_K }),
   };
 
@@ -213,6 +218,21 @@ async function main() {
     negatives.push({ ...c, res });
   }
 
+  // ── The router (015) ───────────────────────────────────────────
+  // Two lists, and the first is the one that matters: questions the
+  // BUSINESS PROFILE answers must still route to 'retrieve'. They are
+  // cheap because the profile is in every prompt, not because anything
+  // recognised them — and a router that "helpfully" learned to spot
+  // them would be a router that stops answering them in the languages
+  // its regexes were not written in. See the note in golden.json.
+  const routing = [];
+  for (const [group, cases] of Object.entries(golden.routing ?? {})) {
+    for (const c of cases) {
+      const res = await ask(c.query);
+      routing.push({ ...c, group, got: res.route ?? null, reason: res.route_reason ?? '' });
+    }
+  }
+
   const effective = positives[0]?.res?.effective ?? null;
   if (effective) {
     console.log(`Embedder : ${effective.embedding_model}`);
@@ -230,6 +250,11 @@ async function main() {
   } else {
     failures += reportRun(positives, negatives);
   }
+
+  // Reported after the sweep as well: the sweep changes the floor, not
+  // the router, so these assertions hold either way and a run that only
+  // swept would otherwise never check them.
+  failures += reportRouting(routing);
 
   if (KEEP) console.log(`\n--keep: bot ${botId} left in place under org ${tenant.orgId}`);
   return failures;
@@ -294,6 +319,48 @@ function reportRun(positives, negatives) {
     : `\nRetrieval eval FAILED.\n`);
 
   return thresholdFailures;
+}
+
+/**
+ * Did the router send each turn where it should have?
+ *
+ * A FALSE SKIP IS A WRONG ANSWER; A FALSE RETRIEVE IS ONLY LATENCY, so
+ * the two groups are not equally serious and the report says so. A
+ * `profile` case that skipped is a bot that has stopped answering its
+ * most common question; a `skips` case that retrieved is one wasted
+ * embedding call.
+ */
+function reportRouting(routing) {
+  if (!routing.length) return 0;
+
+  console.log('\nRouting — which turns searched at all');
+  let wrong = 0;
+  let wasteful = 0;
+
+  for (const r of routing) {
+    const ok = r.got === r.expect_route;
+    // Skipping something the profile answers is the failure this whole
+    // list exists to catch. Retrieving a "thanks" is not.
+    const serious = !ok && r.expect_route === 'retrieve';
+    if (serious) wrong++;
+    else if (!ok) wasteful++;
+    const mark = ok ? 'ok  ' : serious ? 'EATEN' : 'waste';
+    console.log(`  ${mark} ${(r.got ?? '—').padEnd(9)} ${r.reason.padEnd(28)} ${r.query}`);
+  }
+
+  if (wrong) {
+    console.log(`\n  FAIL ${wrong} question(s) the profile answers were skipped by the router.`);
+    console.log('  A skip rule is too broad. See src/rag/route.ts — the router must catch');
+    console.log('  turns where retrieval is POINTLESS, never turns where it is unnecessary.');
+  }
+  if (wasteful) {
+    console.log(`\n  ${wasteful} closing(s) still retrieved. Not a failure — one wasted embedding`);
+    console.log('  call each, and widening the closing set is how this stops being safe.');
+  }
+  if (!wrong && !wasteful) console.log('\n  All routing assertions hold.');
+
+  // Only the serious half fails the run.
+  return wrong ? 1 : 0;
 }
 
 /**
