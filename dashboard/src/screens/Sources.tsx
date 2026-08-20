@@ -6,7 +6,7 @@ import { formatDate } from '@/lib/utils';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   Field, Input, Muted, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-  EmptyState, ListSkeleton, Table, TableSkeleton, Td, Textarea, Th,
+  EmptyState, RowsSkeleton, Table, TableSkeleton, Td, Textarea, Th,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
@@ -178,7 +178,12 @@ export function Sources({
         </CardHeader>
         <CardContent>
           {docs === null ? (
-            <ListSkeleton rows={3} />
+            // The table's own headers and row height, rather than a
+            // stack of tiles this screen has never rendered.
+            <TableSkeleton
+              columns={['Title', 'Type', 'Status', 'Chunks', 'Added', { label: '' }]}
+              rows={3}
+            />
           ) : docs.length === 0 ? (
             <EmptyState
               icon={Boxes}
@@ -275,7 +280,9 @@ export function Sources({
           </CardHeader>
           <CardContent>
             {inspect.chunks === null ? (
-              <TableSkeleton rows={4} cols={2} />
+              // Chunks are numbered paragraphs on a divided list, not
+              // a two-column table.
+              <RowsSkeleton rows={4} lines={3} ordinal />
             ) : inspect.chunks.length === 0 ? (
               <Muted className="text-sm">No chunks — indexing may still be running, or it failed.</Muted>
             ) : (

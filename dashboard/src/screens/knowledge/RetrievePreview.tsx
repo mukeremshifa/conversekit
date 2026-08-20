@@ -20,10 +20,7 @@ import { Search, Sparkles, Type } from 'lucide-react';
 import {
   endpoints, type Bot, type EffectiveRetrieval, type RetrievePreview as Result,
 } from '@/lib/api';
-import {
-  Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  Input, Muted,
-} from '@/components/ui';
+import { Badge, Button, Card, CardContent, Input, Muted } from '@/components/ui';
 
 export function RetrievePreview({
   bot, onEffective,
@@ -63,17 +60,7 @@ export function RetrievePreview({
 
   return (
     <Card>
-      <CardHeader>
-        <div>
-          <CardTitle>What would this retrieve?</CardTitle>
-          <CardDescription>
-            Ask something a visitor would ask. This runs the same search the bot runs, with this
-            bot&rsquo;s current settings — nothing is sent to the AI model and no conversation is
-            recorded.
-          </CardDescription>
-        </div>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         <div className="flex gap-2">
           <Input
             value={query}
@@ -97,12 +84,12 @@ function Outcome({ result }: { result: Result }) {
   if (result.skipped === 'disabled') {
     return (
       <Muted className="mt-4 text-sm">
-        Retrieval is switched off for this bot, so nothing is searched. Turn it on below.
+        Search is switched off for this bot, so nothing is looked up. Turn it on below.
       </Muted>
     );
   }
   if (result.skipped === 'empty-query') {
-    return <Muted className="mt-4 text-sm">Too short to search — try a whole question.</Muted>;
+    return <Muted className="mt-4 text-sm">Too short to search. Try a whole question.</Muted>;
   }
   if (result.skipped === 'stale-index') {
     return (
@@ -111,9 +98,9 @@ function Outcome({ result }: { result: Result }) {
         <Muted className="text-sm leading-relaxed">
           Your sources were indexed with a different embedding model from the one this bot now
           uses{result.effective ? <> (<code>{result.effective.embedding_model}</code>)</> : null}.
-          The two score on different scales, so comparing them produces noise rather than matches —
-          the bot answers from its own business details instead, which is why it has not started
-          saying strange things. Re-index your sources on the Sources tab to fix it.
+          The two score on different scales, so comparing them produces noise rather than matches.
+          The bot answers from its business details alone in the meantime, which is why it has not
+          started saying strange things. Re-index your sources on the Sources tab to fix it.
         </Muted>
       </div>
     );
@@ -154,16 +141,16 @@ function Outcome({ result }: { result: Result }) {
 
       {result.channel === 'hybrid' && (
         <Muted className="text-xs leading-relaxed">
-          Both searches ran and their results were merged by rank. A passage each one found
-          separately outranks a passage only one of them put first — which is the point, and is
-          also why the per-passage scores below are not comparable with each other.
+          Both searches ran and their results were combined by rank. A passage that each one found
+          separately outranks a passage only one of them put first, which is also why the scores
+          below are not comparable with each other.
         </Muted>
       )}
 
       {result.channel === 'lexical' && (
         <Muted className="text-xs leading-relaxed">
           Nothing was close enough by meaning, so this fell back to matching words against your FAQ.
-          That rescue only covers FAQ items — the same question against a document would have found
+          That rescue covers FAQ items only. The same question against a document would have found
           nothing.
         </Muted>
       )}

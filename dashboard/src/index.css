@@ -43,9 +43,24 @@
      (worst adjacent dE 27.9 protan), normal-vision floor, and >=3:1
      contrast. The brand gold itself is 1.8:1 here and L 0.81 — out of
      band on both counts — so series 1 is the gold-600 step, which is the
-     value the UI already uses for strokes. */
+     value the UI already uses for strokes.
+
+     Slots 3-5 were added for the breakdowns that carry more than two
+     series (share by vendor, by activity). They are NOT eyeballed:
+     candidate hue families were enumerated against slots 1-2 held
+     fixed — repainting a shipped series would break identity — and
+     only the pink>violet>teal order clears every gate in BOTH modes.
+     Worst adjacent pair light: CVD dE 12.7 protan, normal-vision 26.1,
+     all five >=3:1 on #FFFFFF.
+
+     Green, red and orange are deliberately absent: they collide with
+     the reserved status tokens below, and a series must never
+     impersonate a status. */
   --color-chart-1:       #B98B0F;
   --color-chart-2:       #1D5FA8;
+  --color-chart-3:       #BE185D;
+  --color-chart-4:       #6D28D9;
+  --color-chart-5:       #0D9488;
   --color-chart-grid:    #EDEDF0;
 
   --color-danger:        #B42318;
@@ -83,6 +98,9 @@
        holds — it validates on #141417 too — while series 2 lifts, because
        #1D5FA8 drops under 3:1 here. */
     --color-chart-2:       #4C8FD6;
+    --color-chart-3:       #DB2777;
+    --color-chart-4:       #8B5CF6;
+    --color-chart-5:       #0D9488;
     --color-chart-grid:    #23232A;
 
     --color-danger:        #F0857A;
@@ -106,6 +124,9 @@
      holds — it validates on #141417 too — while series 2 lifts, because
      #1D5FA8 drops under 3:1 here. */
   --color-chart-2:       #4C8FD6;
+  --color-chart-3:       #DB2777;
+  --color-chart-4:       #8B5CF6;
+  --color-chart-5:       #0D9488;
   --color-chart-grid:    #23232A;
 
   --color-danger:        #F0857A;
@@ -187,6 +208,17 @@
     animation: ck-shimmer 1.6s infinite;
   }
 
+  /* Charts draw in from the left. This is the one animation on the
+     dashboard that carries meaning rather than decorating: time runs
+     left to right on every chart here, so the wipe follows the axis.
+     Keyed on the series length by the caller, so changing the range
+     replays it and a refetch of the same range does not. */
+  @keyframes ck-wipe {
+    from { clip-path: inset(0 100% 0 0); }
+    to   { clip-path: inset(0 0 0 0); }
+  }
+  .ck-plot { animation: ck-wipe .55s cubic-bezier(.2,.7,.3,1) both; }
+
   .ck-press { transition: transform .12s ease; }
   .ck-press:active { transform: translateY(1px); }
 }
@@ -196,7 +228,11 @@
      outright rather than left parked over the block. */
   .ck-route,
   .ck-stagger > *,
+  .ck-plot,
   .ck-shimmer::after { animation: none !important; }
+  /* Left unset rather than animated — a plot stuck mid-wipe would clip
+     the data. */
+  .ck-plot { clip-path: none !important; }
   .ck-shimmer::after { display: none; }
   .ck-press { transition: none; }
   *, *::before, *::after {

@@ -18,9 +18,12 @@ import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { ArrowDownRight, ArrowUpRight, MessagesSquare, Target, Search } from 'lucide-react';
 import { endpoints, type Bot, type Stats } from '@/lib/api';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, Muted, Spinner } from '@/components/ui';
+import {
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
+  ChartCardSkeleton, Muted, Skeleton, StatSkeleton,
+} from '@/components/ui';
 import { Header } from '@/screens/Providers';
-import { LeadsChart, MessagesChart, Sparkline, TopQuestions } from '@/components/charts';
+import { MiniChart, Sparkline, TopQuestions, byWeekIfLong, percent } from '@/components/charts';
 import { cn } from '@/lib/utils';
 
 const RANGES = [7, 30, 90] as const;
@@ -84,6 +87,29 @@ function Loaded({ stats, loading, onNavigate }:
   const t = stats.totals;
   const quiet = t.messages === 0 && t.leads === 0;
 
+  // Counts are rolled into weeks before any rate is derived from them,
+  // never after: the average of seven daily conversion percentages is
+  // not the week's conversion rate, and on a bot with quiet days it is
+  // not even close.
+  const { rows: series, weekly } = byWeekIfLong(stats.series);
+  const per = weekly ? 'week' : 'day';
+
+  const conversations = series.map((d) => ({ date: d.date, value: d.sessions }));
+  // Visitor turns per conversation — the same ratio the API reports as
+  // `turnsPerSession`, cut by bucket. A bot answering in one turn and a
+  // bot dragging visitors through six look identical on a message count
+  // and nothing like each other here.
+  const depth = series.map((d) => ({
+    date: d.date, value: d.sessions ? d.visitor / d.sessions : 0,
+  }));
+  const leads = series.map((d) => ({ date: d.date, value: d.leads }));
+  const conversion = series.map((d) => ({
+    // Clamped because leads are captured mid-conversation and a session
+    // that spans midnight can land its lead in the next bucket, which
+    // would otherwise draw a rate above 100%.
+    date: d.date, value: d.sessions ? Math.min(1, d.leads / d.sessions) : 0,
+  }));
+
   return (
     <div className={cn('space-y-6 transition-opacity', loading && 'opacity-60')}>
       <div className="ck-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -129,17 +155,37 @@ function Loaded({ stats, loading, onNavigate }:
 
       {!quiet && (
         <>
+          {/* Two panels, not two series on one plot. Conversations are
+              counted in tens and depth in single turns, so overlaying
+              them would need a second y-axis — and the alignment of two
+              scales is arbitrary, which invents a correlation the data
+              does not contain. Side by side over the same dates, the
+              reader compares them by looking across.
+
+              This replaced a stacked area of visitor turns under
+              assistant turns. Every visitor message gets a reply, so the
+              two bands moved together by construction: one signal drawn
+              twice, and the volume it showed is already the Messages
+              tile above. */}
           <Card>
             <CardHeader>
               <div>
-                <CardTitle>Messages per day</CardTitle>
+                <CardTitle>Traffic</CardTitle>
                 <CardDescription>
-                  Visitor turns and the replies to them, over the last {stats.range.days} days.
+                  How many conversations this bot had, and how long they ran, over the
+                  last {stats.range.days} days
+                  {t.turnsPerSession !== null && <> — averaging {t.turnsPerSession.toFixed(1)} visitor
+                    turns per conversation</>}.
                 </CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <MessagesChart data={stats.series} />
+              <div className="grid gap-6 sm:grid-cols-2">
+                <MiniChart title={`Conversations per ${per}`} data={conversations}
+                           weekly={weekly} noun="conversation" />
+                <MiniChart title="Turns per conversation" data={depth} color="var(--color-chart-2)"
+                           weekly={weekly} format={(n) => n.toFixed(1)} />
+              </div>
               {stats.truncated.messages && (
                 <Muted className="mt-3 text-xs">
                   Showing the most recent messages only — this window exceeded the row limit,
@@ -153,14 +199,29 @@ function Loaded({ stats, loading, onNavigate }:
             <Card>
               <CardHeader>
                 <div>
-                  <CardTitle>Leads per day</CardTitle>
-                  <CardDescription>Captured mid-conversation.</CardDescription>
+                  <CardTitle>Leads</CardTitle>
+                  <CardDescription>
+                    Captured mid-conversation — how many, and what share of conversations
+                    produced one.
+                  </CardDescription>
                 </div>
               </CardHeader>
               <CardContent>
                 {t.leads === 0
                   ? <EmptyPanel icon={Target} text="No leads captured in this window." />
-                  : <LeadsChart data={stats.series} />}
+                  : (
+                    <div className="space-y-6">
+                      <MiniChart title={`Leads per ${per}`} data={leads} kind="column"
+                                 weekly={weekly} noun="lead" />
+                      {/* Pinned to 100% rather than to its own peak: a
+                          conversion rate is read against the whole, and
+                          an auto-scaled axis would make 3% look like a
+                          good week. */}
+                      <MiniChart title="Conversion rate" data={conversion}
+                                 color="var(--color-chart-2)" max={1} format={percent}
+                                 weekly={weekly} />
+                    </div>
+                  )}
               </CardContent>
             </Card>
 
@@ -298,41 +359,53 @@ function EmptyPanel({ icon: Icon, text }: { icon: typeof Target; text: string })
   );
 }
 
-/** Matches the loaded layout so the page does not jump when data lands. */
+/**
+ * The loaded layout, tile for tile: the four stats, the messages chart,
+ * the two panels beside it, the knowledge-base strip. Built from the
+ * same Card and Stat shapes rather than hand-measured bars, which is
+ * what left the tiles a row shorter than the ones that replaced them.
+ */
 function SkeletonOverview() {
-  const bar = 'animate-pulse rounded bg-sunk';
   return (
     <div className="space-y-6" aria-busy="true" aria-label="Loading statistics">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((i) => (
-          <Card key={i}>
-            <CardContent className="space-y-3 pt-5">
-              <div className={cn(bar, 'h-3 w-24')} />
-              <div className={cn(bar, 'h-7 w-16')} />
-              <div className={cn(bar, 'h-7 w-full')} />
-            </CardContent>
-          </Card>
+          // Three of the four tiles carry a sparkline; the last carries
+          // a line of text.
+          <StatSkeleton key={i} spark={i < 3} />
         ))}
       </div>
-      <Card>
-        <CardContent className="space-y-3 py-6">
-          <div className={cn(bar, 'h-3 w-32')} />
-          <div className={cn(bar, 'h-[200px] w-full')} />
+
+      {/* Heights track the real panels: a MiniChart is its 132px plot
+          plus a ~26px caption row, and the leads card stacks two of
+          them over a 24px gap. Measured from the components rather than
+          guessed, which is what used to leave the skeleton a row short
+          and shove the page down on load. */}
+      <ChartCardSkeleton height={158} lines={2} />
+
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        <ChartCardSkeleton height={340} lines={2} />
+        <ChartCardSkeleton height={150} />
+      </div>
+
+      <Card aria-busy="true">
+        <CardHeader>
+          <div className="w-full">
+            <div className="flex h-7 items-center"><Skeleton className="h-4 w-36" /></div>
+            <div className="flex h-[22px] items-center"><Skeleton className="h-3 w-48" /></div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i}>
+                <Skeleton className="h-5 w-12" />
+                <Skeleton className="mt-1.5 h-3 w-20" />
+              </div>
+            ))}
+          </div>
         </CardContent>
       </Card>
-      <div className="grid gap-6 lg:grid-cols-2">
-        {[0, 1].map((i) => (
-          <Card key={i}>
-            <CardContent className="space-y-3 py-6">
-              <div className={cn(bar, 'h-3 w-28')} />
-              <div className={cn(bar, 'h-[150px] w-full')} />
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-      <div className="flex items-center gap-2 text-muted">
-        <Spinner /> <span className="text-sm">Loading statistics…</span>
-      </div>
     </div>
   );
 }

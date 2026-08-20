@@ -521,6 +521,13 @@ export interface UsageDayPoint {
   outputTokens: number;
   totalTokens: number;
   calls: number;
+  /** The same reported/estimated split as `totals`, per day. Carried
+   *  per-day because the blended share hides WHICH days are guesses:
+   *  one re-index of a large corpus can put a single day at 100%
+   *  estimated while every conversation day around it is measured, and
+   *  a tenant reading a cost curve needs to see that. */
+  reportedTokens: number;
+  estimatedTokens: number;
 }
 
 export interface UsageTotals {
@@ -646,7 +653,10 @@ export function buildUsage(opts: {
   const buckets = new Map<string, UsageDayPoint>();
   for (let i = 0; i < days; i++) {
     const key = new Date(from.getTime() + i * 86_400_000).toISOString().slice(0, 10);
-    buckets.set(key, { date: key, inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 });
+    buckets.set(key, {
+      date: key, inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0,
+      reportedTokens: 0, estimatedTokens: 0,
+    });
   }
 
   const byVendor = new Map<string, UsageGroup>();
@@ -691,6 +701,12 @@ export function buildUsage(opts: {
     bucket.inputTokens  += input;
     bucket.outputTokens += output;
     bucket.totalTokens  += total;
+    // The same allow-list as the totals above: anything not literally
+    // 'reported' is estimated, so a row written by a future Worker with
+    // a source this build has never heard of is never presented as
+    // vendor-confirmed.
+    if (r.source === 'reported') bucket.reportedTokens += total;
+    else bucket.estimatedTokens += total;
 
     const { price } = resolvePrice({ vendor: r.vendor, model: r.model });
     let cost: number | null = null;

@@ -7,7 +7,8 @@ import {
 } from '@/lib/api';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input,
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, Textarea,
+  Rows, SaveBar, Section, Select, SelectContent, SelectItem, SelectTrigger,
+  SelectValue, SettingRow, Switch, Textarea,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
@@ -236,60 +237,6 @@ const leadConfig = (f: Form): LeadConfig => ({
   }),
   ...(f.webhook_url.trim() && { webhook_url: f.webhook_url.trim() }),
 });
-
-// ── Layout ────────────────────────────────────────────────────────
-
-/** A titled group with its heading OUTSIDE the card, so the page reads
- *  as sections rather than as one undifferentiated stack of boxes. */
-function Section({
-  title, description, children,
-}: { title: string; description?: string; children: React.ReactNode }) {
-  return (
-    <section className="space-y-4">
-      <div>
-        <h2 className="font-display text-xl leading-tight">{title}</h2>
-        {description && <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted">{description}</p>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/** Label and its explanation on the left, the control on the right.
- *  Stacks on narrow screens, where side by side would leave the input
- *  too cramped to type in. */
-function SettingRow({
-  label, description, htmlFor, children, align = 'center',
-}: {
-  label: string; description?: string; htmlFor?: string;
-  children: React.ReactNode; align?: 'center' | 'start';
-}) {
-  return (
-    <div className={`flex flex-col gap-3 py-6 sm:flex-row sm:gap-10 ${align === 'center' ? 'sm:items-center' : 'sm:items-start'}`}>
-      <div className="min-w-0 flex-1">
-        <label htmlFor={htmlFor} className="block text-sm font-medium leading-none">{label}</label>
-        {description && <p className="mt-2 text-sm leading-relaxed text-muted">{description}</p>}
-      </div>
-      <div className="w-full shrink-0 sm:w-75">{children}</div>
-    </div>
-  );
-}
-
-function Rows({ children }: { children: React.ReactNode }) {
-  return <div className="divide-y divide-border">{children}</div>;
-}
-
-/** Per section save. The page is long enough that one button at the top
- *  means scrolling back to it, and disabling until something changes
- *  makes it obvious which sections are still unsaved. */
-function SaveBar({ busy, dirty, onSave }: { busy: boolean; dirty: boolean; onSave: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-b-xl border-t border-border bg-sunk px-6 py-4">
-      <span className="text-xs text-muted">{dirty ? 'Unsaved changes' : 'All changes saved'}</span>
-      <Button onClick={onSave} disabled={busy || !dirty}>{busy ? 'Saving...' : 'Save'}</Button>
-    </div>
-  );
-}
 
 export function BotConfiguration({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => void }) {
   const [form, setForm] = useState<Form>(() => from(bot));

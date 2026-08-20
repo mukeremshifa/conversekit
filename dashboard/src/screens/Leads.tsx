@@ -5,8 +5,8 @@ import { endpoints, type Bot, type Lead, type Message } from '@/lib/api';
 import { formatDate } from '@/lib/utils';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  Dialog, DialogContent, EmptyState, Input, ListSkeleton, Muted,
-  Table, TableSkeleton, Td, Th,
+  Dialog, DialogContent, EmptyState, Input, Muted, Skeleton,
+  Table, TableSkeleton, Td, Th, TranscriptSkeleton,
 } from '@/components/ui';
 import { Transcript, orderedForReading } from '@/components/Transcript';
 import { Header } from '@/screens/Providers';
@@ -47,7 +47,7 @@ function LeadTranscript({ bot, lead, onClose }: { bot: Bot; lead: Lead; onClose:
         description={formatDate(lead.created_at)}
       >
         {messages === null ? (
-          <ListSkeleton rows={4} />
+          <TranscriptSkeleton bubbles={4} />
         ) : messages.length === 0 ? (
           <Muted>
             No messages found for this session. Transcripts are kept for the last 100 messages
@@ -120,7 +120,12 @@ export function Leads({ bot }: { bot: Bot }) {
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>{leads?.length ?? 0} captured</CardTitle>
+            <CardTitle>
+              {/* Not "0 captured" while it counts: a zero that turns
+                  into thirty-one reads as a wrong answer, not a
+                  pending one. */}
+              {leads === null ? <Skeleton inline className="h-4 w-24" /> : `${leads.length} captured`}
+            </CardTitle>
             <CardDescription>Newest first.</CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -133,7 +138,14 @@ export function Leads({ bot }: { bot: Bot }) {
         </CardHeader>
         <CardContent>
           {leads === null ? (
-            <TableSkeleton rows={5} cols={5} />
+            // The real headers, in the real table: the company and
+            // label columns are left out because they only appear once
+            // a lead is using them, which is unknowable until the rows
+            // land.
+            <TableSkeleton
+              columns={['Date', 'Name', 'Email', 'Phone', 'Inquiry', { label: '' }]}
+              rows={5}
+            />
           ) : filtered.length === 0 ? (
             leads.length === 0 ? (
               <EmptyState

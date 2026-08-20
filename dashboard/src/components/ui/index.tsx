@@ -310,46 +310,225 @@ export function Spinner({ className }: { className?: string }) {
 // shape of what is coming", and the page does not jump when it lands.
 // Spinner is still right inside a button, where there is no shape to
 // preview.
-export function Skeleton({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('ck-shimmer rounded-md bg-sunk', className)} aria-hidden="true" {...props} />;
+//
+// Every shape below is built from the same components as the thing it
+// stands in for — the same <Table>, the same <Card>, the same field
+// wrapper — rather than from bars measured by eye. A skeleton drawn
+// freehand is a second layout that has to be kept in step with the
+// first, and it never is: that is how a six-column table came to be
+// previewed by five loose bars, and a chat transcript by a table.
+export function Skeleton({ className, inline, ...props }: React.HTMLAttributes<HTMLElement> & { inline?: boolean }) {
+  const cls = cn('ck-shimmer rounded-md bg-sunk', inline && 'inline-block align-middle', className);
+  // Inline where it replaces text inside a heading or a sentence — a
+  // <div> there would break the line it is meant to be part of.
+  return inline
+    ? <span className={cls} aria-hidden="true" {...props} />
+    : <div className={cls} aria-hidden="true" {...props} />;
 }
 
-/** Shaped against the table it stands in for, so the columns do not shift. */
-export function TableSkeleton({ rows = 5, cols = 4, className }: { rows?: number; cols?: number; className?: string }) {
+/** A bar sitting in the line box of the text it replaces, so a stack of
+ *  skeleton lines is exactly as tall as the copy that lands in it. */
+function TextLine({ width, height = 'h-[21px]', bar = 'h-3.5' }: { width: string; height?: string; bar?: string }) {
+  return <div className={cn('flex items-center', height)}><Skeleton className={cn(bar, width)} /></div>;
+}
+
+/** One column of a table skeleton. A string is the real header label —
+ *  pass it wherever the call site knows it, because a header that is
+ *  already correct cannot shift when the rows arrive. */
+export type SkeletonColumn = string | { label?: string; align?: 'right' };
+
+/**
+ * Shaped against the table it stands in for: the real <Table>, <Th> and
+ * <Td>, so the header, the column widths, the row height and the rules
+ * between rows are the ones the data will land in.
+ */
+export function TableSkeleton({ columns, rows = 5, cols = 4, className }: {
+  columns?: SkeletonColumn[];
+  rows?: number;
+  /** Fallback for when the call site does not know its labels. */
+  cols?: number;
+  className?: string;
+}) {
+  const spec: SkeletonColumn[] = columns ?? Array.from({ length: cols }, () => ({}));
   // Uneven widths read as content; a grid of identical bars reads as a loader.
   const widths = ['w-24', 'w-32', 'w-40', 'w-20', 'w-28', 'w-36'];
+  const alignOf = (c: SkeletonColumn) => (typeof c === 'string' ? undefined : c.align);
+
   return (
-    <div className={cn('space-y-3', className)} role="status" aria-label="Loading">
-      <div className="flex gap-4 border-b border-border pb-2.5">
-        {Array.from({ length: cols }, (_, c) => <Skeleton key={c} className="h-2.5 w-16" />)}
-      </div>
+    <Table className={className} aria-busy="true" aria-label="Loading">
+      <thead>
+        <tr>
+          {spec.map((c, i) => {
+            const label = typeof c === 'string' ? c : c.label;
+            return (
+              <Th key={i} className={cn(alignOf(c) === 'right' && 'text-right')}>
+                {label ?? <Skeleton className="h-2.5 w-16" />}
+              </Th>
+            );
+          })}
+        </tr>
+      </thead>
+      <tbody>
+        {Array.from({ length: rows }, (_, r) => (
+          // Fading down the list keeps the eye at the top, which is
+          // where the first real row appears.
+          <tr key={r} style={{ opacity: 1 - r * 0.13 }}>
+            {spec.map((c, i) => (
+              <Td key={i}>
+                {/* my-[3px] pads the 14px bar out to the 20px line box of
+                    the text it replaces, so rows keep their height. */}
+                <Skeleton className={cn('my-[3px] h-3.5', widths[(r + i) % widths.length],
+                  alignOf(c) === 'right' && 'ml-auto')} />
+              </Td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </Table>
+  );
+}
+
+/**
+ * The divided list several cards render instead of a table: rows
+ * separated by a rule, each one a line or two of text with its buttons
+ * at the right-hand end.
+ */
+export function RowsSkeleton({
+  rows = 3, lines = 2, ordinal = false, actions = [], row = 'gap-3 py-3', className,
+}: {
+  rows?: number;
+  /** Lines of text in each row. */
+  lines?: number;
+  /** The fixed-width number a chunk carries in front of its text. */
+  ordinal?: boolean;
+  /** Buttons at the right-hand end, sized like the real ones. */
+  actions?: ('button' | 'icon')[];
+  /** Row padding, where the list being stood in for is roomier. */
+  row?: string;
+  className?: string;
+}) {
+  // A row that leads with an ordinal is a paragraph and runs full width;
+  // every other row leads with a heading-ish line and explains itself
+  // underneath.
+  const widths = ordinal ? ['w-full', 'w-11/12', 'w-4/5'] : ['w-1/3', 'w-3/4', 'w-1/2'];
+
+  return (
+    <div className={cn('divide-y divide-border', className)} role="status" aria-label="Loading">
       {Array.from({ length: rows }, (_, r) => (
-        <div key={r} className="flex gap-4" style={{ opacity: 1 - r * 0.13 }}>
-          {Array.from({ length: cols }, (_, c) => (
-            <Skeleton key={c} className={cn('h-3.5', widths[(r + c) % widths.length])} />
-          ))}
+        <div key={r} className={cn('flex items-start', row)} style={{ opacity: 1 - r * 0.15 }}>
+          {/* The ordinal's column is w-8 whatever the number in it. */}
+          {ordinal && <div className="w-8 shrink-0"><Skeleton className="mt-1 h-3 w-6" /></div>}
+          <div className="min-w-0 flex-1">
+            {Array.from({ length: lines }, (_, l) => (
+              <TextLine key={l} width={widths[l % widths.length]} bar={l === 0 && !ordinal ? 'h-3.5' : 'h-2.5'} />
+            ))}
+          </div>
+          {actions.length > 0 && (
+            <div className="flex shrink-0 items-center gap-1">
+              {actions.map((a, i) => (
+                <Skeleton key={i} className={cn('rounded-lg', a === 'icon' ? 'h-9 w-9' : 'h-8 w-28')} />
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
   );
 }
 
-/** Card-shaped skeleton for list screens that render tiles rather than rows. */
-export function ListSkeleton({ rows = 3, className }: { rows?: number; className?: string }) {
+/** Chat bubbles in the shape Transcript renders them — visitor right,
+ *  bot left, alternating lengths so it reads as a conversation. */
+export function TranscriptSkeleton({ bubbles = 4, className }: { bubbles?: number; className?: string }) {
+  const asked = [['w-40'], ['w-28']];
+  const answered = [['w-56', 'w-44'], ['w-48', 'w-36']];
+
   return (
-    <div className={cn('space-y-3', className)} role="status" aria-label="Loading">
-      {Array.from({ length: rows }, (_, r) => (
-        <div key={r} className="flex items-center gap-3 rounded-lg border border-border p-3"
-             style={{ opacity: 1 - r * 0.15 }}>
-          <Skeleton className="h-8 w-8 shrink-0 rounded-lg" />
-          <div className="min-w-0 flex-1 space-y-2">
-            <Skeleton className="h-3 w-1/3" />
-            <Skeleton className="h-2.5 w-2/3" />
+    <div className={cn('space-y-2', className)} role="status" aria-label="Loading">
+      {Array.from({ length: bubbles }, (_, i) => {
+        const visitor = i % 2 === 0; // a session opens with the visitor asking
+        const turn = Math.floor(i / 2);
+        return (
+          <div key={i} className={visitor ? 'flex justify-end' : 'flex justify-start'}
+               style={{ opacity: 1 - i * 0.12 }}>
+            <div className={cn('max-w-[80%] px-3.5 py-2',
+              visitor
+                ? 'rounded-2xl rounded-br-sm bg-fg/8'
+                : 'rounded-2xl rounded-bl-sm border border-border bg-bg')}>
+              {(visitor ? asked : answered)[turn % 2].map((w, l) => <TextLine key={l} width={w} />)}
+            </div>
           </div>
-          <Skeleton className="h-5 w-14 shrink-0 rounded-full" />
-        </div>
-      ))}
+        );
+      })}
     </div>
+  );
+}
+
+/** A card of form fields, for screens whose loaded state is a form
+ *  rather than a list. The title and description are the real ones:
+ *  that copy is static, so there is nothing to preview. */
+export function FormCardSkeleton({ title, description, fields = 2, className }: {
+  title: string;
+  description?: string;
+  fields?: number;
+  className?: string;
+}) {
+  return (
+    <Card className={className} aria-busy="true">
+      <CardHeader>
+        <div>
+          <CardTitle>{title}</CardTitle>
+          {description && <CardDescription>{description}</CardDescription>}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {Array.from({ length: fields }, (_, i) => (
+          // Field's own wrapper, so label-to-control spacing matches.
+          <div key={i} className="space-y-2">
+            <TextLine width="w-24" height="h-5" />
+            <Skeleton className="h-9 w-full rounded-lg" />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Stat's own shape: the icon and its label, the number, the note under
+ *  it — inside Stat's own wrapper, inherited space-y-5 and all. */
+export function StatSkeleton({ spark = false, hint = true }: { spark?: boolean; hint?: boolean }) {
+  return (
+    <Card aria-busy="true">
+      <CardContent className="pt-5">
+        <div className="flex h-4 items-center gap-2">
+          <Skeleton className="h-3.5 w-3.5 rounded" />
+          <Skeleton className="h-3 w-24" />
+        </div>
+        <Skeleton className="h-7 w-16" />
+        {spark
+          ? <Skeleton className="h-7 w-full" />
+          : hint ? <TextLine width="w-28" height="h-5" bar="h-3" /> : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** A card whose body is a chart: a header the height of the real one
+ *  over a box the height of the chart itself. */
+export function ChartCardSkeleton({ height = 200, lines = 1 }: { height?: number; lines?: number }) {
+  return (
+    <Card aria-busy="true">
+      <CardHeader>
+        <div className="w-full">
+          <TextLine width="w-36" height="h-7" bar="h-4" />
+          {Array.from({ length: lines }, (_, i) => (
+            <TextLine key={i} width={i === lines - 1 ? 'w-48' : 'w-72'} height="h-[22px]" bar="h-3" />
+          ))}
+        </div>
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="w-full" style={{ height }} />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -380,5 +559,89 @@ export function EmptyState({
         </Button>
       )}
     </div>
+  );
+}
+
+// ── Settings layout ─────────────────────────────────────────────
+// The grouping the configuration screen introduced, lifted here once
+// Retrieval adopted it too. Two screens rendering "sections of settings"
+// from two private copies is how the two drift apart.
+
+/** A titled group with its heading OUTSIDE the card, so a long page
+ *  reads as sections rather than as one stack of boxes. */
+export function Section({
+  title, description, children,
+}: { title: string; description?: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-4">
+      <div>
+        <h2 className="font-display text-xl leading-tight">{title}</h2>
+        {description && <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted">{description}</p>}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+/** Label and its explanation on the left, the control on the right.
+ *  Stacks on narrow screens, where side by side would leave the input
+ *  too cramped to type in. */
+export function SettingRow({
+  label, description, htmlFor, children, align = 'center',
+}: {
+  label: string; description?: React.ReactNode; htmlFor?: string;
+  children: React.ReactNode; align?: 'center' | 'start';
+}) {
+  return (
+    <div className={cn('flex flex-col gap-3 py-6 sm:flex-row sm:gap-10',
+      align === 'center' ? 'sm:items-center' : 'sm:items-start')}>
+      <div className="min-w-0 flex-1">
+        <label htmlFor={htmlFor} className="block text-sm font-medium leading-none">{label}</label>
+        {description && <p className="mt-2 text-sm leading-relaxed text-muted">{description}</p>}
+      </div>
+      <div className="w-full shrink-0 sm:w-75">{children}</div>
+    </div>
+  );
+}
+
+export function Rows({ children }: { children: React.ReactNode }) {
+  return <div className="divide-y divide-border">{children}</div>;
+}
+
+/** Per section save. A long page with one button at the top means
+ *  scrolling back to it, and disabling until something changes makes it
+ *  obvious which sections are still unsaved. */
+export function SaveBar({ busy, dirty, onSave }: { busy: boolean; dirty: boolean; onSave: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-b-xl border-t border-border bg-sunk px-6 py-4">
+      <span className="text-xs text-muted">{dirty ? 'Unsaved changes' : 'All changes saved'}</span>
+      <Button onClick={onSave} disabled={busy || !dirty}>{busy ? 'Saving...' : 'Save'}</Button>
+    </div>
+  );
+}
+
+/** A single headline number. The dashboard card used across Overview,
+ *  Usage and Retrieval. */
+export function Stat({ label, value, hint, tone, icon: Icon }: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: 'ok' | 'warn' | 'bad';
+  icon: React.ComponentType<{ className?: string }>;
+}) {
+  return (
+    <Card>
+      <CardContent className="pt-5">
+        <div className="flex items-center gap-2">
+          <Icon className="h-3.5 w-3.5 text-faint" />
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</span>
+        </div>
+        <div className={cn('mt-2 font-display text-[28px] leading-none tabular-nums',
+          tone === 'ok' && 'text-success', tone === 'warn' && 'text-warning', tone === 'bad' && 'text-danger')}>
+          {value}
+        </div>
+        {hint && <p className="mt-1.5 text-xs leading-relaxed text-muted">{hint}</p>}
+      </CardContent>
+    </Card>
   );
 }

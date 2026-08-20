@@ -6,7 +6,7 @@ import { Transcript, groupBySession } from '@/components/Transcript';
 import { formatDate } from '@/lib/utils';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  EmptyState, TableSkeleton,
+  EmptyState, Skeleton, TranscriptSkeleton,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 
@@ -34,14 +34,20 @@ export function Conversations({ bot }: { bot: Bot }) {
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>{sessions.length} session{sessions.length === 1 ? '' : 's'}</CardTitle>
+            <CardTitle>
+              {/* A confident "0 sessions" that turns into twelve reads
+                  as a wrong answer rather than a pending one. */}
+              {messages === null
+                ? <Skeleton inline className="h-4 w-24" />
+                : `${sessions.length} session${sessions.length === 1 ? '' : 's'}`}
+            </CardTitle>
             <CardDescription>Most recent first, up to the last 100 messages.</CardDescription>
           </div>
           <Button variant="outline" size="sm" onClick={load}><RefreshCw className="h-3.5 w-3.5" /> Refresh</Button>
         </CardHeader>
         <CardContent>
           {messages === null ? (
-            <TableSkeleton rows={4} cols={3} />
+            <SessionsSkeleton />
           ) : sessions.length === 0 ? (
             <EmptyState
               icon={MessageSquareText}
@@ -66,5 +72,27 @@ export function Conversations({ bot }: { bot: Bot }) {
         </CardContent>
       </Card>
     </>
+  );
+}
+
+/**
+ * What this screen actually renders while it waits: sessions, each one
+ * a header rule over a run of chat bubbles. It previewed a table before,
+ * which is not a shape this screen has anywhere on it.
+ */
+function SessionsSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      {[4, 2].map((bubbles, i) => (
+        <div key={i} style={{ opacity: 1 - i * 0.25 }}>
+          <div className="mb-2 flex items-center gap-2">
+            <Skeleton className="h-3 w-40" />
+            <span className="h-px flex-1 bg-border" />
+            <Skeleton className="h-3 w-28" />
+          </div>
+          <TranscriptSkeleton bubbles={bubbles} />
+        </div>
+      ))}
+    </div>
   );
 }

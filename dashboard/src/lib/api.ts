@@ -635,6 +635,11 @@ export interface UsageDayPoint {
   outputTokens: number;
   totalTokens: number;
   calls: number;
+  /** The reported/estimated split for this day alone. The blended
+   *  share hides which days are guesses — one large re-index can put a
+   *  single day at 100% estimated between two fully measured ones. */
+  reportedTokens: number;
+  estimatedTokens: number;
 }
 
 export interface UsageReport {
@@ -716,6 +721,11 @@ export const endpoints = {
   chunks:        (docId: string) => api.get<{ chunks: Chunk[] }>(`/v1/admin/documents/${docId}/chunks`),
   stats:         (id: string, days = 30) => api.get<Stats>(`/v1/admin/bots/${id}/stats?days=${days}`),
   missReport:    (id: string, days = 30) => api.get<MissReport>(`/v1/admin/bots/${id}/retrieval?days=${days}`),
+  /** Clears every logged miss of one exact question. Only misses are
+   *  removable, so the searches behind the miss rate stay intact. */
+  deleteMissedQuestion: (id: string, text: string) =>
+                   api.del<{ deleted: number }>(
+                     `/v1/admin/bots/${id}/retrieval/question?text=${encodeURIComponent(text)}`),
   // Up to 365 days here, unlike stats and the miss report: usage_log is
   // kept for 400 days because year-over-year is the ordinary question
   // about spend.

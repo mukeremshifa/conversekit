@@ -59,9 +59,13 @@ const KNOWLEDGE_ROUTES = new Set<string>(Object.values(TAB_ROUTES));
 
 /** Screens whose content is a table or a chart grid rather than a form.
  *  Both Knowledge Base tabs are wide together: a page that changes
- *  width as you switch tabs reads as a rendering bug. */
+ *  width as you switch tabs reads as a rendering bug.
+ *
+ *  Retrieval left this set when it was regrouped into settings sections:
+ *  it is mostly a form now, and the label-left/control-right rows it
+ *  borrows from Bot Configuration are sized for the narrower column. */
 const WIDE_ROUTES = new Set([
-  'overview', 'leads', 'conversations', 'retrieval', 'usage', ...KNOWLEDGE_ROUTES,
+  'overview', 'leads', 'conversations', 'usage', ...KNOWLEDGE_ROUTES,
 ]);
 
 /** Routes that were renamed. The old id stays a working URL: #settings and

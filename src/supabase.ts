@@ -1085,6 +1085,34 @@ export interface RetrievalLogRow {
   created_at: string;
 }
 
+/**
+ * Drops every logged miss of one exact question.
+ *
+ * ServiceDb rather than UserDb, and that is not an oversight: 012 gives
+ * tenants select on retrieval_log and no write policy at all, because
+ * this is derived data and a tenant editing their own measurements is
+ * not a state worth allowing. Removing a question they have dealt with
+ * is the one exception, so it goes through the service client with the
+ * ownership check already done by the caller.
+ *
+ * `matched=is.false` is load bearing. Only the misses are shown and only
+ * the misses are removable; the rows that DID match are the denominator
+ * behind the miss rate, and deleting those would move the number the
+ * tenant is trying to improve.
+ */
+export async function deleteMissedQuestion(
+  db: ServiceDb, botId: string, query: string,
+): Promise<number> {
+  const rows = await pgFetch<{ id: string }[]>(db,
+    `/retrieval_log?select=id` +
+    `&bot_id=eq.${encodeURIComponent(botId)}` +
+    `&query=eq.${encodeURIComponent(query)}` +
+    `&matched=is.false`,
+    { method: 'DELETE' }
+  );
+  return rows.length;
+}
+
 export function getRetrievalLog(
   db: UserDb, botId: string, since: string, cap = RETRIEVAL_LOG_CAP,
 ): Promise<RetrievalLogRow[]> {

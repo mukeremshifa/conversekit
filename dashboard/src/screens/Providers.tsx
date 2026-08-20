@@ -13,7 +13,7 @@ import { CheckCircle2, CircleAlert, KeyRound, Plug, XCircle } from 'lucide-react
 import { endpoints, type Bot, type ProviderTest, type Vendor, type VendorConfig } from '@/lib/api';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  Field, Input, ListSkeleton, Muted, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+  Field, FormCardSkeleton, Input, Muted, Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui';
 
 const TIER_TONE = { 'free-tier': 'ok', local: 'neutral', paid: 'wait' } as const;
@@ -36,6 +36,17 @@ const TIER_LABEL = { 'free-tier': 'free tier', local: 'local', paid: 'paid' } as
  * config at all.
  */
 const PLATFORM_DEFAULT = '__platform__';
+
+/** Each card's copy, shared with the skeleton that stands in for it
+ *  while the vendor list is in flight, so the two cannot drift. */
+const CHAT_CARD = {
+  title: 'Chat model',
+  description: 'Generates the replies visitors see.',
+};
+const EMBED_CARD = {
+  title: 'Embedding model',
+  description: 'Turns your knowledge sources into vectors for retrieval. Changing this requires re-indexing every source.',
+};
 
 export function Providers({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => void }) {
   const [vendors, setVendors] = useState<Vendor[] | null>(null);
@@ -72,40 +83,53 @@ export function Providers({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => voi
     }
   }
 
-  if (!vendors) {
-    return <ListSkeleton rows={4} />;
-  }
-
-  const embedVendors = vendors.filter((v) => v.supportsEmbeddings);
+  // Only the vendor list is being waited on, so only the two forms that
+  // need it stand in. The heading and the test card — which reads the
+  // saved bot, not the list — are real from the first paint. Replacing
+  // the whole screen with a stack of tiles threw the heading away and
+  // previewed a shape this screen never renders.
+  //
+  // A bot on the platform default shows the vendor picker alone; one
+  // with a vendor of its own also has a model, a key and a setting or
+  // two under it, and that is known from the bot before the list lands.
+  const fields = (cfg: VendorConfig | null | undefined) => (cfg?.vendor ? 4 : 1);
 
   return (
     <>
       <Header
         title="AI Providers"
         subtitle="Which model answers, and which one embeds. Leave a field blank to inherit the platform default."
-        action={<Button onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Button>}
+        action={
+          <Button onClick={save} disabled={busy || !vendors}>{busy ? 'Saving…' : 'Save changes'}</Button>
+        }
       />
 
-      <VendorCard
-        title="Chat model"
-        description="Generates the replies visitors see."
-        vendors={vendors}
-        config={chat}
-        onChange={setChat}
-        storedKey={!!bot.provider_config?.hasApiKey}
-      />
+      {vendors ? (
+        <VendorCard
+          {...CHAT_CARD}
+          vendors={vendors}
+          config={chat}
+          onChange={setChat}
+          storedKey={!!bot.provider_config?.hasApiKey}
+        />
+      ) : (
+        <FormCardSkeleton {...CHAT_CARD} fields={fields(bot.provider_config)} />
+      )}
 
       <TestConnection bot={bot} />
 
-      <VendorCard
-        title="Embedding model"
-        description="Turns your knowledge sources into vectors for retrieval. Changing this requires re-indexing every source."
-        vendors={embedVendors}
-        config={embed}
-        onChange={setEmbed}
-        showDimensions
-        storedKey={!!bot.embedding_config?.hasApiKey}
-      />
+      {vendors ? (
+        <VendorCard
+          {...EMBED_CARD}
+          vendors={vendors.filter((v) => v.supportsEmbeddings)}
+          config={embed}
+          onChange={setEmbed}
+          showDimensions
+          storedKey={!!bot.embedding_config?.hasApiKey}
+        />
+      ) : (
+        <FormCardSkeleton {...EMBED_CARD} fields={fields(bot.embedding_config)} />
+      )}
     </>
   );
 }

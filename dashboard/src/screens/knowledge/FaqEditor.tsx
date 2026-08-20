@@ -19,7 +19,7 @@ import { ArrowDown, ArrowUp, HelpCircle, Pencil, Plus, RefreshCw, Trash2, X } fr
 import { endpoints, type Bot, type Doc, type FaqItem } from '@/lib/api';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  EmptyState, Field, Input, ListSkeleton, Muted, Switch, Textarea,
+  EmptyState, Field, Input, Muted, RowsSkeleton, Switch, Textarea,
 } from '@/components/ui';
 
 const STATUS = {
@@ -187,7 +187,9 @@ export function FaqEditor({
         </CardHeader>
         <CardContent>
           {items === null ? (
-            <ListSkeleton rows={3} />
+            // A question over its answer, with the row's four icon
+            // buttons out to the right — the shape FaqRow renders.
+            <RowsSkeleton rows={3} lines={2} row="gap-4 py-4" actions={['icon', 'icon', 'icon', 'icon']} />
           ) : items.length === 0 ? (
             <EmptyState
               icon={HelpCircle}

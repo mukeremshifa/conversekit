@@ -42,6 +42,7 @@ import {
   getStatDocuments,
   logRetrieval,
   getRetrievalLog,
+  deleteMissedQuestion,
   pruneRetrievalLog,
   logUsage,
   getUsageLog,
@@ -2310,6 +2311,45 @@ app.get('/v1/admin/bots/:id/retrieval', async (c) => {
     // Deployed ahead of its migration. The generic 502 sends whoever is
     // debugging it looking at RLS instead of at the schema — the same
     // trap the upload route names 008 for.
+    if (/retrieval_log/.test(message)) {
+      console.error('[retrieval] 012 not applied:', message);
+      return c.json({ error: 'The retrieval report needs database migration 012_retrieval.sql, which has not been applied yet.' }, 501);
+    }
+    console.error(err);
+    return c.json({ error: 'Database error' }, 502);
+  }
+});
+
+// ================================================================
+// DELETE /v1/admin/bots/:id/retrieval/question?text=... — clear one
+//
+// The other half of the loop the miss report opens. "Add as FAQ" is
+// what a tenant does with a question worth answering; this is what they
+// do with the rest, which is most of them: a visitor testing the
+// widget, a typo, something the business genuinely does not do. Without
+// it the list only ever grows and stops being read.
+//
+// The text travels in the query string rather than a body because
+// DELETE bodies are not reliably forwarded, and it is matched exactly:
+// the report groups by the same column, so what the tenant clicked is
+// what goes.
+// ================================================================
+app.delete('/v1/admin/bots/:id/retrieval/question', async (c) => {
+  const botId = c.req.param('id');
+  const text = (c.req.query('text') ?? '').trim();
+  if (!text) return c.json({ error: '`text` is required' }, 400);
+
+  // Under RLS, so reaching the next line proves the caller owns the bot
+  // — the same check the preview route makes before it drops to
+  // service_role.
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  try {
+    const deleted = await deleteMissedQuestion(serviceDb(c.env), botId, text);
+    return c.json({ deleted });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     if (/retrieval_log/.test(message)) {
       console.error('[retrieval] 012 not applied:', message);
       return c.json({ error: 'The retrieval report needs database migration 012_retrieval.sql, which has not been applied yet.' }, 501);

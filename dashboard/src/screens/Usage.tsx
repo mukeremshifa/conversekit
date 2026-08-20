@@ -26,14 +26,17 @@
 // ----------------------------------------------------------------
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Coins, Cpu, Info, RefreshCw, Sigma } from 'lucide-react';
+import { AlertTriangle, Coins, Cpu, Info, RefreshCw, Sigma } from 'lucide-react';
 import { ApiError, endpoints, type Bot, type UsageGroup, type UsageReport } from '@/lib/api';
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
-  EmptyState, Muted, Skeleton, Table, Td, Th,
+  ChartCardSkeleton, EmptyState, Muted, Skeleton, StatSkeleton,
+  Table, TableSkeleton, Td, Th,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
-import { TokensChart, compactNumber } from '@/components/charts';
+import {
+  MiniChart, SERIES_4, ShareBar, TokensChart, byWeekIfLong, compactNumber, percent,
+} from '@/components/charts';
 import { cn } from '@/lib/utils';
 
 /** 365 is offered here and nowhere else: usage_log is kept for 400 days
@@ -159,9 +162,22 @@ function Loaded({ report, loading, onNavigate }: {
   const t = report.totals;
   const estimatedPct = report.estimatedShare === null ? 0 : Math.round(report.estimatedShare * 100);
 
+  // A year is 365 marks in a 200px plot. Rolled into weeks past the
+  // threshold — and the estimated SHARE is derived after the roll-up,
+  // from summed token counts, because averaging seven daily percentages
+  // would weight a quiet day equal to a re-index day.
+  const { rows: series, weekly } = byWeekIfLong(report.series);
+  const per = weekly ? 'week' : 'day';
+
+  const calls = series.map((d) => ({ date: d.date, value: d.calls }));
+  const estimatedShare = series.map((d) => ({
+    date: d.date,
+    value: d.totalTokens ? d.estimatedTokens / d.totalTokens : 0,
+  }));
+
   return (
     <div className={cn('space-y-6 transition-opacity', loading && 'opacity-60')}>
-      <div className="ck-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="ck-stagger grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Stat
           icon={Coins}
           label="Estimated spend"
@@ -181,9 +197,22 @@ function Loaded({ report, loading, onNavigate }: {
         <Stat icon={Sigma} label="Tokens" value={compactNumber(t.totalTokens)}
               hint={`${compactNumber(t.inputTokens)} in · ${compactNumber(t.outputTokens)} out`} />
         <Stat icon={Cpu} label="Provider calls" value={t.calls.toLocaleString()}
-              hint={t.errorCalls > 0
-                ? `${t.errorCalls.toLocaleString()} failed and were charged anyway`
-                : 'not the same as conversations'} />
+              hint="not the same as conversations" />
+        {/* Promoted out of the hint on the tile beside it. Calls that
+            failed were still billed, so this is money bought nothing —
+            a cost leak, and it was rendering as a footnote. Wears the
+            danger token only when there is something to report, and
+            always with the icon and label beside it: a colour alone
+            never carries the meaning. */}
+        <Stat
+          icon={AlertTriangle}
+          label="Failed calls"
+          value={t.errorCalls.toLocaleString()}
+          tone={t.errorCalls > 0 ? 'bad' : undefined}
+          hint={t.errorCalls > 0
+            ? 'charged anyway — these bought nothing'
+            : 'every call returned something'}
+        />
         <Stat
           icon={Info}
           label="Measured"
@@ -229,14 +258,15 @@ function Loaded({ report, loading, onNavigate }: {
       <Card>
         <CardHeader>
           <div>
-            <CardTitle>Tokens per day</CardTitle>
+            <CardTitle>Tokens per {per}</CardTitle>
             <CardDescription>
               What the bot read and what it wrote, over the last {report.range.days} days.
+              {weekly && ' Summed by week — a year of daily marks is noise, not a shape.'}
             </CardDescription>
           </div>
         </CardHeader>
         <CardContent>
-          <TokensChart data={report.series} />
+          <TokensChart data={series} weekly={weekly} />
           {report.truncated && (
             <Muted className="mt-3 text-xs">
               This bot made more provider calls than one report can read, so these totals
@@ -246,16 +276,68 @@ function Loaded({ report, loading, onNavigate }: {
         </CardContent>
       </Card>
 
+      {/* Two panels rather than two lines over the token chart above.
+          Tokens run to millions and calls to hundreds, so overlaying
+          either of these would need a second y-axis, and where the two
+          scales get aligned is arbitrary — it would draw a correlation
+          that is not in the data. */}
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Behind the tokens</CardTitle>
+            <CardDescription>
+              How many calls those tokens took, and how much of each {per} was measured
+              rather than estimated.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-6 sm:grid-cols-2">
+            <MiniChart
+              title={`Calls per ${per}`} data={calls} kind="column"
+              color="var(--color-chart-2)" weekly={weekly} noun="call"
+            />
+            {/* The screen's whole argument, finally drawn. The blended
+                share in the tile above cannot show WHICH buckets are
+                guesses — one re-index of a large corpus puts a single
+                day at 100% estimated between two fully measured ones,
+                and that is exactly the day whose cost is least real.
+                Pinned to 100% so a spike is read against the whole. */}
+            <MiniChart
+              title="Estimated share" data={estimatedShare}
+              color={SERIES_4} max={1} format={percent} weekly={weekly}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid items-start gap-6 lg:grid-cols-2">
+        {/* byVendor has been computed server-side since 017 and had no
+            widget on this screen — the cut a tenant with two providers
+            actually wants. Part-to-whole rather than a table: the
+            question is what share, and the legend beside it still
+            carries every number. */}
         <Card>
           <CardHeader>
             <div>
-              <CardTitle>By model</CardTitle>
-              <CardDescription>Where the tokens actually went.</CardDescription>
+              <CardTitle>By vendor</CardTitle>
+              <CardDescription>Which provider the tokens went to.</CardDescription>
             </div>
           </CardHeader>
           <CardContent>
-            <GroupTable groups={report.byModel} showVendor />
+            {report.byVendor.length === 0
+              ? <Muted className="text-sm">Nothing recorded in this window.</Muted>
+              : (
+                <ShareBar
+                  items={report.byVendor.map((g) => ({
+                    key: g.key,
+                    label: g.key,
+                    value: g.totalTokens,
+                    hint: `${g.calls.toLocaleString()} call${g.calls === 1 ? '' : 's'}`
+                        + (g.cost === null ? ' · no published rate' : ` · ≈ ${money(g.cost)}`),
+                  }))}
+                />
+              )}
           </CardContent>
         </Card>
 
@@ -275,6 +357,18 @@ function Loaded({ report, loading, onNavigate }: {
         </Card>
       </div>
 
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>By model</CardTitle>
+            <CardDescription>Where the tokens actually went.</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <GroupTable groups={report.byModel} showVendor />
+        </CardContent>
+      </Card>
+
       <Muted className="text-xs">
         Days are bucketed in UTC. Rows count provider calls, not conversations — a reply
         that has to retry files two.
@@ -291,6 +385,20 @@ function Loaded({ report, loading, onNavigate }: {
 
 // ── Pieces ────────────────────────────────────────────────────────
 
+/** The two group tables' headers, written once and read by both the
+ *  table and the skeleton that stands in for it, so neither a renamed
+ *  column nor an added one can shift the layout on load. */
+type GroupColumn = { label: string; align?: 'right' };
+const MEASURES: GroupColumn[] = [
+  { label: 'Calls', align: 'right' },
+  { label: 'Tokens', align: 'right' },
+  { label: 'Cost', align: 'right' },
+];
+const GROUP_COLUMNS: Record<'model' | 'kind', GroupColumn[]> = {
+  model: [{ label: 'Model' }, ...MEASURES],
+  kind:  [{ label: 'Activity' }, ...MEASURES],
+};
+
 function GroupTable({ groups, showVendor, labels }: {
   groups: UsageGroup[];
   showVendor?: boolean;
@@ -304,10 +412,9 @@ function GroupTable({ groups, showVendor, labels }: {
       <Table>
         <thead>
           <tr>
-            <Th>{showVendor ? 'Model' : 'Activity'}</Th>
-            <Th className="text-right">Calls</Th>
-            <Th className="text-right">Tokens</Th>
-            <Th className="text-right">Cost</Th>
+            {(showVendor ? GROUP_COLUMNS.model : GROUP_COLUMNS.kind).map((c) => (
+              <Th key={c.label} className={cn(c.align === 'right' && 'text-right')}>{c.label}</Th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -335,47 +442,75 @@ function GroupTable({ groups, showVendor, labels }: {
   );
 }
 
-function Stat({ label, value, hint, icon: Icon }: {
+function Stat({ label, value, hint, icon: Icon, tone }: {
   label: string;
   value: string;
   hint?: string;
   icon: typeof Coins;
+  /** Reserved for a state, never for decoration or emphasis. The icon
+   *  and label always travel with it, so the colour is never the only
+   *  thing saying something is wrong. */
+  tone?: 'bad';
 }) {
   return (
     <Card>
       <CardContent className="pt-5">
         <div className="flex items-center gap-2">
-          <Icon className="h-3.5 w-3.5 text-faint" />
+          <Icon className={cn('h-3.5 w-3.5', tone === 'bad' ? 'text-danger' : 'text-faint')} />
           <span className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</span>
         </div>
-        <div className="mt-2 font-display text-[28px] leading-none">{value}</div>
+        <div className={cn('mt-2 font-display text-[28px] leading-none', tone === 'bad' && 'text-danger')}>
+          {value}
+        </div>
         {hint && <p className="mt-1.5 text-xs text-muted">{hint}</p>}
       </CardContent>
     </Card>
   );
 }
 
-/** Matches the loaded layout so the page does not jump when data lands. */
+/** One group table in its card, at the height of the real one. Two
+ *  callers now that the model table has its own row, and both read
+ *  their column list from GROUP_COLUMNS so a renamed or added column
+ *  cannot shift the layout between the skeleton and the table. */
+function TableCardSkeleton({ columns }: { columns: GroupColumn[] }) {
+  return (
+    <Card aria-busy="true">
+      <CardHeader>
+        <div className="w-full">
+          <div className="flex h-7 items-center"><Skeleton className="h-4 w-28" /></div>
+          <div className="flex h-[22px] items-center"><Skeleton className="h-3 w-56" /></div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <TableSkeleton columns={columns} rows={3} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The loaded layout, card for card — including the group tables at the
+ * bottom, which used to appear out of nowhere once the report landed
+ * and shove the footnote down the page.
+ */
 function SkeletonUsage() {
   return (
     <div className="space-y-6" aria-busy="true" aria-label="Loading usage">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {[0, 1, 2, 3].map((i) => (
-          <Card key={i}>
-            <CardContent className="space-y-3 pt-5">
-              <Skeleton className="h-3 w-24" />
-              <Skeleton className="h-7 w-20" />
-              <Skeleton className="h-3 w-28" />
-            </CardContent>
-          </Card>
-        ))}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => <StatSkeleton key={i} />)}
       </div>
-      <Card>
-        <CardContent className="space-y-3 py-6">
-          <Skeleton className="h-3 w-32" />
-          <Skeleton className="h-[200px] w-full" />
-        </CardContent>
-      </Card>
+
+      <ChartCardSkeleton height={200} lines={2} />
+      {/* The two mini panels: a 132px plot under a ~26px caption row. */}
+      <ChartCardSkeleton height={158} lines={2} />
+
+      <div className="grid items-start gap-6 lg:grid-cols-2">
+        {/* The share bar and its legend, then the activity table. */}
+        <ChartCardSkeleton height={150} />
+        <TableCardSkeleton columns={GROUP_COLUMNS.kind} />
+      </div>
+
+      <TableCardSkeleton columns={GROUP_COLUMNS.model} />
     </div>
   );
 }
