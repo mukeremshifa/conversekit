@@ -82,6 +82,25 @@ export const LIMITS = {
   faqItems: 200,
   faqQuestion: 300,
   faqAnswer: 2000,
+
+  // ── Public chat path ──
+  //
+  // The only cap on this list that is not about a tenant's settings
+  // form, and the only one a stranger can hit. `message` was checked
+  // for non-empty and nothing else, so an unbounded string reached an
+  // embedding call and a provider call on the platform's shared key.
+  // That is a cost hole rather than a safety one, which is exactly why
+  // no moderation filter would have closed it.
+  //
+  // REJECTED rather than clamped, against the rule at the top of this
+  // file. That rule exists so a settings save cannot lose unrelated
+  // edits, and there is no form here to lose — while truncating a
+  // visitor's question answers a different question than they asked.
+  /** Several paragraphs. Longer than anything a visitor types into a
+   *  380px panel, short enough that a script cannot bill the platform
+   *  for a novel per request. Mirrored as `maxlength` in the widget,
+   *  which is a courtesy to the visitor; this is the control. */
+  chatMessage: 2000,
 } as const;
 
 /**

@@ -6,15 +6,14 @@
 // a list that is never longer than a few dozen entries, and Radix
 // already handles the focus trap, the escape key and the overlay.
 //
-// Navigation, bot switching and a couple of actions live in one list so
-// there is a single thing to learn.
+// Navigation and a couple of actions live in one list so there is a
+// single thing to learn.
 // ----------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { Check, CornerDownLeft, Search } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { NavItem } from '@/components/Shell';
-import type { Bot } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 export interface Command {
@@ -28,7 +27,7 @@ export interface Command {
 }
 
 /** Substring match across the label and its group, so "lead" finds
- *  "Leads" and "bot" finds every bot under "Switch bot". */
+ *  "Leads" and "know" finds both Knowledge Base tabs. */
 function match(commands: Command[], query: string): Command[] {
   const q = query.trim().toLowerCase();
   if (!q) return commands;
@@ -53,29 +52,20 @@ export function useCommandPalette() {
 export function buildCommands(opts: {
   nav: NavItem[];
   route: string;
-  bots: Bot[];
-  botId: string;
   onNavigate: (route: string) => void;
-  onSelectBot: (id: string) => void;
-  onNewBot: () => void;
   onCycleTheme: () => void;
   /** Routes that are a tab of another screen rather than a nav entry.
-   *  Without these, folding three screens into one would have taken
-   *  two of them out of the palette — which is where anyone who knows
-   *  the product reaches first. */
+   *  Without these, folding two screens into one would have taken one
+   *  of them out of the palette — which is where anyone who knows the
+   *  product reaches first. */
   extra?: { id: string; label: string; icon?: NavItem['icon'] }[];
 }): Command[] {
-  const { nav, route, bots, botId, onNavigate, onSelectBot, onNewBot, onCycleTheme, extra = [] } = opts;
+  const { nav, route, onNavigate, onCycleTheme, extra = [] } = opts;
   return [
     ...[...nav, ...extra].map((n): Command => ({
       id: `go:${n.id}`, group: 'Go to', label: n.label, icon: n.icon,
       active: route === n.id, run: () => onNavigate(n.id),
     })),
-    ...bots.map((b): Command => ({
-      id: `bot:${b.id}`, group: 'Switch bot', label: b.name,
-      active: b.id === botId, run: () => onSelectBot(b.id),
-    })),
-    { id: 'act:new-bot', group: 'Actions', label: 'Create a bot', run: onNewBot },
     { id: 'act:theme', group: 'Actions', label: 'Change theme', run: onCycleTheme },
   ];
 }
@@ -133,7 +123,7 @@ export function CommandPalette({
         >
           <DialogPrimitive.Title className="sr-only">Command palette</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">
-            Search for a screen, a bot, or an action.
+            Search for a screen or an action.
           </DialogPrimitive.Description>
 
           <div className="flex items-center gap-2.5 border-b border-border px-4">
@@ -142,7 +132,7 @@ export function CommandPalette({
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search screens, bots and actions…"
+              placeholder="Search screens and actions…"
               className="h-12 w-full bg-transparent text-sm outline-none placeholder:text-faint"
               aria-label="Search commands"
             />

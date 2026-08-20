@@ -1,84 +1,66 @@
 // ----------------------------------------------------------------
-// Knowledge — one screen for everything the bot knows.
+// Knowledge Base — what the bot knows.
 //
-// Replaces three nav entries (Knowledge Base, Knowledge Sources,
-// Retrieval) that were split by implementation detail rather than by
-// what a tenant is trying to do. There is one question here — what
-// does this bot know, and how does it find it — and it now has one
-// place.
+// Two tabs: the sources it searches, and the FAQ answers written by
+// hand. How it searches them is a separate question with its own nav
+// entry — see screens/Retrieval.tsx.
 //
-// The tabs are real hash routes, not local state. #knowledge,
-// #sources and #retrieval are all links someone may have bookmarked,
-// and a rename is not a reason to break them; keeping them also makes
+// The tabs are real hash routes, not local state. #knowledge, #sources
+// and #faq are all links someone may have bookmarked, and a
+// reorganisation is not a reason to break them; keeping them also makes
 // every tab deep-linkable for free.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { ArrowRight, Boxes, HelpCircle, Search } from 'lucide-react';
-import { endpoints, type Bot, type EffectiveRetrieval } from '@/lib/api';
+import { ArrowRight, Boxes, HelpCircle } from 'lucide-react';
+import { endpoints, type Bot } from '@/lib/api';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 import { FaqEditor } from '@/screens/knowledge/FaqEditor';
-import { MissReport } from '@/screens/knowledge/MissReport';
 import { Sources } from '@/screens/Sources';
-import { Retrieval } from '@/screens/Retrieval';
-import { RetrievePreview } from '@/screens/knowledge/RetrievePreview';
 
-export type KnowledgeTab = 'faq' | 'sources' | 'retrieval';
+export type KnowledgeTab = 'sources' | 'faq';
 
-/** Tab id ↔ hash route. The route is the source of truth. */
+/** Tab id ↔ hash route. The route is the source of truth.
+ *  `knowledge` is the nav entry itself, so it lands on the first tab. */
 export const TAB_ROUTES: Record<KnowledgeTab, string> = {
-  faq: 'knowledge',
-  sources: 'sources',
-  retrieval: 'retrieval',
+  sources: 'knowledge',
+  faq: 'faq',
 };
 
 const TABS: { id: KnowledgeTab; label: string; icon: typeof HelpCircle }[] = [
-  { id: 'faq', label: 'FAQ', icon: HelpCircle },
   { id: 'sources', label: 'Sources', icon: Boxes },
-  { id: 'retrieval', label: 'Retrieval', icon: Search },
+  { id: 'faq', label: 'FAQ', icon: HelpCircle },
 ];
 
 export function Knowledge({
-  bot, tab, onNavigate, onSaved,
+  bot, tab, draftQuestion = null, onDraftTaken, onNavigate, onSaved,
 }: {
   bot: Bot;
   tab: KnowledgeTab;
+  /**
+   * A question carried over from the miss report on the Retrieval
+   * screen. It arrives as a prop rather than as state here because it
+   * now crosses screens — the whole point of the action is that it
+   * lands you in the FAQ editor with the question already typed.
+   */
+  draftQuestion?: string | null;
+  /** Cleared once the editor has taken it, so coming back to this tab
+   *  later does not re-prefill a question already dealt with. */
+  onDraftTaken?: () => void;
   onNavigate: (route: string) => void;
   onSaved: (b: Bot) => void;
 }) {
-  /**
-   * A question carried from the miss report on the Retrieval tab to the
-   * editor on the FAQ tab. Held here because it crosses tabs — the
-   * whole point of the action is that it lands you in the right place
-   * with the question already typed.
-   *
-   * Cleared once the editor has taken it, so switching back to the FAQ
-   * tab later does not re-prefill a question already dealt with.
-   */
-  const [faqDraft, setFaqDraft] = useState<string | null>(null);
-
-  /** What actually governed the last preview search. Lifted out of
-   *  RetrievePreview so the settings card below it can show the floor
-   *  in force rather than a constant that is wrong for every bot on the
-   *  platform embedder. */
-  const [effective, setEffective] = useState<EffectiveRetrieval | null>(null);
-
-  function addAsFaq(question: string) {
-    setFaqDraft(question);
-    onNavigate(TAB_ROUTES.faq);
-  }
-
   return (
     <>
       <Header
-        title="Knowledge"
-        subtitle="What this bot knows, and how it finds the right piece of it before answering."
+        title="Knowledge Base"
+        subtitle="Everything this bot can draw on when it answers — your sources, and the answers you wrote by hand."
       />
 
       <MigrationBanner bot={bot} onSaved={onSaved} />
 
-      <div role="tablist" aria-label="Knowledge" className="flex gap-1 border-b border-border">
+      <div role="tablist" aria-label="Knowledge base" className="flex gap-1 border-b border-border">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
@@ -96,18 +78,9 @@ export function Knowledge({
         ))}
       </div>
 
-      {tab === 'faq' && (
-        <FaqEditor bot={bot} draftQuestion={faqDraft} onDraftTaken={() => setFaqDraft(null)} />
-      )}
       {tab === 'sources' && <Sources bot={bot} embedded />}
-      {tab === 'retrieval' && (
-        <>
-          {/* Above the preview: what visitors actually asked comes
-              before what a test query would retrieve. */}
-          <MissReport bot={bot} onAddFaq={addAsFaq} />
-          <RetrievePreview bot={bot} onEffective={setEffective} />
-          <Retrieval bot={bot} onSaved={onSaved} embedded effective={effective} />
-        </>
+      {tab === 'faq' && (
+        <FaqEditor bot={bot} draftQuestion={draftQuestion} onDraftTaken={onDraftTaken} />
       )}
     </>
   );
@@ -120,7 +93,7 @@ export function Knowledge({
  * system prompt. Moving them into the corpus makes the prompt small
  * and the answers searchable, but it also means the bot stops being
  * guaranteed to see them — so this is a decision someone makes, after
- * checking with the Retrieval tab that their questions still land.
+ * checking on the Retrieval screen that their questions still land.
  *
  * Nothing is deleted. The columns stay exactly where they are, which
  * is what makes Undo a single flag flip rather than a restore.
@@ -219,8 +192,8 @@ function MigrationBanner({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => void
       </CardHeader>
       <CardContent className="pt-0">
         <p className="text-xs text-muted">
-          Check the Retrieval tab first — &ldquo;What would this retrieve?&rdquo; lets you ask a real
-          question and see what comes back before you commit.
+          Check Retrieval first — &ldquo;What would this retrieve?&rdquo; lets you ask a real question
+          and see what comes back before you commit.
         </p>
       </CardContent>
     </Card>
@@ -230,5 +203,5 @@ function MigrationBanner({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot) => void
 /** Which tab a hash route means. Unknown routes never reach here, so
  *  the fallback is only a type narrowing. */
 export function knowledgeTabFor(route: string): KnowledgeTab {
-  return (Object.keys(TAB_ROUTES) as KnowledgeTab[]).find((k) => TAB_ROUTES[k] === route) ?? 'faq';
+  return (Object.keys(TAB_ROUTES) as KnowledgeTab[]).find((k) => TAB_ROUTES[k] === route) ?? 'sources';
 }

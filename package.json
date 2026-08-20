@@ -14,6 +14,7 @@
     "db:baseline": "node scripts/migrate.mjs baseline",
     "test:rag": "node scripts/test-rag-units.mjs",
     "dashboard": "npm --prefix dashboard run dev",
+    "landing": "node scripts/dev-static.mjs public --port 8788",
     "build:dashboard": "npm --prefix dashboard run build",
     "deploy:pages": "npm run build:dashboard && wrangler pages deploy public --project-name=conversekit-widget --commit-dirty=true",
     "test:widget": "node scripts/test-widget-markdown.mjs",

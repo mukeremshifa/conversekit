@@ -91,7 +91,7 @@ import {
   type Message,
   type Usage,
 } from './providers';
-import { extractLead, type ExtractedLead } from './leads';
+import { extractLead, defangLeadMarker, type ExtractedLead } from './leads';
 import { notifyLead, webhookHost } from './notify';
 import { buildStats, buildMissReport } from './stats';
 import { LeadStreamFilter } from './lead-stream';
@@ -345,6 +345,13 @@ async function preflight(
   const { botId, message, sessionId } = body;
   if (!botId     || typeof botId     !== 'string') return { ok: false, status: 400, error: '`botId` is required' };
   if (!message   || typeof message   !== 'string' || !message.trim()) return { ok: false, status: 400, error: '`message` must be a non-empty string' };
+  // Length is checked on the raw string, before the trim below: a
+  // megabyte of whitespace costs the same to receive as a megabyte of
+  // prose. Ahead of every database call on purpose — nothing about
+  // this needs to know which bot it is.
+  if (message.length > LIMITS.chatMessage) {
+    return { ok: false, status: 400, error: `\`message\` must be ${LIMITS.chatMessage} characters or fewer` };
+  }
   if (sessionId !== undefined && typeof sessionId !== 'string') {
     return { ok: false, status: 400, error: '`sessionId` must be a string' };
   }
@@ -390,7 +397,7 @@ async function preflight(
     catch (err) { console.error(err); return { ok: false, status: 502, error: 'Database error' }; }
   }
 
-  const userMessage = message.trim();
+  const userMessage = defangLeadMarker(message.trim());
 
   // Resolution failures (unknown vendor, missing key) are config errors,
   // not runtime ones — surface them before any tokens are generated.
@@ -677,7 +684,7 @@ function announceLead(
 /**
  * Abuse guard for the public chat path.
  *
- * Not monetisation — every bot now shares one Groq key and one Workers
+ * Not monetisation — every bot now shares one Gemini key and one Workers
  * AI allocation, so an unthrottled endpoint lets anyone holding a bot
  * UUID drain the platform's free tier from a script. Keyed per bot per
  * client so one noisy visitor cannot starve another tenant.
@@ -911,6 +918,22 @@ app.post('/v1/admin/bots', async (c) => {
   const origins = validateOrigins(payload.allowed_origins);
   if (!origins.ok) return c.json({ error: origins.error }, 400);
   payload.allowed_origins = origins.origins;
+
+  // One bot per organization (supabase/014). Signup provisions it, so
+  // this path only ever runs as recovery — an org whose bot was
+  // deleted. Checked here as well as by the unique index because that
+  // index is skipped on a database that already holds a second bot,
+  // and because a 409 with a sentence in it beats PostgREST's
+  // duplicate-key error reaching the dashboard verbatim.
+  //
+  // RLS scopes listBots to the caller's own orgs, so this cannot be
+  // used to probe whether some other tenant exists.
+  try {
+    const existing = await listBots(c.get('db'));
+    if (existing.some((b) => b.org_id === payload.org_id)) {
+      return c.json({ error: 'This organization already has a bot.' }, 409);
+    }
+  } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 
   try {
     const bot = await createBot(c.get('db'), payload);

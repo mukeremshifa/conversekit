@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import {
   LayoutDashboard,
-  BookText, Boxes, Cable, Cpu, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
+  BookText, Cable, Cpu, HelpCircle, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
 } from 'lucide-react';
 import { clearSession, currentSession } from '@/lib/auth';
 import { endpoints, type Bot, type Me } from '@/lib/api';
 import { SignIn } from '@/screens/SignIn';
-import { Shell, type NavItem } from '@/components/Shell';
+import { Shell, NewBotDialog, type NavItem } from '@/components/Shell';
 import { BotConfiguration } from '@/screens/BotConfiguration';
 import { Knowledge, TAB_ROUTES, knowledgeTabFor } from '@/screens/Knowledge';
+import { Retrieval } from '@/screens/Retrieval';
 import { Providers } from '@/screens/Providers';
 import { Leads } from '@/screens/Leads';
 import { Conversations } from '@/screens/Conversations';
@@ -22,38 +23,39 @@ import { CommandPalette, buildCommands, useCommandPalette } from '@/components/C
 import { readTheme, setTheme } from '@/lib/theme';
 
 /**
- * Knowledge Base, Knowledge Sources and Retrieval used to be three
- * entries here. They were split by implementation detail rather than
- * by what a tenant is trying to do, and they are now three tabs of one
- * screen — see screens/Knowledge.tsx.
+ * Two entries for two questions: what the bot knows (Knowledge Base,
+ * whose Sources and FAQ are tabs of one screen) and how it finds it
+ * (Retrieval, which is also where the questions it missed are
+ * reported).
  */
 const NAV: NavItem[] = [
   { id: 'overview',      label: 'Overview',          icon: LayoutDashboard },
   { id: 'playground',    label: 'Playground',        icon: MessagesSquare },
   { id: 'configuration', label: 'Bot Configuration', icon: Settings2 },
-  { id: 'knowledge',     label: 'Knowledge',         icon: BookText },
+  { id: 'knowledge',     label: 'Knowledge Base',    icon: BookText },
+  { id: 'retrieval',     label: 'Retrieval',         icon: Search },
   { id: 'providers',     label: 'AI Providers',      icon: Cpu },
   { id: 'leads',         label: 'Leads',             icon: Target },
   { id: 'conversations', label: 'Conversations',     icon: MessageSquareText },
   { id: 'install',       label: 'Install',           icon: Plug },
 ];
 
-/** The routes Knowledge owns. #sources and #retrieval are not nav
- *  entries any more but are still working URLs — they select a tab.
- *  Bookmarks are public surface; a reorganisation is not a reason to
- *  break someone's link. */
+/** The routes the Knowledge Base owns — one per tab. #knowledge is
+ *  the nav entry and lands on Sources; #sources is the older name for
+ *  it and still works, because bookmarks are public surface. */
 const KNOWLEDGE_ROUTES = new Set<string>(Object.values(TAB_ROUTES));
 
 /** Screens whose content is a table or a chart grid rather than a form.
- *  All three Knowledge tabs are wide together: a page that changes
+ *  Both Knowledge Base tabs are wide together: a page that changes
  *  width as you switch tabs reads as a rendering bug. */
 const WIDE_ROUTES = new Set([
-  'overview', 'leads', 'conversations', ...KNOWLEDGE_ROUTES,
+  'overview', 'leads', 'conversations', 'retrieval', ...KNOWLEDGE_ROUTES,
 ]);
 
-/** Routes that were renamed. The old id stays a working URL: #settings is
- *  bookmarked, and a rename is not a reason to break someone's link. */
-const ALIASES: Record<string, string> = { settings: 'configuration' };
+/** Routes that were renamed. The old id stays a working URL: #settings and
+ *  #sources are bookmarked, and a rename is not a reason to break
+ *  someone's link. */
+const ALIASES: Record<string, string> = { settings: 'configuration', sources: TAB_ROUTES.sources };
 
 const resolveRoute = (hash: string, fallback: string) => {
   const id = hash.slice(1) || fallback;
@@ -75,24 +77,36 @@ function useHashRoute(fallback: string) {
 export default function App() {
   const [authed, setAuthed] = useState(() => !!currentSession());
   const [me, setMe] = useState<Me | null>(null);
-  const [bots, setBots] = useState<Bot[]>([]);
-  const [botId, setBotId] = useState<string>(() => localStorage.getItem('ck_bot_id') ?? '');
+  /** An org has exactly one bot (supabase/014), so there is no
+   *  selection to hold and nothing to remember across reloads — the
+   *  `ck_bot_id` localStorage key this replaced is dead, and stale
+   *  copies of it are harmless because nothing reads it any more.
+   *  Null is the recovery case: the org's bot was deleted. */
+  const [bot, setBot] = useState<Bot | null>(null);
   const [loading, setLoading] = useState(true);
   const [route, navigate] = useHashRoute('overview');
   const palette = useCommandPalette();
+  /**
+   * A question carried from the miss report on Retrieval to the editor
+   * on the Knowledge Base. It lives here because it crosses screens —
+   * the point of the action is that it lands you in the FAQ tab with
+   * the question already typed.
+   */
+  const [faqDraft, setFaqDraft] = useState<string | null>(null);
 
-  const bot = bots.find((b) => b.id === botId) ?? null;
+  const addAsFaq = (question: string) => {
+    setFaqDraft(question);
+    navigate(TAB_ROUTES.faq);
+  };
+  /** Stable, because the editor's prefill effect depends on it. */
+  const clearFaqDraft = useCallback(() => setFaqDraft(null), []);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const [meRes, botsRes] = await Promise.all([endpoints.me(), endpoints.bots()]);
       setMe(meRes);
-      setBots(botsRes.bots);
-      setBotId((current) => {
-        const stillExists = botsRes.bots.some((b) => b.id === current);
-        return stillExists ? current : (botsRes.bots[0]?.id ?? '');
-      });
+      setBot(botsRes.bots[0] ?? null);
     } catch (err) {
       // A failure here is almost always an expired session.
       toast.error(err instanceof Error ? err.message : 'Could not load your account');
@@ -106,18 +120,11 @@ export default function App() {
     if (authed) void load();
   }, [authed, load]);
 
-  useEffect(() => {
-    if (botId) localStorage.setItem('ck_bot_id', botId);
-  }, [botId]);
+  /** Take the saved row after a screen writes one, so the sidebar label
+   *  and every screen see the update without a full refetch. */
+  const patchBot = useCallback((updated: Bot) => setBot(updated), []);
 
-  /** Replace one bot in place after a save, so the switcher label and
-   *  every screen see the update without a full refetch. */
-  const patchBot = useCallback((updated: Bot) => {
-    setBots((prev) => prev.map((b) => (b.id === updated.id ? updated : b)));
-  }, []);
-
-  /** The palette cannot open Shell's dialog directly, so it routes to the
-   *  place that has one. Cycling beats a submenu for a three-state setting. */
+  /** Cycling beats a submenu for a three-state setting. */
   const cycleTheme = () => {
     const order = ['system', 'light', 'dark'] as const;
     const next = order[(order.indexOf(readTheme()) + 1) % order.length];
@@ -129,7 +136,7 @@ export default function App() {
     clearSession();
     setAuthed(false);
     setMe(null);
-    setBots([]);
+    setBot(null);
   };
 
   if (!authed) {
@@ -165,26 +172,26 @@ export default function App() {
     <>
       <Shell
         nav={NAV}
-        route={route}
+        route={KNOWLEDGE_ROUTES.has(route) ? TAB_ROUTES.sources : route}
         onNavigate={navigate}
-        bots={bots}
-        botId={botId}
-        onSelectBot={setBotId}
+        bot={bot}
         email={me?.email ?? null}
-        orgs={me?.orgs ?? []}
-        onBotCreated={(b) => { setBots((prev) => [b, ...prev]); setBotId(b.id); }}
         onSignOut={onSignOut}
         wide={WIDE_ROUTES.has(route)}
         onOpenPalette={() => palette.setOpen(true)}
       >
         {!bot ? (
-          <EmptyState
-            className="py-24"
-            icon={Cable}
-            title="No bots yet"
-            description="A bot is one row: give it a name, tell it what your business does, and paste the script tag on your site."
-            action={{ label: 'Create your first bot', onClick: () => document.querySelector<HTMLElement>('[aria-label="Select bot"]')?.focus() }}
-          />
+          // Signup provisions a bot and 014 backfilled the orgs that
+          // predate it, so reaching this means the bot was deleted.
+          // The dialog is the only create path left in the UI.
+          <div className="flex flex-col items-center gap-4 py-24">
+            <EmptyState
+              icon={Cable}
+              title="This workspace has no bot"
+              description="Your organization is set up but its bot is gone — deleted, most likely. Create one to get back to a working widget."
+            />
+            <NewBotDialog orgs={me?.orgs ?? []} onCreated={setBot} />
+          </div>
         ) : (
           <div key={route} className="ck-route space-y-6">
             {route === 'overview'      && <Overview bot={bot} onNavigate={navigate} />}
@@ -194,10 +201,13 @@ export default function App() {
               <Knowledge
                 bot={bot}
                 tab={knowledgeTabFor(route)}
+                draftQuestion={faqDraft}
+                onDraftTaken={clearFaqDraft}
                 onNavigate={navigate}
                 onSaved={patchBot}
               />
             )}
+            {route === 'retrieval'     && <Retrieval bot={bot} onSaved={patchBot} onAddFaq={addAsFaq} />}
             {route === 'providers'     && <Providers bot={bot} onSaved={patchBot} />}
             {route === 'leads'         && <Leads bot={bot} />}
             {route === 'conversations' && <Conversations bot={bot} />}
@@ -210,16 +220,13 @@ export default function App() {
         open={palette.open}
         onOpenChange={palette.setOpen}
         commands={buildCommands({
-          nav: NAV, route, bots, botId,
-          // The two Knowledge tabs that are no longer nav entries.
-          // Someone who knows the product still types "sources".
+          nav: NAV, route,
+          // The Knowledge Base tab that is not a nav entry of its own.
+          // Someone who knows the product still types "faq".
           extra: [
-            { id: TAB_ROUTES.sources, label: 'Knowledge · Sources', icon: Boxes },
-            { id: TAB_ROUTES.retrieval, label: 'Knowledge · Retrieval', icon: Search },
+            { id: TAB_ROUTES.faq, label: 'Knowledge Base · FAQ', icon: HelpCircle },
           ],
           onNavigate: navigate,
-          onSelectBot: setBotId,
-          onNewBot: () => navigate('configuration'),
           onCycleTheme: cycleTheme,
         })}
       />

@@ -1,5 +1,15 @@
 // ----------------------------------------------------------------
-// Retrieval settings — the RAG knobs that had no UI until now.
+// Retrieval — how the bot finds an answer, and whether it did.
+//
+// Its own nav entry rather than a tab of the Knowledge Base,
+// because it is a different question: the Knowledge Base is what
+// the bot knows, this is the search over it. Three parts, in the
+// order someone debugging a bad answer needs them — what real
+// visitors asked and missed, what a query of your own retrieves,
+// and the settings that govern both.
+//
+// The settings themselves are the RAG knobs that had no UI until
+// 011.
 //
 // Deliberately few. "Configurable RAG" expands without limit
 // (rerankers, hybrid search, query rewriting) and every knob is a
@@ -24,6 +34,8 @@ import {
   Field, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
+import { MissReport } from '@/screens/knowledge/MissReport';
+import { RetrievePreview } from '@/screens/knowledge/RetrievePreview';
 
 /**
  * Mirrors ragConfigFor in src/rag/ingest.ts — with one deliberate hole.
@@ -52,17 +64,51 @@ const DEFAULTS: Omit<Required<RagConfig>, 'min_similarity'> = {
   rerank: false,
 };
 
+/**
+ * The screen. Settings live below the two things that tell you whether
+ * they need changing at all — a knob is only meaningful next to the
+ * evidence that it is set wrong.
+ */
+export function Retrieval({
+  bot, onSaved, onAddFaq,
+}: {
+  bot: Bot;
+  onSaved: (b: Bot) => void;
+  /** Hand a missed question to the FAQ editor on the Knowledge Base,
+   *  prefilled. Crosses screens now that this is one of its own. */
+  onAddFaq: (question: string) => void;
+}) {
+  /** What actually governed the last preview search. Lifted out of
+   *  RetrievePreview so the settings below can show the floor in force
+   *  rather than a constant that is wrong for every bot on the platform
+   *  embedder. */
+  const [effective, setEffective] = useState<EffectiveRetrieval | null>(null);
+
+  return (
+    <>
+      <Header
+        title="Retrieval"
+        subtitle="How the bot searches your knowledge base before answering — and what it failed to find."
+      />
+
+      {/* What visitors actually asked comes before what a test query
+          would retrieve. */}
+      <MissReport bot={bot} onAddFaq={onAddFaq} />
+      <RetrievePreview bot={bot} onEffective={setEffective} />
+      <RetrievalSettings bot={bot} onSaved={onSaved} effective={effective} />
+    </>
+  );
+}
+
 /** `min_similarity` absent means "no override" — the resolved floor
  *  applies. Every other key always has a value. */
 type Draft = Omit<Required<RagConfig>, 'min_similarity'> & { min_similarity?: number };
 
-export function Retrieval({
-  bot, onSaved, embedded = false, effective = null,
+function RetrievalSettings({
+  bot, onSaved, effective,
 }: {
   bot: Bot;
   onSaved: (b: Bot) => void;
-  /** Rendered inside the Knowledge screen, which owns the page header. */
-  embedded?: boolean;
   /**
    * What actually governed the last search this bot ran, from the
    * preview card above. Null until someone runs one.
@@ -72,7 +118,7 @@ export function Retrieval({
    * has already paid for that, and doing it again on mount would spend
    * an embedding call per page view to render one number.
    */
-  effective?: EffectiveRetrieval | null;
+  effective: EffectiveRetrieval | null;
 }) {
   const [cfg, setCfg] = useState<Draft>({ ...DEFAULTS, ...(bot.rag_config ?? {}) });
   const [busy, setBusy] = useState(false);
@@ -96,21 +142,11 @@ export function Retrieval({
 
   const set = (patch: Partial<RagConfig>) => setCfg({ ...cfg, ...patch });
 
-  const saveButton = (
-    <Button onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Button>
-  );
-
   return (
     <>
-      {embedded ? (
-        <div className="flex justify-end">{saveButton}</div>
-      ) : (
-        <Header
-          title="Retrieval"
-          subtitle="How the bot searches your knowledge sources before answering."
-          action={saveButton}
-        />
-      )}
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save changes'}</Button>
+      </div>
 
       <Card>
         <CardHeader>

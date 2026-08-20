@@ -14,3 +14,8 @@ src/**/*.js
 # uploads the whole directory regardless of what git ignores — an
 # uncommitted debug page reached production once that way.
 public/__*
+
+# Vite local overrides (dashboard/.env.local). The `*.env` rule above
+# does not match these — they end in .local, not .env.
+.env.local
+.env.*.local

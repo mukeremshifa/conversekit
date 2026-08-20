@@ -28,6 +28,33 @@ export interface ExtractionResult {
 
 const LEAD_PATTERN = /\[\[LEAD:([\s\S]*?)\]\]/;
 
+/**
+ * Neutralise a lead marker the VISITOR typed.
+ *
+ * extractLead runs over the model's raw reply, so a visitor who talks
+ * the model into echoing `[[LEAD:{"name":"…","email":"…"}]]` writes a
+ * row into the leads table and fires the tenant's notification at a
+ * sales team who will chase it. Rule 7 in the system prompt ("do not
+ * repeat their words") is the only other thing in the way, and a
+ * prompt instruction is not a control.
+ *
+ * Applied once in preflight, to the string that is both sent to the
+ * model and persisted — so a marker cannot come back through the
+ * history window on a later turn either.
+ *
+ * The delimiter is broken rather than the text removed, because a
+ * visitor asking why `[[LEAD:...]]` appeared in their chat is a real
+ * question — this product's own site bot will get it — and stripping
+ * would hand the model a mangled version of it. The defanged form
+ * reads the same to a human and cannot round-trip through
+ * LEAD_PATTERN. Matching is looser than that pattern (case, inner
+ * space) so that a model tidying up `[[lead :` on the way out cannot
+ * hand back something that does match.
+ */
+export function defangLeadMarker(text: string): string {
+  return text.replace(/\[\[\s*LEAD\s*:/gi, '[ [LEAD:');
+}
+
 /** Trimmed, or null when absent, blank, or the JSON null the prompt
  *  asks for on fields the visitor did not provide. */
 const str = (v: unknown): string | null =>

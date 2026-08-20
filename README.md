@@ -46,9 +46,9 @@ redeploy, and no build step on their side.
 - **Eleven AI vendors, one interface.** OpenAI, Anthropic, Gemini, Groq,
   OpenRouter, Mistral, Workers AI, DeepSeek, Together, Ollama and LM Studio,
   plus any OpenAI-compatible endpoint. Switching is a dropdown, per bot.
-- **Runs at no cost.** Groq for chat and Workers AI for embeddings cover the
-  whole loop on free tiers. That is the platform default, and it is verified
-  rather than theoretical.
+- **Runs at no cost.** Gemini Flash Lite for chat and Workers AI for
+  embeddings cover the whole loop on free tiers. That is the platform default,
+  and it is verified rather than theoretical.
 - **Captures leads.** The model collects a name, email or phone number
   mid-conversation and files it for CSV export.
 - **Streams, with a net.** Replies arrive over SSE; a transport failure falls
@@ -83,8 +83,9 @@ React + Vite + Tailwind v4
 npm install                    # Worker dependencies
 npm ci --prefix dashboard      # dashboard dependencies
 
-npm run dev                    # Worker on localhost
-npm run dashboard              # dashboard dev server
+npm run dashboard              # dashboard  → localhost:5173/admin/
+npm run landing                # landing page → localhost:8788
+npm run dev                    # Worker API  → localhost:8787
 
 npm test                       # widget, session and RAG unit tests
 npm run type-check             # tsc --noEmit

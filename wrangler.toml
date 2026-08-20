@@ -33,12 +33,12 @@ bucket_name = "conversekit-documents"
 # new bots land on the free stack rather than a metered one. Per-tenant
 # config in bots.provider_config still overrides them.
 [vars]
-AI_VENDOR = "groq"
-AI_MODEL = "llama-3.3-70b-versatile"
+AI_VENDOR = "google"
+AI_MODEL = "gemini-3.5-flash-lite"
 EMBEDDING_VENDOR = "workers-ai"
 
 # Abuse guard for the public chat path. Not monetisation: every bot
-# shares one Groq key and one Workers AI allocation, so an unthrottled
+# shares one Gemini key and one Workers AI allocation, so an unthrottled
 # endpoint lets anyone holding a bot UUID drain the free tier from a
 # script. 30 messages/minute per bot per client IP is generous for a
 # human and hostile to a loop.

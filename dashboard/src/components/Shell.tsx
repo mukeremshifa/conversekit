@@ -23,12 +23,11 @@ interface Props {
   nav: NavItem[];
   route: string;
   onNavigate: (route: string) => void;
-  bots: Bot[];
-  botId: string;
-  onSelectBot: (id: string) => void;
+  /** An org has exactly one bot (supabase/014), so this is a value
+   *  rather than a list and a selection. Null only in the recovery
+   *  case where the org's bot was deleted. */
+  bot: Bot | null;
   email: string | null;
-  orgs: Org[];
-  onBotCreated: (bot: Bot) => void;
   onSignOut: () => void;
   /** Data-heavy screens get a wider column than forms do. */
   wide?: boolean;
@@ -37,8 +36,8 @@ interface Props {
 }
 
 export function Shell({
-  nav, route, onNavigate, bots, botId, onSelectBot,
-  email, orgs, onBotCreated, onSignOut, wide, onOpenPalette, children,
+  nav, route, onNavigate, bot,
+  email, onSignOut, wide, onOpenPalette, children,
 }: Props) {
   const [open, setOpen] = useState(false); // mobile drawer
 
@@ -48,20 +47,16 @@ export function Shell({
         <Wordmark />
       </div>
 
-      <div className="space-y-2 border-b border-border px-4 py-4">
-        <label className="text-xs font-semibold uppercase tracking-wide text-muted">Bot</label>
-        <Select value={botId} onValueChange={(v) => { onSelectBot(v); setOpen(false); }}>
-          <SelectTrigger aria-label="Select bot">
-            <SelectValue placeholder="No bots" />
-          </SelectTrigger>
-          <SelectContent>
-            {bots.map((b) => (
-              <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <NewBotDialog orgs={orgs} onCreated={onBotCreated} />
-      </div>
+      {/* Where the bot switcher used to be. One org, one bot, so the
+          name is a label rather than a control — and the "New bot"
+          button moved to the empty state in App.tsx, which is the only
+          place it can still be reached from. */}
+      {bot && (
+        <div className="border-b border-border px-4 py-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">Bot</p>
+          <p className="truncate pt-1 text-sm font-medium" title={bot.name}>{bot.name}</p>
+        </div>
+      )}
 
       <button
         type="button"
@@ -125,7 +120,7 @@ export function Shell({
           <Button variant="ghost" size="icon" onClick={() => setOpen(true)} aria-label="Open menu">
             <Menu className="h-5 w-5" />
           </Button>
-          <span className="font-semibold">{bots.find((b) => b.id === botId)?.name ?? 'ConverseKit'}</span>
+          <span className="font-semibold">{bot?.name ?? 'ConverseKit'}</span>
         </header>
 
         <main className="min-w-0 flex-1 overflow-y-auto p-4 md:p-8">
@@ -173,7 +168,11 @@ function ThemeToggle() {
   );
 }
 
-function NewBotDialog({ orgs, onCreated }: { orgs: Org[]; onCreated: (b: Bot) => void }) {
+/** Exported because its only remaining caller is App.tsx's empty state.
+ *  Signup provisions a bot (supabase/014), so this is a recovery path
+ *  for an org whose bot was deleted — not the normal way to get one.
+ *  The API returns 409 if the org already has one. */
+export function NewBotDialog({ orgs, onCreated }: { orgs: Org[]; onCreated: (b: Bot) => void }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState({ name: '', business_name: '', allowed_origin: '', org_id: '' });
@@ -209,7 +208,7 @@ function NewBotDialog({ orgs, onCreated }: { orgs: Org[]; onCreated: (b: Bot) =>
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="w-full justify-start text-accent-ink">
+        <Button>
           <Plus className="h-4 w-4" /> New bot
         </Button>
       </DialogTrigger>

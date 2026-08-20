@@ -128,24 +128,66 @@ Do not commit a filled-in copy of that claim snippet.
 ```bash
 # 1. Install dependencies
 npm install
+npm ci --prefix dashboard
 
-# 2. Run the migrations (Supabase SQL Editor), in order:
-#    supabase/001_init.sql   then   supabase/002_phase1.sql
-#    001 seeds a "Demo Clinic Bot" — copy its UUID from the bots table.
+# 2. Run the migrations (see "Database migrations" above)
+npm run db:migrate
 
 # 3. Add your secrets to .dev.vars (see above)
-
-# 4. Start the Worker locally
-npm run dev          # Wrangler at http://localhost:8787
-
-# Type-check anytime
-npm run type-check
 ```
 
-The widget and admin dashboard in `public/` are static files — open
-`public/index.html`, or serve `public/` with any static server, to test
-against your local or deployed Worker (set the API base in `widget.js` /
-`admin/admin.js`).
+Three servers, each independent — start only the ones your change needs:
+
+| Command | Serves | URL |
+|---|---|---|
+| `npm run dashboard` | Dashboard (Vite, HMR) | http://localhost:5173/admin/ |
+| `npm run landing` | Landing page, `widget.js`, brand assets | http://localhost:8788/ |
+| `npm run dev` | Worker API (Wrangler) | http://localhost:8787 |
+
+### Dashboard
+
+`npm run dashboard` is the only one needed for dashboard UI work. It talks to
+the **deployed** Worker by default, so every screen renders real bots, leads and
+transcripts rather than empty states — the Worker reflects any `Origin`, so
+`localhost` is not a special case there.
+
+To point it somewhere else, copy `dashboard/.env.local.example` to
+`dashboard/.env.local`:
+
+| Variable | Effect |
+|---|---|
+| `VITE_API_BASE` | API origin. Set to `http://localhost:8787` to run against a local Worker |
+| `VITE_WIDGET_BASE` | Origin used in the Install snippet and Playground |
+
+Both fall back to the deployed origins, so a production build needs no
+environment at all.
+
+### Landing page
+
+`public/index.html` has no bundler, so `npm run landing` is a plain static
+server (`scripts/dev-static.mjs`) with live reload — save the file and the tab
+refreshes. It serves `widget.js` and the fonts with the same permissive CORS
+headers `public/_headers` sets in production, so an embed test on another port
+behaves the same locally.
+
+Note `wrangler pages dev public` is *not* the equivalent: it reads the root
+`wrangler.toml` and opens a remote connection for the AI binding before serving
+anything. Use it only when you want the real Pages runtime.
+
+`http://localhost:8788/admin/` serves the last **built** dashboard, not the Vite
+one — run `npm run build:dashboard` to refresh it, or use port 5173 while
+iterating.
+
+### Worker
+
+`npm run dev` needs `wrangler login`: the AI binding has no local simulator, so
+Wrangler runs a remote proxy session (see the `[ai]` comment in `wrangler.toml`).
+Not needed for pure UI work.
+
+```bash
+npm run type-check   # tsc --noEmit
+npm test             # widget, session, RAG, stats, config, leads, knowledge
+```
 
 ---
 

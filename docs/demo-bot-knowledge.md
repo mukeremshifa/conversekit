@@ -100,9 +100,9 @@ script tag with your bot id before the closing `</body>` tag of your site.
 No. It is one script tag. There is nothing to install, bundle or compile.
 
 **What does it cost to run?**
-It can run at no cost. Groq for chat and Cloudflare Workers AI for embeddings
-handle the whole loop — ingest, retrieve, answer — on free tiers, and that is
-the platform default.
+It can run at no cost. Gemini Flash Lite for chat and Cloudflare Workers AI
+for embeddings handle the whole loop — ingest, retrieve, answer — on free
+tiers, and that is the platform default.
 
 **Which AI models can I use?**
 Eleven vendors are built in, plus any OpenAI-compatible endpoint including local

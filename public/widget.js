@@ -498,7 +498,11 @@
        the greeting, so the suggestions read as part of the conversation
        rather than a toolbar bolted to the bottom of the panel. */
     var chips   = el('div',      { id: 'aicb-chips' });
-    var input   = el('textarea', { id: 'aicb-input', placeholder: 'Type a message…', rows: '1', 'aria-label': 'Message' });
+    var input   = el('textarea', { id: 'aicb-input', placeholder: 'Type a message…', rows: '1', 'aria-label': 'Message',
+      // Mirrors LIMITS.chatMessage in src/config.ts, which is the real
+      // control — this only spares a visitor typing past a limit the
+      // endpoint is going to reject anyway.
+      maxlength: '2000' });
     var sendBtn = el('button',   { id: 'aicb-send',  'aria-label': 'Send', innerHTML: ICON_SEND });
     var footer  = el('div', { id: 'aicb-footer' }, [input, sendBtn]);
     var powered = el('div', { id: 'aicb-powered',

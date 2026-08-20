@@ -35,8 +35,8 @@ Anthropic has no embeddings API and fails with a clear error if selected.
 
 ### Running for free
 
-Platform defaults in [wrangler.toml](../wrangler.toml) are **Groq for chat**
-(`llama-3.3-70b-versatile`) and **Workers AI for embeddings**
+Platform defaults in [wrangler.toml](../wrangler.toml) are **Gemini for chat**
+(`gemini-3.5-flash-lite`) and **Workers AI for embeddings**
 (`@cf/baai/bge-base-en-v1.5`). Both have free tiers, so a bot with no
 `provider_config` costs nothing to run, RAG included.
 
