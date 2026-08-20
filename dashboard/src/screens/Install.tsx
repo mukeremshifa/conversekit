@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Check, Copy } from 'lucide-react';
-import { WIDGET_BASE } from '@/lib/config';
+import { API, API_IS_DEFAULT, WIDGET_BASE } from '@/lib/config';
 import type { Bot } from '@/lib/api';
 import {
   Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Muted,
@@ -13,8 +13,15 @@ export function Install({ bot }: { bot: Bot }) {
 
   // Must point at Pages, not the Worker — the Worker serves only the
   // API and has no /widget.js route.
+  //
+  // data-api-base is emitted ONLY when this dashboard is pointed
+  // somewhere other than the host widget.js already defaults to. Putting
+  // the default into every tenant's page would make the API's hostname
+  // impossible to move without re-editing every tag ever pasted; left
+  // out, it stays a constant inside a file we serve and can update.
+  const apiAttr = API_IS_DEFAULT ? '' : `\n  data-api-base="${API}"`;
   const snippet =
-    `<script\n  src="${WIDGET_BASE}/widget.js"\n  data-bot-id="${bot.id}"\n  defer>\n</script>`;
+    `<script\n  src="${WIDGET_BASE}/widget.js"\n  data-bot-id="${bot.id}"${apiAttr}\n  defer>\n</script>`;
 
   async function copy() {
     try {
@@ -52,6 +59,11 @@ export function Install({ bot }: { bot: Bot }) {
           <pre className="overflow-x-auto rounded-lg border border-border bg-bg p-4 font-mono text-xs leading-relaxed">
             {snippet}
           </pre>
+          <Muted className="text-xs">
+            Hosting <code className="font-mono">widget.js</code> yourself? Add{' '}
+            <code className="font-mono">data-api-base="{API}"</code> to the tag — your copy
+            serves its own font, but every message still has to reach this API.
+          </Muted>
         </CardContent>
       </Card>
 

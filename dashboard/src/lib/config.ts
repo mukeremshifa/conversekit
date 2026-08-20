@@ -9,8 +9,14 @@
 // environment at all. `dashboard/.env.local` overrides them for local
 // dev — point API at `wrangler dev` to exercise a Worker change without
 // deploying it, or leave it unset to develop UI against real data.
-export const API =
-  import.meta.env.VITE_API_BASE ?? 'https://conversekit.mukeremshifa.workers.dev';
+const DEFAULT_API = 'https://conversekit.mukeremshifa.workers.dev';
+
+export const API = import.meta.env.VITE_API_BASE ?? DEFAULT_API;
+
+/** True when API is the host `public/widget.js` already defaults to.
+ *  The install snippet reads this to decide whether it has to spell the
+ *  API out in a `data-api-base` attribute, or can stay the shorter tag. */
+export const API_IS_DEFAULT = API === DEFAULT_API;
 
 /** The Worker serves only the API; static assets live on Pages. */
 export const WIDGET_BASE =

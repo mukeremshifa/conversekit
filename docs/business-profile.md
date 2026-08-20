@@ -533,7 +533,26 @@ all.
 
 ---
 
-## Phase 9 — Widget profile card *(optional)*
+## Phase 9 — Widget profile card *(shipped, widget 0.10.0)*
+
+Built as specified below. What the widget renders, in `renderProfileCard`:
+Book (filled, the only brand-coloured action), Call, WhatsApp, Email,
+Directions, then an hours disclosure collapsed to today's line. The address is
+shown as text **only** when there is no `mapUrl` — otherwise it is the same fact
+twice and the pressable one wins. Today is resolved in the profile's timezone
+via `Intl.DateTimeFormat`, falling back to the visitor's local day.
+
+Two things the spec did not call out and the implementation needed:
+
+- **Every URL is scheme-checked before it becomes an `href`** (`safeHref`,
+  `telHref`, `waHref`, `mailHref`). Same rule `safeUrl` applies to model output.
+  The channel is trusted; the column is not the only thing that can write it,
+  and "trusted source" has never been a reason to skip the check.
+- **A profile can be set and still render nothing here** — policies and services
+  are facts the model uses that no button can express. The card is omitted
+  rather than shown empty.
+
+---
 
 `GET /v1/bots/:id/health` already serves the widget's public config through
 `widgetPublicConfig` (`src/config.ts:639`). A structured profile means it can
@@ -621,7 +640,7 @@ Phases are listed in dependency order and each is separately shippable.
 | 6 | Computed hours | — | needs D1; cuttable whole |
 | 7 | FAQ direct match | — | 016 |
 | 8 | Services as rows | 9, retiring the flag | 017; deferrable |
-| 9 | Widget profile card | — | resolves the `booking_url` overlap |
+| 9 | Widget profile card | — | **done** (widget 0.10.0); resolves the `booking_url` overlap |
 | 10 | Nav reorg | — | cosmetic |
 
 **Deploy order is schema first, code second, always** — the same order 009

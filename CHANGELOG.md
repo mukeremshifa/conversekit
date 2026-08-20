@@ -7,6 +7,101 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Added
 
+- **Widget v0.11.0 — shadow DOM, accessibility, and streaming that does not
+  fight the browser.** Five things, shipped together because four of them are
+  in the same file and the fifth rewrites every selector in it
+  (docs/widget-polish.md).
+
+  **The widget renders into a shadow root.** It used to render into the light
+  DOM behind a three-property reset, so every host-page rule reached it —
+  `button{text-transform:uppercase}`, a framework's global `line-height`,
+  anything with `!important` on `font-family`. That had already bitten once
+  (`46a9488`, "restore spacing killed by reset specificity"), and the fix then
+  was more specificity, which has no next move: nothing outspecifies an
+  `!important` on someone else's page. About sixty selectors lost their
+  `#aicb-root` prefix in the move.
+
+  The boundary stops selectors, not **inheritance** — the host element is still
+  an ordinary div in the page's DOM — so `.ck-w` inside the shadow root
+  re-declares every inherited property the widget cares about, and the host
+  itself carries only inline `!important` geometry, because a `:host` rule
+  loses to the document's own on a tie. `@font-face` is injected into the
+  document head rather than the shadow root, which is the one part of this that
+  fails silently: a face declared only inside a shadow root is never fetched,
+  and the panel would have rendered in the system stack with nothing in the
+  console to say so.
+
+  **Accessibility.** A closed panel was still in the tab order — `opacity:0`
+  and `pointer-events:none` hide a node from the eye and the mouse but not from
+  sequential focus, so on every page carrying the tag a keyboard user tabbed off
+  the last link into a chat textarea and a Send button they could not see. It is
+  `visibility:hidden` now, in the transition list so the 0.22s animation
+  survives. `aria-modal="true"` is gone: nothing traps focus, the host page
+  stays usable behind the panel, and the attribute described a widget this is
+  not. Closing hands focus back to the launcher, but only when focus was inside
+  the panel to begin with. The typing indicator has a name. The unread badge
+  counts, instead of reading a hardcoded `1` forever, and the count is spoken
+  through the launcher's `aria-label` because a button's label overrides
+  anything nested inside it.
+
+  And a streamed reply is announced **once**, not once per token: the bubble
+  carries `aria-live="off"` while it fills, lifted at the end, with the final
+  render as the single mutation the transcript's polite region reports.
+
+  **Streaming performance.** `append` re-rendered the entire accumulated reply
+  and reassigned `innerHTML` on every delta — O(n²), with full DOM teardown per
+  token. Beyond the arithmetic: a selection made mid-stream was destroyed, so
+  nothing could be copied out of a reply until it finished, and a link in an
+  already-painted part was replaced under the cursor mid-click. A delta that
+  cannot change how anything already rendered **parses** now goes straight onto
+  the trailing text node. Most deltas from every provider in `src/providers/`
+  are plain prose, so that is the common path. Smooth scrolling is also off
+  while a reply streams: `scrollTop` was being assigned every token and each
+  assignment restarted the smooth animation from wherever the last one had
+  reached, so it never arrived — that was the stutter.
+
+  **The launcher is the same on every bot.** A tenant logo went onto the 56px
+  disc as well as into the panel header; it is header-only now. The launcher is
+  a control, and a visitor reads a circle in the corner of a page as "chat" —
+  cropped into it, a wordmark reads as a stray avatar instead and the one
+  affordance the widget has stops looking like a button.
+
+  **`data-api-base`.** `API_BASE` was hardcoded, so a tenant self-hosting
+  `widget.js` — a supported deployment, and the reason `ASSET_BASE` is derived
+  from the script's own `src` — still called home for every message. The
+  attribute is validated as an https **origin**, with no path, query, or
+  fragment: it becomes the prefix of every URL this file fetches, and a
+  deployment knob that silently half-works is worse than one that visibly falls
+  back. The install snippet emits it only when the dashboard is pointed
+  somewhere other than the default, because baking that hostname into every
+  pasted tag would make it impossible to move later.
+
+  Also: **fenced code blocks** render as `<pre><code>` instead of a literal row
+  of backticks — escaped, and never run through the inline pass, so a URL in a
+  shell snippet is not a link — and **autolinks stop swallowing trailing
+  punctuation**, which used to put the full stop ending a sentence inside the
+  `href`. On iOS, the panel now tracks `visualViewport` so the composer does
+  not slide under the keyboard.
+
+- **Widget v0.10.0 — the profile card.** `GET /v1/bots/:id/health` has served a
+  structured `profile` object since supabase/015 and nothing consumed it, so the
+  only way a visitor got a phone number was to ask the model to retype one out
+  of its prompt. It usually did. The widget now renders that object as
+  affordances — a **Book** button, **Call**, **WhatsApp**, **Email**,
+  **Directions**, and an hours disclosure collapsed to today's line with today's
+  row bolded in the expanded week. A `tel:` link built from the column cannot
+  drop a digit and a booking button cannot point at a URL that never existed,
+  which is the entire argument for the feature (docs/business-profile.md,
+  Phase 9).
+
+  Today is resolved in the **business's** timezone, not the visitor's: a shop in
+  Lagos is open on its own Tuesday. Every URL is scheme-checked before it
+  becomes an `href`, on the same grounds `safeUrl` checks model output — the
+  channel is trusted, the column is not the only thing that can write it.
+
+  Renders nothing at all for a bot with no profile, which is every bot until it
+  is backfilled.
+
 - **Hybrid retrieval** (`rag_config.retrieval_mode`, supabase/013) — the vector
   and lexical channels can now run on **every** turn over the **whole** corpus
   and be fused by reciprocal rank, instead of lexical being a fallback that only
@@ -395,6 +490,48 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Fixed
 
+- **A rate-limited visitor was told the bot was broken, and charged twice for
+  it.** `/v1/chat/stream` answering 4xx threw a bare `HTTP nnn`, which the widget
+  read as a transport failure and quietly replayed on the buffered endpoint —
+  where the same preflight said the same thing. So a 429 cost a *second* message
+  off `CHAT_LIMITER` and surfaced as "I'm having a moment", never as the "please
+  slow down" the server actually wrote. The status now travels with the error;
+  only transport failures and 5xx fall back, and 429 is the one status whose
+  server copy is shown to the visitor verbatim.
+
+- **A deleted or mistyped bot id mounted a widget that could not work.**
+  `fetchConfig` called `r.json()` without checking `r.ok`, and a 404 answers with
+  a JSON body that parses perfectly — so the widget kept every default, greeted
+  the visitor as "Assistant", and failed on every message. A 404 now unmounts and
+  names the id in the console, for the one person who can fix it. A transport
+  failure still does not: the defaults are a working widget.
+
+- **Five colours in the widget were light-mode literals.** Inline `code` was
+  tinted `#0A0A0C` at 6% and so was invisible on the dark panel; the error bubble
+  was a light-pink slab in the middle of it; the scrollbar, typing dots and
+  online dot were untokenised, and Firefox painted the *visitor's* system
+  scrollbar down a panel the tenant had set to dark. All six now have a pair in
+  both palettes, with a note at the top of the block saying why a literal hex
+  anywhere below it is a bug.
+
+- **The panel hung off the top of short viewports.** It was sized purely by its
+  content — about 564px — and the only media query keyed on width, so a
+  landscape phone (844×390) was far too wide to match it and far too short to
+  show the panel. It has a `dvh` ceiling now, plus a `max-height` query that
+  releases the transcript's flex floor: without that the panel honoured the
+  ceiling by clipping the composer instead of shrinking the scroller.
+
+- **The focus ring vanished on older Safari.** The input's focus `box-shadow` was
+  a bare `color-mix()`, which is Safari 16.2 — in a file that still carries an
+  `addListener` fallback for Safari 13. An unsupporting browser dropped the whole
+  declaration and got no ring at all. A neutral ring is declared first now and
+  the tinted one overwrites it wherever it parses.
+
+- **Clearing your suggestion chips handed them back.** `renderChips` tested
+  `config.suggestions && .length`, so an empty array — a tenant who deliberately
+  deleted their chips — fell through to the three built-in defaults. Only `null`,
+  the key absent from `/health`, means "never set one".
+
 - **`inkVariant` in the widget assumed a white panel.** It walked a brand
   colour's lightness *down* until it cleared 4.5:1, which is correct on white
   and silently wrong on anything else — dark mode would have shipped near-black
@@ -489,6 +626,7 @@ where it stopped looking like a work in progress.
 
 | Version | Change |
 |---|---|
+| 0.10.0 | Profile card (book/call/directions/hours); 4xx no longer retried; dark-mode token sweep |
 | 0.9.0 | Position, logo, greeting + delay, light/dark/auto, typing toggle, citations |
 | 0.8.0 | Panel redesign, specificity fix, self-hosted type, contrast audit |
 | 0.7.1 | `window.ConverseKit` public API |

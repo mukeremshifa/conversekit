@@ -596,7 +596,7 @@ export function BotConfiguration({ bot, onSaved }: { bot: Bot; onSaved: (b: Bot)
               <SettingRow
                 label="Logo"
                 align="start"
-                description="Replaces the default mark on the launcher and in the panel header. PNG, JPEG or WebP, up to 512 KB. Saves on its own, without waiting for Save."
+                description="Shown in the panel header, beside the bot name. The launcher keeps the same generic chat mark on every bot, so it still reads as a button. PNG, JPEG or WebP, up to 512 KB. Saves on its own, without waiting for Save."
               >
                 <div className="flex items-center gap-4">
                   <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-bg">

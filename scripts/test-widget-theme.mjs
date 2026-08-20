@@ -24,7 +24,7 @@ const src = readFileSync(join(ROOT, 'public/widget.js'), 'utf8');
 // Same trick as test-widget-markdown.mjs: the colour block is pure, so
 // it evaluates standalone without a DOM.
 const start = src.indexOf("  var INK = '#0A0A0C';");
-const end = src.indexOf('  function applyColor(root)');
+const end = src.indexOf('  function applyColor(');
 if (start < 0 || end < 0) {
   console.error('Could not locate the colour block in widget.js');
   process.exit(2);

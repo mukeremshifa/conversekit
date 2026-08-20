@@ -18,7 +18,8 @@ const src = readFileSync(join(ROOT, 'public/widget.js'), 'utf8');
 const start = src.indexOf('  function escapeHtml(');
 const end = src.indexOf('  // ── DOM helper');
 if (start < 0 || end < 0) { console.error('Could not locate the renderer block in widget.js'); process.exit(2); }
-const renderMarkdown = new Function(`${src.slice(start, end)}\nreturn renderMarkdown;`)();
+const lifted = new Function(`${src.slice(start, end)}\nreturn { renderMarkdown, escapeHtml };`)();
+const { renderMarkdown, escapeHtml } = lifted;
 
 let bad = 0;
 const check = (label, cond, detail = '') => {
@@ -81,6 +82,50 @@ check('lone asterisk survives', renderMarkdown('2 * 3 = 6').includes('2 * 3'));
   // Partial markers appear mid-stream on every delta.
   const partials = ['', '**', '**bo', '**bold**', '**bold** and [l', '**bold** and [l](https://x.com)'];
   check('every streaming prefix renders', partials.every((p) => typeof renderMarkdown(p) === 'string'));
+}
+
+console.log('\nFenced code blocks');
+has('fence becomes pre/code', 'Run:\n```\nnpm test\n```', '<pre><code>npm test</code></pre>');
+lacks('the info string is not rendered', '```js\nlet a = 1\n```', 'js<');
+has('a fence body is escaped', '```\n<script>alert(1)</script>\n```', '&lt;script&gt;');
+lacks('a fence body cannot produce live html', '```\n<img src=x onerror=alert(1)>\n```', '<img');
+lacks('a fence body is not run through the inline pass', '```\nsee **bold** here\n```', '<strong>');
+lacks('a url inside a fence is not linkified', '```\ncurl https://x.com\n```', '<a href');
+has('an unterminated fence still renders mid-stream', 'Try:\n```\nnpm i', '<pre><code>npm i</code></pre>');
+has('text after a fence returns to prose', '```\na\n```\nThen this.', '<p>Then this.</p>');
+lacks('backticks are not left as literal text', '```\na\n```', '```');
+
+console.log('\nAutolink punctuation');
+has('a trailing full stop stays out of the href', 'see https://x.com/page.', 'href="https://x.com/page"');
+has('...and stays in the sentence', 'see https://x.com/page.', '</a>.');
+has('a trailing comma stays out of the href', 'see https://x.com/a, then', 'href="https://x.com/a"');
+has('a closing paren stays out of the href', '(see https://x.com/a)', 'href="https://x.com/a"');
+has('a path that really ends in a slash is untouched', 'see https://x.com/a/ ok', 'href="https://x.com/a/"');
+
+/* The streaming fast path in beginBotMessage appends a plain delta to the
+   trailing text node and splices the same text into its record of the
+   rendered markup, rather than re-rendering. done() compares that record
+   against a real render and only repaints if they differ — so if this
+   invariant ever breaks, the widget is correct but slow, never wrong.
+   Guarding it here keeps it that way. */
+console.log('\nStreaming fast path');
+{
+  // The guards the widget applies before taking the fast path.
+  const UNSAFE_DELTA = /[*`\[\]#\n:/]/;
+  const cases = [
+    ['Hello', ' there'],
+    ['Costs **199 AED**', ' in total'],
+    ['A quote: he said', ' "hi" & left'],
+    ['Line one\nline two', ' continues'],
+    ['- a\n\nAfter the list', ' goes on'],
+    ["It's", " fine"],
+  ];
+  const spliced = cases.every(([raw, chunk]) => {
+    const before = renderMarkdown(raw);
+    if (UNSAFE_DELTA.test(chunk) || raw.endsWith('\n') || !before.endsWith('</p>')) return true;
+    return before.slice(0, -4) + escapeHtml(chunk) + '</p>' === renderMarkdown(raw + chunk);
+  });
+  check('an appended plain delta matches a full re-render', spliced);
 }
 
 console.log(bad === 0 ? '\nAll widget markdown tests passed.\n' : `\n${bad} failure(s).\n`);
