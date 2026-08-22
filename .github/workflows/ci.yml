@@ -56,9 +56,11 @@ jobs:
         run: npm run build:dashboard
 
       # The landing page has no bundler to catch a bad asset path or an
-      # unclosed tag, so this stands in for one.
+      # unclosed tag, so this stands in for one. Run via npm so the sprite
+      # and shot freshness guards run too: a generated asset that no longer
+      # matches its source should fail the build rather than ship stale.
       - name: Check the landing page
-        run: node scripts/check-landing.mjs
+        run: npm run check:landing
 
       - name: Check documentation links
         run: node scripts/check-links.mjs

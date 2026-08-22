@@ -1,6 +1,6 @@
 {
   "name": "conversekit",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Multi-tenant conversational AI platform – Cloudflare Workers + Hono + Supabase + pluggable AI vendors",
   "private": true,
   "scripts": {
@@ -28,7 +28,13 @@
     "test:config": "node scripts/test-config-units.mjs",
     "test:widget-theme": "node scripts/test-widget-theme.mjs",
     "test:leads": "node scripts/test-lead-capture.mjs",
-    "eval:rag": "node scripts/eval-rag.mjs"
+    "eval:rag": "node scripts/eval-rag.mjs",
+    "gen:sprite": "node scripts/gen-vendor-sprite.mjs",
+    "shots:build": "npm --prefix dashboard run build:shots",
+    "shots:shoot": "node scripts/shoot.mjs",
+    "check:landing": "node scripts/gen-vendor-sprite.mjs --check && node scripts/gen-shots.mjs --check && node scripts/check-landing.mjs",
+    "check:motion": "node scripts/check-motion.mjs",
+    "gen:shots": "node scripts/gen-shots.mjs"
   },
   "dependencies": {
     "hono": "^4.13.1",
@@ -36,6 +42,10 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250620.0",
+    "@lobehub/icons-static-svg": "^1.94.0",
+    "lucide-static": "^1.33.0",
+    "puppeteer-core": "^25.8.0",
+    "sharp": "^0.35.3",
     "typescript": "^5.8.3",
     "wrangler": "^4.18.0"
   }

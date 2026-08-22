@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ConverseKit shot harness</title>
+
+    <!-- Screenshot harness for the landing page (see docs/landing-redesign.md
+         §6). Built by vite.shot.config.ts into dashboard/.shots-build/,
+         which is gitignored and is NOT under public/ — a harness in the
+         deploy root is the mistake scripts/check-deploy.mjs was written
+         after. -->
+
+    <!-- Chrome asks for /favicon.ico on every navigation and the shoot
+         treats a console error as a spoiled shot. An empty data: URL is
+         the request never happening. -->
+    <link rel="icon" href="data:," />
+
+    <!-- Before the bundle, so the substrate is already the right colour
+         on the first frame. src/shot.tsx sets the same attribute again;
+         this one is what stops a dark shot flashing white while Vite's
+         module graph loads. -->
+    <script>
+      (function () {
+        var t = new URLSearchParams(location.search).get('theme');
+        document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+      })();
+    </script>
+  </head>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="/src/shot.tsx"></script>
+  </body>
+</html>

@@ -19,3 +19,8 @@ public/__*
 # does not match these — they end in .local, not .env.
 .env.local
 .env.*.local
+
+# The screenshot harness's build output (dashboard/vite.shot.config.ts).
+# Deliberately outside public/, so `wrangler pages deploy public` cannot
+# reach it whatever git thinks.
+dashboard/.shots-build/

@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/media/landing.png" alt="The ConverseKit landing page: a dark hero reading 'Drop-in AI chat for any website' above the one-line install snippet" width="820">
+<img src="docs/media/landing.png" alt="The ConverseKit landing page: the headline 'Drop-in chat for any website' inside a slowly turning ring of AI vendor logos, above a screenshot of the dashboard" width="820">
 
 # ConverseKit
 

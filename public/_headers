@@ -20,3 +20,10 @@
 /brand/*
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=604800
+
+# Product shots for the landing page. Content-hashed by
+# scripts/shoot.mjs — the filename changes whenever the bytes do — so a
+# year of immutable caching can never serve a stale image.
+/shots/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=31536000, immutable

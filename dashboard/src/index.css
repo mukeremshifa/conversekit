@@ -22,7 +22,14 @@
 
    #EEBA2B is 1.75:1 on the light background, so it can never be text
    there. On the dark background it is 11.02:1, which is why dark mode
-   uses the untouched brand colour everywhere including text. */
+   uses the untouched brand colour everywhere including text.
+
+   THIS BLOCK IS THE SOURCE FOR THE LANDING PAGE TOO. public/index.html
+   has no build step and cannot import from here, so it carries a hand
+   copy of these values under shorter local names (--fg, not
+   --color-fg). Change a value here and copy it across, or the two
+   surfaces drift and the contrast reasoning above stops being true of
+   the page most visitors see first. */
 @theme {
   --color-bg:            #FCFCFD;
   --color-surface:       #FFFFFF;

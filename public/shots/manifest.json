@@ -1,0 +1,436 @@
+{
+  "hero": {
+    "capture": {
+      "width": 1440,
+      "height": 900,
+      "scale": 2
+    },
+    "alt": "The ConverseKit dashboard overview: conversations, messages, leads and lead conversion over thirty days, with the questions visitors asked most.",
+    "themes": {
+      "light": [
+        {
+          "width": 1440,
+          "format": "avif",
+          "file": "/shots/hero-light-1440.af8c1495.avif",
+          "bytes": 37803
+        },
+        {
+          "width": 1440,
+          "format": "webp",
+          "file": "/shots/hero-light-1440.9dd27ea5.webp",
+          "bytes": 47682
+        },
+        {
+          "width": 720,
+          "format": "avif",
+          "file": "/shots/hero-light-720.a254a7ca.avif",
+          "bytes": 14758
+        },
+        {
+          "width": 720,
+          "format": "webp",
+          "file": "/shots/hero-light-720.0a0f50f2.webp",
+          "bytes": 17574
+        }
+      ],
+      "dark": [
+        {
+          "width": 1440,
+          "format": "avif",
+          "file": "/shots/hero-dark-1440.0b30d733.avif",
+          "bytes": 39276
+        },
+        {
+          "width": 1440,
+          "format": "webp",
+          "file": "/shots/hero-dark-1440.87b92e89.webp",
+          "bytes": 47142
+        },
+        {
+          "width": 720,
+          "format": "avif",
+          "file": "/shots/hero-dark-720.013451a4.avif",
+          "bytes": 15603
+        },
+        {
+          "width": 720,
+          "format": "webp",
+          "file": "/shots/hero-dark-720.f3fa0673.webp",
+          "bytes": 17806
+        }
+      ]
+    }
+  },
+  "widget": {
+    "capture": {
+      "width": 426,
+      "height": 575,
+      "scale": 3
+    },
+    "alt": "The chat widget open on a website, answering a question about the clinic and then asking the visitor for their contact details.",
+    "themes": {
+      "light": [
+        {
+          "width": 1024,
+          "format": "avif",
+          "file": "/shots/widget-light-1024.42abd06d.avif",
+          "bytes": 35296
+        },
+        {
+          "width": 1024,
+          "format": "webp",
+          "file": "/shots/widget-light-1024.aac1b6dd.webp",
+          "bytes": 43656
+        },
+        {
+          "width": 512,
+          "format": "avif",
+          "file": "/shots/widget-light-512.ca297c3d.avif",
+          "bytes": 15226
+        },
+        {
+          "width": 512,
+          "format": "webp",
+          "file": "/shots/widget-light-512.20fa4586.webp",
+          "bytes": 18236
+        }
+      ],
+      "dark": [
+        {
+          "width": 1024,
+          "format": "avif",
+          "file": "/shots/widget-dark-1024.74a62617.avif",
+          "bytes": 35325
+        },
+        {
+          "width": 1024,
+          "format": "webp",
+          "file": "/shots/widget-dark-1024.5fb5dd45.webp",
+          "bytes": 43142
+        },
+        {
+          "width": 512,
+          "format": "avif",
+          "file": "/shots/widget-dark-512.7c451eef.avif",
+          "bytes": 15535
+        },
+        {
+          "width": 512,
+          "format": "webp",
+          "file": "/shots/widget-dark-512.0a9811fa.webp",
+          "bytes": 17842
+        }
+      ]
+    }
+  },
+  "leads": {
+    "capture": {
+      "width": 1120,
+      "height": 720,
+      "scale": 2
+    },
+    "alt": "The Leads screen: ten leads captured from chat, each with the name, email, phone and what they asked about.",
+    "themes": {
+      "light": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/leads-light-1120.4e08f468.avif",
+          "bytes": 32716
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/leads-light-1120.fd0803f4.webp",
+          "bytes": 41252
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/leads-light-560.843d1b7a.avif",
+          "bytes": 12141
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/leads-light-560.c4f0ff20.webp",
+          "bytes": 14604
+        }
+      ],
+      "dark": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/leads-dark-1120.f0496f9c.avif",
+          "bytes": 36218
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/leads-dark-1120.1f091e53.webp",
+          "bytes": 42300
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/leads-dark-560.58d55f09.avif",
+          "bytes": 13179
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/leads-dark-560.38df7345.webp",
+          "bytes": 14972
+        }
+      ]
+    }
+  },
+  "knowledge": {
+    "capture": {
+      "width": 1120,
+      "height": 720,
+      "scale": 2
+    },
+    "alt": "The Knowledge Base: six sources (a web page, a PDF, markdown, plain text and a written FAQ), with one still being indexed.",
+    "themes": {
+      "light": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/knowledge-light-1120.4c83412b.avif",
+          "bytes": 27791
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/knowledge-light-1120.6dd6a156.webp",
+          "bytes": 34500
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/knowledge-light-560.2eab35e1.avif",
+          "bytes": 10621
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/knowledge-light-560.ae2deb0d.webp",
+          "bytes": 12470
+        }
+      ],
+      "dark": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/knowledge-dark-1120.675a0b51.avif",
+          "bytes": 29911
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/knowledge-dark-1120.c7f9a7ec.webp",
+          "bytes": 34834
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/knowledge-dark-560.b73c2f37.avif",
+          "bytes": 11248
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/knowledge-dark-560.7b2ec3da.webp",
+          "bytes": 12622
+        }
+      ]
+    }
+  },
+  "profile": {
+    "capture": {
+      "width": 879,
+      "height": 620,
+      "scale": 2
+    },
+    "alt": "The Business Profile screen, where the clinic’s name, address and opening hours are filled in.",
+    "themes": {
+      "light": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/profile-light-1120.bf3b303c.avif",
+          "bytes": 22414
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/profile-light-1120.6282fd5a.webp",
+          "bytes": 26896
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/profile-light-560.55a479f4.avif",
+          "bytes": 8863
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/profile-light-560.910e279f.webp",
+          "bytes": 9960
+        }
+      ],
+      "dark": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/profile-dark-1120.691656d0.avif",
+          "bytes": 23402
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/profile-dark-1120.8e07d955.webp",
+          "bytes": 26798
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/profile-dark-560.4a2aa9db.avif",
+          "bytes": 9777
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/profile-dark-560.53bfb86f.webp",
+          "bytes": 10144
+        }
+      ]
+    }
+  },
+  "install": {
+    "capture": {
+      "width": 879,
+      "height": 620,
+      "scale": 2
+    },
+    "alt": "The Install screen showing the one script tag that has to be pasted into a site.",
+    "themes": {
+      "light": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/install-light-1120.342d981b.avif",
+          "bytes": 28212
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/install-light-1120.ef0af994.webp",
+          "bytes": 38612
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/install-light-560.29521c8a.avif",
+          "bytes": 11545
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/install-light-560.ee4748a0.webp",
+          "bytes": 13882
+        }
+      ],
+      "dark": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/install-dark-1120.f126f302.avif",
+          "bytes": 30304
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/install-dark-1120.b25e5705.webp",
+          "bytes": 38692
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/install-dark-560.11b56406.avif",
+          "bytes": 12761
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/install-dark-560.df1c727e.webp",
+          "bytes": 14474
+        }
+      ]
+    }
+  },
+  "conversations": {
+    "capture": {
+      "width": 879,
+      "height": 620,
+      "scale": 2
+    },
+    "alt": "The Conversations screen: visitor transcripts grouped by session, showing what the bot was asked and how it answered.",
+    "themes": {
+      "light": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/conversations-light-1120.ce62de94.avif",
+          "bytes": 25837
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/conversations-light-1120.da1d6bdf.webp",
+          "bytes": 32916
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/conversations-light-560.39b1b672.avif",
+          "bytes": 10426
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/conversations-light-560.ab807751.webp",
+          "bytes": 11880
+        }
+      ],
+      "dark": [
+        {
+          "width": 1120,
+          "format": "avif",
+          "file": "/shots/conversations-dark-1120.9a597da9.avif",
+          "bytes": 27219
+        },
+        {
+          "width": 1120,
+          "format": "webp",
+          "file": "/shots/conversations-dark-1120.30acd290.webp",
+          "bytes": 32938
+        },
+        {
+          "width": 560,
+          "format": "avif",
+          "file": "/shots/conversations-dark-560.5f38226d.avif",
+          "bytes": 11183
+        },
+        {
+          "width": 560,
+          "format": "webp",
+          "file": "/shots/conversations-dark-560.b8f935e7.webp",
+          "bytes": 12282
+        }
+      ]
+    }
+  }
+}

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:shots": "vite build --config vite.shot.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ConverseKit widget shot harness</title>
+
+    <!-- The widget half of the screenshot harness (docs/landing-redesign.md
+         §6). Loads the real public/widget.js and replays the demo
+         tenant's conversation through it — see src/shot-widget.ts. -->
+
+    <!-- Chrome asks for /favicon.ico on every navigation and the shoot
+         treats a console error as a spoiled shot. An empty data: URL is
+         the request never happening. -->
+    <link rel="icon" href="data:," />
+
+    <script>
+      (function () {
+        var t = new URLSearchParams(location.search).get('theme');
+        document.documentElement.setAttribute('data-theme', t === 'dark' ? 'dark' : 'light');
+      })();
+    </script>
+  </head>
+  <!-- The widget is position:fixed against the viewport, so the shoot
+       sizes the viewport to the phone (390x844) rather than drawing a
+       frame around it here: a wrapper div would not contain the panel,
+       and the panel's own max-height is measured in viewport units. The
+       phone chrome — bezel, rounded corners — is presentation and phase
+       F applies it in the bento, where it can follow the theme. -->
+  <body class="h-full bg-bg">
+    <script type="module" src="/src/shot-widget.ts"></script>
+  </body>
+</html>
