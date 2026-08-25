@@ -59,6 +59,15 @@ jobs:
       - name: Check the landing page
         run: npm run check:landing
 
+      # The dashboard authenticates against Supabase directly, so the
+      # project it is built against is a deploy-time fact the compiler
+      # cannot see. A production bundle once shipped pointed at the
+      # staging project: sign-in appeared to work and every admin call
+      # 401'd, because the Worker pins the token issuer. `npm run build`
+      # above already built it — this asserts what landed inside.
+      - name: Check the dashboard bundle
+        run: node scripts/check-app.mjs
+
       - name: Check documentation links
         run: npm run check:links
 

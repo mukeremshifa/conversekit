@@ -34,5 +34,23 @@ export const WIDGET_SRC = import.meta.env.VITE_WIDGET_SRC ?? __CK_WIDGET_SRC__;
 /** The landing page. Used for outbound links out of the dashboard. */
 export const SITE = __CK_SITE__;
 
-export const SUPABASE_URL = 'https://zqgglnewdmmwjgjzxjvv.supabase.co';
-export const SUPABASE_ANON_KEY = 'sb_publishable_3vO4SRD3gIeNVQvbM8b_JQ_l5Ds2r5o';
+/**
+ * The Supabase project this dashboard authenticates against.
+ *
+ * From config/origins.js via Vite `define`, like every other hostname
+ * here — NOT hardcoded, which is what these two lines used to be.
+ *
+ * That is not a style preference. The dashboard talks to Supabase
+ * directly for sign-in, sign-up and refresh; only the resulting JWT
+ * goes to our API. So these two values decide which project mints the
+ * token, while the Worker decides which project's tokens it trusts —
+ * and when a hand-edited literal put those two out of step, the
+ * deployed production dashboard signed users in against staging and
+ * then 401'd on every admin call, because src/auth.ts pins issuer and
+ * audience. An account created on production could not log in at all.
+ *
+ * A literal cannot be wrong in a way a build can notice. This can:
+ * CK_ENV switches it, and both halves move together.
+ */
+export const SUPABASE_URL = __CK_SUPABASE_URL__;
+export const SUPABASE_ANON_KEY = __CK_SUPABASE_ANON_KEY__;

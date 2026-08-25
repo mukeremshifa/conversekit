@@ -157,8 +157,9 @@ wrangler secret put LEAD_EMAIL_FROM   # e.g. "ConverseKit <leads@yourdomain.com>
 
 If you migrate the project to **JWT signing keys**, Supabase also disables the
 legacy `eyJ…` API keys. Swap both values for the new `sb_publishable_…` /
-`sb_secret_…` pair, update [apps/app/src/](../apps/app/src/), and
-redeploy the Worker *and* Pages. No code changes are required.
+`sb_secret_…` pair, update the matching entry in
+[config/origins.js](../config/origins.js), and redeploy the Worker *and* the
+dashboard.
 
 ---
 
@@ -168,9 +169,18 @@ redeploy the Worker *and* Pages. No code changes are required.
    `002_phase1.sql`, `004_provider_config.sql`, then `003_tenancy.sql`.
    **Read the header of `003` first** — it revokes the anon key's table access,
    so the Worker must already be deployed with `SUPABASE_SERVICE_ROLE_KEY`.
-2. Fill in `SUPABASE_URL` and `SUPABASE_ANON_KEY` at the top of
-   [apps/app/src/](../apps/app/src/). Both are browser-safe once
-   `003` has run — the anon key can then only reach `/auth/v1/*`.
+2. Add the project's URL and publishable key to `PRODUCTION_SUPABASE` (or
+   `STAGING_SUPABASE`) in [config/origins.js](../config/origins.js). Both are
+   browser-safe once `003` has run — the anon key can then only reach
+   `/auth/v1/*`.
+
+   **Not in `apps/app/src/lib/config.ts`.** That file used to hold them as
+   hardcoded constants and it is exactly how a production dashboard shipped
+   authenticating against the staging project: sign-in succeeded, then every
+   admin call 401'd, because the Worker pins the token issuer. They now come
+   from `config/origins.js` through Vite `define`, so `CK_ENV` switches them
+   together with the hostnames, and `node scripts/check-app.mjs` asserts what
+   actually landed in the built bundle.
 3. Open the dashboard and **Create an account**. A trigger gives you an
    organization and an `owner` membership.
 4. Claim any bots that existed before tenancy — `003` parks them in an

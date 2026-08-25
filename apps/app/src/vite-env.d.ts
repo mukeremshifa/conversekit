@@ -20,3 +20,5 @@ declare const __CK_API__: string;
 declare const __CK_CDN__: string;
 declare const __CK_SITE__: string;
 declare const __CK_WIDGET_SRC__: string;
+declare const __CK_SUPABASE_URL__: string;
+declare const __CK_SUPABASE_ANON_KEY__: string;

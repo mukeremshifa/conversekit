@@ -5,7 +5,7 @@ import { fileURLToPath, URL } from 'node:url';
 // Plain JS on purpose — see config/origins.d.ts. It is read by Vite, by
 // scripts/build-assets.mjs and by the landing-page checks, none of which
 // run through tsc.
-import { ORIGINS, installSrc, substitute } from '../../config/origins.js';
+import { ORIGINS, SUPABASE, installSrc, substitute } from '../../config/origins.js';
 
 // Served from its own hostname now (app.conversekit.…), so the base is
 // the root rather than /admin/. The dashboard used to share a Pages
@@ -34,11 +34,18 @@ export default defineConfig({
   publicDir: fileURLToPath(new URL('../../packages/brand/assets', import.meta.url)),
   // The one place hostnames enter the bundle. Everything else reads
   // these through src/lib/config.ts.
+  //
+  // The Supabase pair belongs here for the same reason the rest do, and
+  // is the reason this comment is not merely aspirational any more: it
+  // used to be two hardcoded constants in src/lib/config.ts, which is
+  // how a production build shipped pointing at the staging project.
   define: {
     __CK_API__: JSON.stringify(ORIGINS.api),
     __CK_CDN__: JSON.stringify(ORIGINS.cdn),
     __CK_SITE__: JSON.stringify(ORIGINS.site),
     __CK_WIDGET_SRC__: JSON.stringify(installSrc()),
+    __CK_SUPABASE_URL__: JSON.stringify(SUPABASE.url),
+    __CK_SUPABASE_ANON_KEY__: JSON.stringify(SUPABASE.anonKey),
   },
   build: {
     outDir: 'dist',

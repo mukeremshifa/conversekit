@@ -33,6 +33,7 @@
     "test:knowledge": "node scripts/test-knowledge-units.mjs",
     "test:profile": "node scripts/test-profile-units.mjs",
     "test:entitlements": "node scripts/test-entitlements-units.mjs",
+    "check:app": "npm run build:app && node scripts/check-app.mjs",
     "check:landing": "node scripts/build-assets.mjs site && node scripts/gen-vendor-sprite.mjs --check && node scripts/gen-shots.mjs --check && node scripts/check-landing.mjs",
     "check:motion": "node scripts/build-assets.mjs site && node scripts/check-motion.mjs",
     "check:links": "node scripts/check-links.mjs",

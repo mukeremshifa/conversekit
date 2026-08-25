@@ -64,6 +64,56 @@ const STAGING = {
  */
 export const ORIGINS = process.env.CK_ENV === 'staging' ? STAGING : PRODUCTION;
 
+// ----------------------------------------------------------------
+// The Supabase project, which is a hostname too — and was the one that
+// got away.
+//
+// The dashboard talks to Supabase DIRECTLY for auth: sign-in, sign-up
+// and refresh never pass through our Worker. So the bundle needs a
+// project URL and a publishable key, and until now it carried them as
+// two hardcoded constants in apps/app/src/lib/config.ts, filled in by
+// hand per the checklist in docs/operations.md.
+//
+// The predictable thing happened. The four-Worker rebuild filled them
+// in with STAGING's values and shipped them to production, which put
+// the deployed dashboard in a split brain: it authenticated against the
+// staging project while calling the production API, and the production
+// Worker verifies issuer and audience (src/auth.ts) — so a staging
+// token is not merely unrecognised there, it is refused. Signing in
+// appeared to work and every admin call then 401'd. An account created
+// on production could not sign in at all: the login went to a project
+// that had never heard of it.
+//
+// Nothing caught it because nothing could. A hardcoded literal is not
+// checkable — no `CK_ENV` reaches it, no substitution pass sees it, and
+// `npm run build:app` is equally happy either way.
+//
+// THE ANON KEY IS PUBLISHABLE and belongs in client code: supabase/001
+// revokes the anon role's table privileges, so it reaches /auth/v1/*
+// and nothing else. It is committed for the same reason the hostnames
+// are — a value the browser receives anyway, held in the one place that
+// switches it correctly.
+//
+// It must stay in step with the SUPABASE_URL each Worker is deployed
+// with (apps/api/.dev.vars and .dev.vars.staging). scripts/seed-demo-bot.mjs
+// asserts they agree rather than trusting it.
+// ----------------------------------------------------------------
+const PRODUCTION_SUPABASE = {
+  url: 'https://jvmoiyyieprhtlyymhtg.supabase.co',
+  // Legacy `eyJ…` anon key. If the project is ever migrated to JWT
+  // signing keys, Supabase disables these — swap in the
+  // `sb_publishable_…` value here and redeploy the dashboard.
+  anonKey:
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2bW9peXlpZXByaHRseXltaHRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2NDQ1MDQsImV4cCI6MjEwMzIyMDUwNH0.g9aCMPpj-wwAbi3tifzyAXJ0KxzsqG9gxminV0KKByA',
+};
+
+const STAGING_SUPABASE = {
+  url: 'https://zqgglnewdmmwjgjzxjvv.supabase.co',
+  anonKey: 'sb_publishable_3vO4SRD3gIeNVQvbM8b_JQ_l5Ds2r5o',
+};
+
+export const SUPABASE = process.env.CK_ENV === 'staging' ? STAGING_SUPABASE : PRODUCTION_SUPABASE;
+
 /** The major the install snippet pins to. A breaking widget change
  *  bumps this and the old path keeps serving the old build — which is
  *  the entire reason the snippet does not point at `/widget.js`. */
