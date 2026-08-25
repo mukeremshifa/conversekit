@@ -29,6 +29,10 @@ import puppeteer from 'puppeteer-core';
 // The BUILT landing page: the source holds `__CK_*__` tokens rather
 // than hostnames, so `npm run build:assets -- site` has to have run.
 const ROOT = 'apps/site/dist';
+// Absolute, because the traversal guard below prefix-matches against it, and
+// path.join rewrites the separators on Windows: a relative root never matches
+// its own children there, and every request 403s onto a blank page.
+const ROOT_ABS = path.resolve(ROOT);
 const PORT = 8799;
 
 const CHROME_CANDIDATES = [
@@ -64,8 +68,10 @@ if (!fs.existsSync(path.join(ROOT, 'index.html'))) {
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p.endsWith('/')) p += 'index.html';
-  const file = path.join(ROOT, p);
-  if (!file.startsWith(path.resolve(ROOT)) && !file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
+  const file = path.join(ROOT_ABS, p);
+  // path.join collapses '..', so compare the result to the root rather than
+  // scanning the raw URL for traversal patterns.
+  if (file !== ROOT_ABS && !file.startsWith(ROOT_ABS + path.sep)) { res.writeHead(403); return res.end(); }
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404); return res.end(); }
   res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
   res.end(fs.readFileSync(file));
