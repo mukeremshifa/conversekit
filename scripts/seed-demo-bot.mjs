@@ -5,7 +5,6 @@
  *   npm run seed:demo                 provision / update it
  *   npm run seed:demo -- --dry-run    say what would change, touch nothing
  *   npm run seed:demo -- --check      exit non-zero if it is not serving
- *   npm run seed:demo -- --env staging
  *
  * WHY THIS EXISTS. The landing page carries a live widget. Until now the
  * bot behind it was provisioned by hand from a checklist in
@@ -78,36 +77,6 @@ const has = (flag) => argv.includes(flag);
 const DRY_RUN = has('--dry-run');
 const CHECK_ONLY = has('--check');
 
-// `--env staging` — the value is the NEXT argument, and reading it as
-// such rather than as `--env=staging` only is what scripts/migrate.mjs
-// does. Both forms are accepted here because the other one is what
-// everybody types first.
-const envArg = (() => {
-  const eq = argv.find((a) => a.startsWith('--env='));
-  if (eq) return eq.slice('--env='.length);
-  const i = argv.indexOf('--env');
-  return i >= 0 ? argv[i + 1] : undefined;
-})();
-
-if (envArg && envArg !== 'staging' && envArg !== 'production') {
-  fail(`Unknown --env '${envArg}'. Expected: staging | production`);
-}
-const IS_STAGING = envArg === 'staging';
-
-// The hostnames baked into the page must be the ones the bot allows, so
-// the two have to be read from the same switch. config/origins.js reads
-// CK_ENV from the environment; --env is the CLI face of the same thing.
-if (IS_STAGING && process.env.CK_ENV !== 'staging') {
-  fail(
-    '--env staging also needs CK_ENV=staging set, because config/origins.js reads the\n' +
-    'environment rather than this script\'s arguments, and the allowed origin written to\n' +
-    'the bot comes from there. Otherwise the staging bot would be told to allow the\n' +
-    'production site.\n\n' +
-    '  PowerShell:  $env:CK_ENV=\'staging\'; npm run seed:demo -- --env staging\n' +
-    '  bash:        CK_ENV=staging npm run seed:demo -- --env staging',
-  );
-}
-
 function fail(message) {
   console.error(`\n${message}\n`);
   process.exit(1);
@@ -129,7 +98,7 @@ function loadEnvFile(path) {
   return out;
 }
 
-const devVarsPath = join(ROOT, 'apps', 'api', IS_STAGING ? '.dev.vars.staging' : '.dev.vars');
+const devVarsPath = join(ROOT, 'apps', 'api', '.dev.vars');
 const devVars = loadEnvFile(devVarsPath);
 const tools = { ...loadEnvFile(join(ROOT, '.env.tools')), ...process.env };
 
@@ -557,7 +526,8 @@ async function verify() {
 // Main
 // ---------------------------------------------------------------
 const project = new URL(SUPABASE_URL).hostname.split('.')[0];
-console.log(`\nTarget: ${IS_STAGING ? 'staging' : 'production'}  project ${project}  api ${API_BASE}`);
+console.log(`
+Target: project ${project}  api ${API_BASE}`);
 if (DRY_RUN) console.log('        --dry-run: nothing will be written\n');
 else console.log('');
 

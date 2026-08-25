@@ -6,12 +6,11 @@ node_modules/
 #   apps/api/.dev.vars   runtime secrets for the ck-api Worker. Beside
 #                        wrangler.jsonc because that is where `wrangler
 #                        dev` looks, and everything in it is uploaded to
-#                        the edge by `npm run secrets:push`.
+#                        the edge by `npm run secrets:push`. One file:
+#                        there is one environment, so what runs locally
+#                        and what runs on the edge read the same keys.
 #   .env.tools           credentials for local tooling. Read only by
 #                        scripts/migrate.mjs, uploaded nowhere.
-#
-# `.dev.vars*` also covers the per-environment .dev.vars.staging that
-# wrangler loads for `--env staging`.
 .dev.vars*
 .env.tools
 *.env
@@ -19,9 +18,10 @@ node_modules/
 # ...except the templates, which are the documentation.
 !*.example
 
-# Build output. Every one of these is produced by `npm run build` from
-# tracked sources, and CI builds from a clean checkout — so a committed
-# copy can only ever be a stale copy that outranks the real one.
+# Build output. Every one of these is produced by `npm run build` (or by
+# `npm run dev`, which builds before it serves) from tracked sources, so
+# a committed copy can only ever be a stale copy that outranks the real
+# one.
 dist/
 apps/*/dist/
 
@@ -41,8 +41,3 @@ apps/*/assets/__*
 # does not match these — they end in .local, not .env.
 .env.local
 .env.*.local
-
-# The screenshot harness's build output (apps/app/vite.shot.config.ts).
-# Deliberately outside any assets/ directory, so no build step can
-# sweep it into a deploy whatever git thinks.
-apps/app/.shots-build/

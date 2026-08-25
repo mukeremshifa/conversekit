@@ -132,7 +132,7 @@ actually happens — a vendor rate-limit part-way through a batch.
 This is a deliberate deviation from the locked "Workflows + R2" decision above.
 Revisit when PDF ingestion is actually wanted.
 
-**Ready to build:** see [phase-2b.md](phase-2b.md) — a self-contained brief with
+**Ready to build:** see [phase-2b.md](history/phase-2b.md) — a self-contained brief with
 the architecture-deciding spike (`env.AI.toMarkdown()`), the work breakdown, the
 constraints that must not break, and the landmines this project hit the hard way.
 
@@ -266,7 +266,7 @@ non-bge embedder stop being the documented guess. **That run now gates enabling
 hybrid anywhere** — the harness's off-topic negatives are the only automated
 check that a retrieval change did not quietly stop rejecting.
 
-Full audit, measurements and remaining work: [rag-hardening.md](rag-hardening.md).
+Full audit, measurements and remaining work: [rag-hardening.md](history/rag-hardening.md).
 Retention and the privacy surface `retrieval_log` adds: [tenancy.md](tenancy.md).
 
 ## Phase 2 — original scope (reference)
@@ -322,7 +322,7 @@ without server rewrites, dark mode, keyboard-accessible Radix primitives, lead
 CSV export, and conversation transcripts rendered as chat bubbles.
 
 ```
-npm run dev:app          # vite dev server
+npm run dev -- app       # vite dev server
 npm run build:app        # → apps/app/dist/
 npm run deploy:app       # build + wrangler deploy (ck-app)
 ```
@@ -436,7 +436,7 @@ membership. `create_organization` (SECURITY DEFINER, owner derived from
 **Never graft a test user into a real organization.** A cleanup that deleted
 "this user's org" destroyed the live one, cascading away every bot, conversation
 and lead, because earlier scripts had added throwaway users to it so they could
-exercise a real bot. [scripts/lib/testenv.mjs](../scripts/lib/testenv.mjs) now
+exercise a real bot. `scripts/lib/testenv.mjs` now
 gives each test its own user, org and bots, and tears down only ids it recorded.
 The Playground removed the reason anyone would graft membership again.
 

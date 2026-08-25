@@ -14,13 +14,9 @@
  *                                  auth user, then apply every migration
  *                                  from scratch
  *
- *   ... -- --env staging           run against the staging project
- *                                  instead, whose SUPABASE_URL is read
- *                                  from apps/api/.dev.vars.staging —
- *                                  the same file wrangler and
- *                                  secrets:push use for that
- *                                  environment, so there is one answer
- *                                  to "which database is staging".
+ * ONE DATABASE. There is no --env: this project has a single Supabase
+ * project, named by SUPABASE_URL in apps/api/.dev.vars, and that is the
+ * one every command here acts on.
  *
  * TWO FILES, and which one a credential sits in decides where it can go:
  *
@@ -77,42 +73,19 @@ function loadEnvFile(path) {
   return out;
 }
 
-// Arguments come first, because --env decides which file the project
-// ref is read from.
 const args = process.argv.slice(2);
-const envIdx = args.indexOf('--env');
-const targetEnv = envIdx === -1 ? null : args[envIdx + 1];
-if (envIdx !== -1 && (!targetEnv || targetEnv.startsWith('-'))) {
-  console.error('--env needs a value, e.g. --env staging');
-  process.exit(2);
-}
-// `--env staging` leaves a bare word in argv that is not the command.
-// Guarded on envIdx !== -1: without it, `envIdx + 1` is 0 and the filter
-// swallows the command itself.
-const positional = args.filter((a, i) => !a.startsWith('-') && !(envIdx !== -1 && i === envIdx + 1));
-const command = positional[0] ?? 'status';
+const command = args.find((a) => !a.startsWith('-')) ?? 'status';
 const dryRun = args.includes('--dry-run');
 
-// wrangler loads .dev.vars.<env> INSTEAD OF .dev.vars rather than
-// merging the two, so this does the same: one project or the other,
-// never a blend. Pointing at the wrong database is the mistake this
-// runner cannot undo.
-const varsFile = join(ROOT, 'apps', 'api', targetEnv ? `.dev.vars.${targetEnv}` : '.dev.vars');
-if (targetEnv && !existsSync(varsFile)) {
-  console.error(`
-No apps/api/.dev.vars.${targetEnv} — nothing here says which database '${targetEnv}' is.
-
-Copy apps/api/.dev.vars.example to that path and point the three
-SUPABASE_ values at a separate Supabase project.
-`);
-  process.exit(2);
-}
+// The same file wrangler reads for `wrangler dev` and secrets:push
+// uploads from, so there is one answer to "which database is this".
+const varsFile = join(ROOT, 'apps', 'api', '.dev.vars');
 
 const env = { ...loadEnvFile(varsFile), ...loadEnvFile(join(ROOT, '.env.tools')), ...process.env };
 const { SUPABASE_URL, SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL } = env;
 
 if (!['status', 'up', 'migrate', 'reset'].includes(command)) {
-  console.error(`Unknown command '${command}'. Use: status | up | reset   [--env <name>] [--dry-run]`);
+  console.error(`Unknown command '${command}'. Use: status | up | reset   [--dry-run]`);
   process.exit(2);
 }
 

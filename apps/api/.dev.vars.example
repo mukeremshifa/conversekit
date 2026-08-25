@@ -21,14 +21,8 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...
 GEMINI_API_KEY=
 GROQ_API_KEY=
 
-# ── Staging ───────────────────────────────────────────────────────
-# For a staging Worker, copy this to `.dev.vars.staging` and point the
-# three SUPABASE_ values at a SECOND Supabase project. wrangler loads
-# that file for `--env staging`, and `npm run secrets:push -- --env
-# staging` pushes it to ck-api-staging.
-#
-# Note that .dev.vars.staging REPLACES this file rather than merging
-# with it — wrangler loads one or the other — so it must be complete.
-# secrets:push refuses a staging file whose SUPABASE_URL matches
-# production's, because staging pointed at the production database is
-# not staging.
+# ── One environment ───────────────────────────────────────────────
+# There is no second copy of this file. This project has one Supabase
+# project and one set of Workers, so the keys `wrangler dev` reads here
+# are the keys `npm run secrets:push` uploads to the edge — which is
+# also why `npm run dev` talks to the real database: there is no other.

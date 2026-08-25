@@ -58,7 +58,6 @@ that runs on customers' sites.
 
 ```
 conversekit/
-├── config/origins.js     # THE ONLY PLACE A HOSTNAME IS WRITTEN
 ├── apps/
 │   ├── api/              # ck-api — the Hono app. The one with a script.
 │   │   ├── wrangler.jsonc
@@ -81,17 +80,29 @@ conversekit/
 │   └── site/             # ck-site — the landing page
 │       ├── wrangler.jsonc
 │       └── assets/{index.html,404.html,shots/,_headers}
+├── config/
+│   ├── origins.js        # hostnames — and the CK_DEV switch to localhost
+│   └── demo-bot.js       # the landing page's live demo bot, as data
 ├── packages/brand/assets/  # the single copy of favicons, logos, fonts
-├── scripts/
+├── scripts/              # six, each load-bearing
+│   ├── dev.mjs           # `npm run dev` — spawns all four servers
 │   ├── build-assets.mjs  # token substitution + widget placement
-│   └── migrate.mjs       # the only thing that applies supabase/*.sql
+│   ├── dev-static.mjs    # the static server with live reload dev.mjs drives
+│   ├── migrate.mjs       # the only thing that applies supabase/*.sql
+│   ├── secrets.mjs       # pushes Worker secrets to Cloudflare
+│   └── seed-demo-bot.mjs # provisions the demo bot from config/demo-bot.js
 ├── supabase/             # six migrations — see supabase/README.md
-└── docs/
+└── docs/                 # current docs, plus docs/history/ for finished work
 ```
 
 The build targets are all generated: `apps/*/dist/` is gitignored and rebuilt
-from tracked sources by `npm run build`. The dashboard bundle used to be
-committed under `public/admin/`, which meant the deployed artifact was whichever
-copy was on someone's laptop.
+from tracked sources by `npm run build` — and by `npm run dev`, which builds
+before it serves. The dashboard bundle used to be committed under
+`public/admin/`, which meant the deployed artifact was whichever copy was on
+someone's laptop.
+
+There is **one** environment. `config/origins.js` names the four deployed
+hostnames, and swaps them for four `localhost` ports when `npm run dev` sets
+`CK_DEV=1` — see [operations.md](operations.md).
 
 ---

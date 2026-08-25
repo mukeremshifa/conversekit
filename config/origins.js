@@ -1,20 +1,21 @@
 // ----------------------------------------------------------------
 // The only place a hostname is written.
 //
-// Four deploy targets, four hostnames, one zone. `conversekit.io` day
-// is an edit to ZONE — or a CK_ZONE in the environment for a one-off
-// build against a different apex.
+// ONE environment. What is deployed is production; what runs on your
+// machine is the same thing pointed at localhost. There is no staging
+// tier, no second Supabase project, no second set of Workers — see the
+// "one pipeline" section of README.md for why that was removed rather
+// than maintained.
+//
+// `conversekit.io` day is an edit to ZONE — or a CK_ZONE in the
+// environment for a one-off build against a different apex.
 //
 // Consumed by:
 //   scripts/build-assets.mjs   token substitution for widget.js and the
 //                              landing page
 //   apps/app/vite.config.ts    Vite `define` for the dashboard bundle
-//   scripts/check-landing.mjs  resolves tokens before asserting that
-//                              nothing loads from a host we do not own
 //
-// Nothing else may hardcode a hostname. scripts/check-landing.mjs fails
-// the build on a `__CK_*__` token that survived substitution, and on any
-// asset loaded from a host these four do not name.
+// Nothing else may hardcode a hostname.
 //
 // One non-hostname rides along in TOKENS — the demo bot's id — because
 // the substitution pass is the mechanism that makes a value checkable,
@@ -24,7 +25,8 @@ import { DEMO_BOT_ID } from './demo-bot.js';
 
 const ZONE = process.env.CK_ZONE ?? 'conversekit.mukeremshifa.com';
 
-const PRODUCTION = {
+/** What the four Workers answer on. The deployed set, and the default. */
+const DEPLOYED = {
   site: `https://${ZONE}`,
   app: `https://app.${ZONE}`,
   cdn: `https://cdn.${ZONE}`,
@@ -32,79 +34,50 @@ const PRODUCTION = {
 };
 
 /**
- * Staging lives on `.workers.dev`, which is not a zone — so it cannot be
- * expressed as `sub.ZONE` and has to be named outright.
+ * The same four, on your machine. Ports match what `npm run dev`
+ * actually binds — scripts/dev.mjs is the only thing that sets CK_DEV,
+ * and it is the only reason this second set exists.
  *
- * This exists because without it staging is untestable: the dashboard
- * bundle would call the production API, and the landing page's live
- * widget would load from the production CDN. A staging environment that
- * only exercises production is not one.
+ * This is NOT an environment tier. It is the difference between a dev
+ * server that exercises your edits and one that quietly loads the
+ * deployed widget and calls the deployed API, in which case changing
+ * widget.js or a route would show up nowhere and the dev server would
+ * be an expensive way to look at production.
  */
-// The account's workers.dev subdomain — NOT the zone name, and not
-// derivable from it. It is whatever was claimed when the account was
-// created; check with:
-//
-//   curl -H "Authorization: Bearer $TOKEN" //     https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/subdomain
-//
-// This was wrong once already: it read `mukeremshifa.workers.dev`, which
-// resolves nowhere, so every staging build baked an API host that did
-// not exist. Nothing caught it, because check-landing only asserts that
-// assets come from a host we name — not that the host answers.
-const WORKERS_DEV = process.env.CK_WORKERS_DEV ?? 'mukeemoha.workers.dev';
-
-const STAGING = {
-  site: `https://ck-site-staging.${WORKERS_DEV}`,
-  app: `https://ck-app-staging.${WORKERS_DEV}`,
-  cdn: `https://ck-cdn-staging.${WORKERS_DEV}`,
-  api: `https://ck-api-staging.${WORKERS_DEV}`,
+const LOCAL = {
+  site: 'http://localhost:8788',
+  app: 'http://localhost:5173',
+  cdn: 'http://localhost:8789',
+  api: 'http://localhost:8787',
 };
 
-/**
- * `CK_ENV=staging` selects the staging set. It has to be set for the
- * BUILD, not just the deploy — the hostnames are baked into the bundle
- * and into the landing page, so `wrangler deploy --env staging` alone
- * would ship production hostnames to a staging Worker.
- *
- * On Windows that is `$env:CK_ENV='staging'` before the build; CI does
- * it inline.
- */
-export const ORIGINS = process.env.CK_ENV === 'staging' ? STAGING : PRODUCTION;
+export const ORIGINS = process.env.CK_DEV === '1' ? LOCAL : DEPLOYED;
 
 // ----------------------------------------------------------------
-// The Supabase project, which is a hostname too — and was the one that
-// got away.
+// The Supabase project, which is a hostname too.
 //
 // The dashboard talks to Supabase DIRECTLY for auth: sign-in, sign-up
 // and refresh never pass through our Worker. So the bundle needs a
-// project URL and a publishable key, and until now it carried them as
-// two hardcoded constants in apps/app/src/lib/config.ts, filled in by
-// hand per the checklist in docs/operations.md.
+// project URL and a publishable key, and it holds them here rather than
+// as hand-edited literals in apps/app/src/lib/config.ts — which is how
+// a build once shipped pointing at a project whose tokens the deployed
+// Worker refused, so sign-in appeared to work and every admin call
+// 401'd.
 //
-// The predictable thing happened. The four-Worker rebuild filled them
-// in with STAGING's values and shipped them to production, which put
-// the deployed dashboard in a split brain: it authenticated against the
-// staging project while calling the production API, and the production
-// Worker verifies issuer and audience (src/auth.ts) — so a staging
-// token is not merely unrecognised there, it is refused. Signing in
-// appeared to work and every admin call then 401'd. An account created
-// on production could not sign in at all: the login went to a project
-// that had never heard of it.
-//
-// Nothing caught it because nothing could. A hardcoded literal is not
-// checkable — no `CK_ENV` reaches it, no substitution pass sees it, and
-// `npm run build:app` is equally happy either way.
+// ONE project, local and deployed alike. `npm run dev` talks to the
+// same database the deployed dashboard does, which is the deliberate
+// consequence of having one environment: there is no other database to
+// talk to, and a local session and a deployed session see the same rows.
 //
 // THE ANON KEY IS PUBLISHABLE and belongs in client code: supabase/001
 // revokes the anon role's table privileges, so it reaches /auth/v1/*
 // and nothing else. It is committed for the same reason the hostnames
-// are — a value the browser receives anyway, held in the one place that
-// switches it correctly.
+// are — a value the browser receives anyway, held in one place.
 //
-// It must stay in step with the SUPABASE_URL each Worker is deployed
-// with (apps/api/.dev.vars and .dev.vars.staging). scripts/seed-demo-bot.mjs
-// asserts they agree rather than trusting it.
+// It must stay in step with the SUPABASE_URL the API Worker is deployed
+// with (apps/api/.dev.vars).
 // ----------------------------------------------------------------
-const PRODUCTION_SUPABASE = {
+export const SUPABASE = {
   url: 'https://jvmoiyyieprhtlyymhtg.supabase.co',
   // Legacy `eyJ…` anon key. If the project is ever migrated to JWT
   // signing keys, Supabase disables these — swap in the
@@ -112,13 +85,6 @@ const PRODUCTION_SUPABASE = {
   anonKey:
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp2bW9peXlpZXByaHRseXltaHRnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc2NDQ1MDQsImV4cCI6MjEwMzIyMDUwNH0.g9aCMPpj-wwAbi3tifzyAXJ0KxzsqG9gxminV0KKByA',
 };
-
-const STAGING_SUPABASE = {
-  url: 'https://zqgglnewdmmwjgjzxjvv.supabase.co',
-  anonKey: 'sb_publishable_3vO4SRD3gIeNVQvbM8b_JQ_l5Ds2r5o',
-};
-
-export const SUPABASE = process.env.CK_ENV === 'staging' ? STAGING_SUPABASE : PRODUCTION_SUPABASE;
 
 /** The major the install snippet pins to. A breaking widget change
  *  bumps this and the old path keeps serving the old build — which is
@@ -139,10 +105,8 @@ export const installSrc = () => `${ORIGINS.cdn}/${WIDGET_MAJOR}/widget.js`;
  * HTML by hand is an id nothing can check. It was wrong for exactly
  * that reason — the page shipped a fabricated uuid that matched no row
  * in any database, so /health answered 404 and widget.js unmounted
- * itself on every visit. Routing it through here means
- * scripts/check-landing.mjs fails the build on an unsubstituted token,
- * and config/demo-bot.js stays the single declaration of which bot
- * that is.
+ * itself on every visit. Routing it through here keeps
+ * config/demo-bot.js the single declaration of which bot that is.
  */
 export const TOKENS = {
   __CK_SITE__: ORIGINS.site,
@@ -154,8 +118,7 @@ export const TOKENS = {
 };
 
 /** Replace every token in `text`. Unknown `__CK_*__` tokens are left
- *  alone rather than blanked — a typo should be visible in the output,
- *  and scripts/check-landing.mjs fails on any that survive. */
+ *  alone rather than blanked — a typo should be visible in the output. */
 export function substitute(text) {
   let out = text;
   for (const [token, value] of Object.entries(TOKENS)) {

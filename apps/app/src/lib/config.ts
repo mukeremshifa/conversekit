@@ -45,12 +45,14 @@ export const SITE = __CK_SITE__;
  * goes to our API. So these two values decide which project mints the
  * token, while the Worker decides which project's tokens it trusts —
  * and when a hand-edited literal put those two out of step, the
- * deployed production dashboard signed users in against staging and
- * then 401'd on every admin call, because src/auth.ts pins issuer and
- * audience. An account created on production could not log in at all.
+ * deployed dashboard signed users in against a project whose tokens
+ * the Worker refused, then 401'd on every admin call, because
+ * src/auth.ts pins issuer and audience. Sign-in appeared to work and
+ * nothing else did.
  *
- * A literal cannot be wrong in a way a build can notice. This can:
- * CK_ENV switches it, and both halves move together.
+ * A literal cannot be wrong in a way a build can notice. Reading it
+ * from the one place that also supplies the API hostname means both
+ * halves can only move together.
  */
 export const SUPABASE_URL = __CK_SUPABASE_URL__;
 export const SUPABASE_ANON_KEY = __CK_SUPABASE_ANON_KEY__;

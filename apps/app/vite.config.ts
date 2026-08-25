@@ -38,7 +38,8 @@ export default defineConfig({
   // The Supabase pair belongs here for the same reason the rest do, and
   // is the reason this comment is not merely aspirational any more: it
   // used to be two hardcoded constants in src/lib/config.ts, which is
-  // how a production build shipped pointing at the staging project.
+  // how a build once shipped pointing at a project whose tokens the
+  // deployed Worker refused.
   define: {
     __CK_API__: JSON.stringify(ORIGINS.api),
     __CK_CDN__: JSON.stringify(ORIGINS.cdn),

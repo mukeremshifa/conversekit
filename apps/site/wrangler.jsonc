@@ -37,12 +37,5 @@
     "not_found_handling": "404-page"
   },
 
-  "observability": { "enabled": true },
-
-  "env": {
-    "staging": {
-      "workers_dev": true,
-      "routes": []
-    }
-  }
+  "observability": { "enabled": true }
 }

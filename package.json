@@ -8,56 +8,30 @@
     "apps/*"
   ],
   "scripts": {
-    "build": "npm run build:app && npm run build:assets",
+    "dev": "node scripts/dev.mjs",
+
+    "build": "npm run build:app && node scripts/build-assets.mjs",
     "build:app": "npm run build -w conversekit-app",
-    "build:assets": "node scripts/build-assets.mjs",
-    "dev:api": "npm run dev -w conversekit-api",
-    "dev:app": "npm run dev -w conversekit-app",
-    "dev:site": "node scripts/build-assets.mjs site && node scripts/dev-static.mjs apps/site/dist --port 8788",
-    "dev:cdn": "node scripts/build-assets.mjs cdn && node scripts/dev-static.mjs apps/cdn/dist --port 8789",
-    "deploy:api": "npm run deploy -w conversekit-api",
-    "deploy:app": "npm run build:app && npm run deploy -w conversekit-app",
-    "deploy:cdn": "node scripts/build-assets.mjs cdn && npm run deploy -w conversekit-cdn",
-    "deploy:site": "node scripts/build-assets.mjs site && npm run deploy -w conversekit-site",
-    "deploy": "npm run deploy:api && npm run deploy:app && npm run deploy:cdn && npm run deploy:site",
     "type-check": "npm run type-check -w conversekit-api && npm run type-check -w conversekit-app",
-    "test": "npm run test:widget && npm run test:widget-theme && npm run test:session-units && npm run test:rag && npm run test:stats && npm run test:config && npm run test:leads && npm run test:knowledge && npm run test:profile && npm run test:entitlements",
-    "test:widget": "node scripts/test-widget-markdown.mjs",
-    "test:widget-theme": "node scripts/test-widget-theme.mjs",
-    "test:session": "node scripts/test-session.mjs",
-    "test:session-units": "node scripts/test-session-units.mjs",
-    "test:rag": "node scripts/test-rag-units.mjs",
-    "test:stats": "node scripts/test-stats-units.mjs",
-    "test:config": "node scripts/test-config-units.mjs",
-    "test:leads": "node scripts/test-lead-capture.mjs",
-    "test:knowledge": "node scripts/test-knowledge-units.mjs",
-    "test:profile": "node scripts/test-profile-units.mjs",
-    "test:entitlements": "node scripts/test-entitlements-units.mjs",
-    "check:app": "npm run build:app && node scripts/check-app.mjs",
-    "check:landing": "node scripts/build-assets.mjs site && node scripts/gen-vendor-sprite.mjs --check && node scripts/gen-shots.mjs --check && node scripts/check-landing.mjs",
-    "check:motion": "node scripts/build-assets.mjs site && node scripts/check-motion.mjs",
-    "check:links": "node scripts/check-links.mjs",
-    "secrets:push": "node scripts/secrets.mjs push",
-    "secrets:bootstrap": "node scripts/secrets.mjs bootstrap",
-    "secrets:list": "node scripts/secrets.mjs list",
+
+    "predeploy": "npm run type-check",
+    "deploy": "npm run deploy:api && npm run deploy:cdn && npm run deploy:app && npm run deploy:site",
+    "deploy:api": "npm run deploy -w conversekit-api",
+    "deploy:cdn": "node scripts/build-assets.mjs cdn && npm run deploy -w conversekit-cdn",
+    "deploy:app": "npm run build:app && npm run deploy -w conversekit-app",
+    "deploy:site": "node scripts/build-assets.mjs site && npm run deploy -w conversekit-site",
+
     "db:status": "node scripts/migrate.mjs status",
     "db:migrate": "node scripts/migrate.mjs up",
     "db:reset": "node scripts/migrate.mjs reset",
-    "seed:demo": "node scripts/seed-demo-bot.mjs",
-    "check:demo": "node scripts/seed-demo-bot.mjs --check",
-    "verify:isolation": "node scripts/verify-isolation.mjs",
-    "verify:rls": "node scripts/verify-rls.mjs",
-    "eval:rag": "node scripts/eval-rag.mjs",
-    "gen:sprite": "node scripts/gen-vendor-sprite.mjs",
-    "gen:shots": "node scripts/gen-shots.mjs",
-    "shots:build": "npm run build:shots -w conversekit-app",
-    "shots:shoot": "node scripts/shoot.mjs"
+
+    "secrets:push": "node scripts/secrets.mjs push",
+    "secrets:bootstrap": "node scripts/secrets.mjs bootstrap",
+    "secrets:list": "node scripts/secrets.mjs list",
+
+    "seed:demo": "node scripts/seed-demo-bot.mjs"
   },
   "devDependencies": {
-    "@lobehub/icons-static-svg": "^1.94.0",
-    "lucide-static": "^1.33.0",
-    "puppeteer-core": "^25.8.0",
-    "sharp": "^0.35.3",
     "wrangler": "^4.18.0"
   }
 }

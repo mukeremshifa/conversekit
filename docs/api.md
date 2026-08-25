@@ -334,7 +334,7 @@ swallowed, so neither can affect the chat response.
 ## Testing with curl
 
 ```bash
-API=https://api.conversekit.mukeremshifa.com   # or ck-api-staging.mukeemoha.workers.dev
+API=https://api.conversekit.mukeremshifa.com   # or http://localhost:8787 under `npm run dev`
 
 # Liveness
 curl $API/

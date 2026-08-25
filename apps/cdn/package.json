@@ -5,7 +5,6 @@
   "private": true,
   "scripts": {
     "build": "node ../../scripts/build-assets.mjs cdn",
-    "deploy": "wrangler deploy --env=",
-    "deploy:staging": "wrangler deploy --env staging"
+    "deploy": "wrangler deploy"
   }
 }

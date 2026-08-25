@@ -325,7 +325,7 @@ Kept as the "before", not as a description of the file today — phases A–D ha
 landed and §0.1 says what changed. Read it for the constraints, which all still
 hold.
 
-[apps/site/assets/index.html](../apps/site/assets/index.html) — one 36 KB file, no build step, dark only.
+[apps/site/assets/index.html](../../apps/site/assets/index.html) — one 36 KB file, no build step, dark only.
 
 | Piece | Today |
 |---|---|
@@ -335,13 +335,13 @@ hold.
 | Sections | Hero (with the snippet inside it) → How it works (3 prose cards) → Providers (12 text tiles + 3 cards) → Knowledge (3 cards + 4 facts) → Multi-tenant (3 cards) → Install → Footer |
 | Images | **Zero.** Every section is type on a surface |
 | Motion | One entrance stagger in the hero. Nothing else moves |
-| Guardrails | [scripts/check-landing.mjs](../scripts/check-landing.mjs) — no external hosts, no CDN imports, balanced tags, unique ids, `alt` on every `<img>`, exactly one `<h1>`, and five hardcoded element ids the inline script depends on |
+| Guardrails | `scripts/check-landing.mjs` — no external hosts, no CDN imports, balanced tags, unique ids, `alt` on every `<img>`, exactly one `<h1>`, and five hardcoded element ids the inline script depends on |
 
 Constraints that survive the redesign, because they are load-bearing:
 
 - **No build step, no CDN, no external host.** Fonts are vendored into
   `packages/brand/assets/fonts/`; the checker fails on anything remote.
-- **`public/` is the deploy root.** [scripts/check-deploy.mjs](../scripts/build-assets.mjs)
+- **`public/` is the deploy root.** [scripts/check-deploy.mjs](../../scripts/build-assets.mjs)
   exists because a screenshot harness (`public/__shot.html`) once shipped to
   production. Any harness we build lives outside `public/`.
 - **The widget on the page is real.** The bubble bottom-right is `widget.js`
@@ -349,7 +349,7 @@ Constraints that survive the redesign, because they are load-bearing:
   demo tenant in the screenshots — see §5.
 
 The design system already exists and is unusually well specified: see the token
-block in [apps/app/src/index.css](../apps/app/src/index.css). It has a
+block in [apps/app/src/index.css](../../apps/app/src/index.css). It has a
 complete light and dark palette, a three-state theme switch (`system` / `light`
 / `dark` via `data-theme` on `<html>`), and documented contrast reasoning for
 the gold. The landing page is the only surface not using it.
@@ -770,7 +770,7 @@ Seven raster slots × two themes = **14 images**, AVIF + WebP at two widths.
 ### Why a harness works here
 
 - The dashboard's API layer is a single `fetch()` in
-  [apps/app/src/lib/api.ts](../apps/app/src/lib/api.ts) — trivially stubbed.
+  [apps/app/src/lib/api.ts](../../apps/app/src/lib/api.ts) — trivially stubbed.
 - Theme is one attribute on `<html>`.
 - Chrome is installed on this machine and headless capture is verified working
   at `--force-device-scale-factor=2`.
@@ -840,7 +840,7 @@ Verified against the registry and inspected locally, so this is fact rather than
 recollection:
 
 - **v1.94.0, MIT, 903 icons**, purpose-built for AI/LLM brands.
-- Covers **every** vendor in [apps/api/src/providers/catalog.ts](../apps/api/src/providers/catalog.ts):
+- Covers **every** vendor in [apps/api/src/providers/catalog.ts](../../apps/api/src/providers/catalog.ts):
   OpenAI, Anthropic / Claude, Google Gemini, Groq, OpenRouter, Mistral,
   DeepSeek, Together AI, Cloudflare (Workers AI), Ollama, LM Studio.
 - Three cuts per brand: `name.svg` (mono, `fill="currentColor"`),

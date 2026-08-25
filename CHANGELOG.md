@@ -12,7 +12,7 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
   with four hostnames, four cache policies and four blast radii. Before this, a
   typo in the marketing copy redeployed the script running on customers' sites.
   The plan and the record of executing it are in
-  [docs/deployment-rebuild.md](docs/deployment-rebuild.md).
+  [docs/deployment-rebuild.md](docs/history/deployment-rebuild.md).
 
   | Role | Worker | Hostname |
   |---|---|---|

@@ -13,7 +13,7 @@ converted a 75-page, 6.8 MB PDF in 908 ms and a real DOCX in 246 ms. No PDF
 parser in the bundle, no `unpdf`, and **no Workflows** — the measured end-to-end
 budget is ~11 s, almost all of it embedding, which fits `waitUntil` with room to
 spare. Numbers and the three findings that shaped the code:
-[scripts/spike/FINDINGS.md](../scripts/spike/FINDINGS.md).
+`scripts/spike/FINDINGS.md`.
 
 Everything in §4 is written and tested:
 

@@ -7,7 +7,6 @@
 **Drop-in AI chat for any website.** Answers from your own docs, captures leads
 while it talks, installs with one `<script>` tag.
 
-[![CI](https://github.com/mukeremshifa/conversekit/actions/workflows/ci.yml/badge.svg)](https://github.com/mukeremshifa/conversekit/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-proprietary-0A0A0C)](LICENSE)
 
 [Live site](https://conversekit.mukeremshifa.com) ·
@@ -78,26 +77,72 @@ Supabase Postgres · pgvector · React + Vite + Tailwind v4 · npm workspaces
 | [Knowledge sources](docs/knowledge.md) | Chunking, embedding, retrieval, and its failure modes |
 | [Tenancy and leads](docs/tenancy.md) | Organizations, RLS, the origin lock, lead capture |
 | [API reference](docs/api.md) | Every route, with request and response shapes |
-| [Operations](docs/operations.md) | Migrations, secrets, first-run, local dev, deploying |
+| [Operations](docs/operations.md) | Migrations, secrets, local dev, deploying, onboarding a client |
 | [Roadmap](docs/roadmap.md) | What is built, what is deferred, and why |
+
+Everything under [`docs/`](docs/) is indexed in [docs/README.md](docs/README.md),
+including [`docs/history/`](docs/history/) — narratives of work already finished,
+kept for the reasoning rather than as instructions.
 
 ## Quick start
 
 ```bash
-npm install                    # one lockfile, all four workspaces
-
-npm run dev:app                # dashboard    → localhost:5173
-npm run dev:site               # landing page → localhost:8788
-npm run dev:cdn                # widget + fonts → localhost:8789
-npm run dev:api                # API Worker   → localhost:8787
-
-npm test                       # widget, session, RAG and entitlement units
-npm run type-check             # the Worker and the dashboard
-npm run build                  # all four deploy targets
+npm install          # one lockfile, all four workspaces
+npm run dev          # all four on localhost, one terminal, one Ctrl-C
 ```
 
-Full setup — migrations, secrets and the first bot — is in
+|  | Port |  |
+|---|---|---|
+| `api` | 8787 | the Worker, through `wrangler dev` |
+| `app` | 5173 | the dashboard, Vite with HMR |
+| `site` | 8788 | the landing page, live reload |
+| `cdn` | 8789 | `widget.js`, fonts, brand assets |
+
+The four are wired to each other rather than to production, so a change to a
+route or to `widget.js` shows up in the page in front of you. Run a subset with
+`npm run dev -- app`, or list them with `npm run dev -- --list`.
+
+```bash
+npm run type-check   # the Worker and the dashboard
+npm run build        # all four deploy targets
+npm run deploy       # publish all four, api first
+```
+
+Full setup — secrets, migrations and the first bot — is in
 [Operations](docs/operations.md).
+
+## One environment
+
+**There is no staging.** One Supabase project, one set of four Workers, one
+branch, deployed from a laptop. What `npm run dev` runs is what is deployed,
+pointed at localhost.
+
+That is a deliberate trade while there is no customer data to protect: a second
+environment costs a second project, a second set of secrets and a second thing
+to be wrong. The rule that replaces it is that the database is real — nothing
+you do locally is a rehearsal.
+
+## Repo map
+
+```
+apps/api        the Hono Worker. Routes, auth, RAG, providers, entitlements
+apps/app        the dashboard. React + Vite, deployed as an assets-only Worker
+apps/cdn        widget.js, fonts and brand assets. Serves bytes, knows no tenants
+apps/site       the landing page. Hand-written HTML, no bundler
+
+config/         origins.js — the ONLY place a hostname is written
+                demo-bot.js — the landing page's live demo bot, as data
+packages/brand  favicons, logos and web fonts. One copy, built into each target
+supabase/       the schema, as numbered migrations applied by scripts/migrate.mjs
+
+scripts/        six, and each one is load-bearing:
+                  dev.mjs           `npm run dev` — spawns the four servers
+                  build-assets.mjs  token substitution for site + cdn
+                  dev-static.mjs    the static server dev.mjs drives
+                  migrate.mjs       applies supabase/*.sql
+                  secrets.mjs       pushes Worker secrets to Cloudflare
+                  seed-demo-bot.mjs provisions the demo bot on the landing page
+```
 
 ## Live URLs
 
@@ -108,8 +153,10 @@ Full setup — migrations, secrets and the first bot — is in
 | Widget script | `ck-cdn` | https://cdn.conversekit.mukeremshifa.com/v1/widget.js |
 | API | `ck-api` | https://api.conversekit.mukeremshifa.com |
 
-Staging is the same four on `.workers.dev`: `ck-<service>-staging.mukeemoha.workers.dev`.
-Hostnames are written in exactly one place, [`config/origins.js`](config/origins.js).
+Hostnames are written in exactly one place,
+[`config/origins.js`](config/origins.js), which is also what swaps them for
+`localhost` under `npm run dev`. Moving to another zone is an edit to `ZONE`
+there plus a redeploy.
 
 ## Widget API
 

@@ -316,25 +316,24 @@ in [apps/api/src/rag/files.ts](../apps/api/src/rag/files.ts):
 Requires R2 enabled on the account and the bucket created:
 `wrangler r2 bucket create conversekit-documents`. Without the binding the
 upload route answers `501` and every other source type keeps working.
-Measurements behind these choices: [scripts/spike/FINDINGS.md](../scripts/spike/FINDINGS.md).
+Measurements behind these choices: `scripts/spike/FINDINGS.md`.
 
 ---
 
 ## Tests
 
-```bash
-npm run test:rag           # chunker, extractor and SSRF guard — pure, no network
-npm run test:knowledge     # Q&A chunker, FAQ parser, context budget, prompt contract
-```
-
-```bash
-npm run verify:rls         # local, no network — applies every migration to a
-                           # throwaway Postgres and asserts the policies isolate
-npm run verify:isolation   # end-to-end against a real Supabase project + Worker
-```
-
-Run `verify:rls` after touching any policy; it is the fast inner loop and needs
-nothing but `psql`.
+> **These no longer exist.** The unit, RLS and isolation suites named below were
+> removed along with the rest of the script suite — see
+> [operations.md](operations.md). The behaviour they asserted is still described
+> here, and the suites are recoverable from git history
+> (`git log --diff-filter=D -- scripts/`) if they are ever worth restoring.
+> What follows is kept because it records *what was covered*.
+>
+> - `test:rag` — chunker, extractor and SSRF guard; pure, no network
+> - `test:knowledge` — Q&A chunker, FAQ parser, context budget, prompt contract
+> - `verify:rls` — applied every migration to a throwaway Postgres and asserted
+>   the policies isolate; local, no network
+> - `verify:isolation` — end-to-end against a real Supabase project and Worker
 
 **`verify:rls` skips `005_rag.sql`, `008_files.sql` and `011_knowledge.sql`
 where pgvector is not installed, and says so loudly.** A stock Postgres does not

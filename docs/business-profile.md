@@ -2,7 +2,7 @@
 
 **A self-contained brief.** Everything a fresh session needs to build this
 without re-deriving the project. [roadmap.md](roadmap.md) has the wider
-roadmap, [rag-hardening.md](rag-hardening.md) has the retrieval work this
+roadmap, [rag-hardening.md](history/rag-hardening.md) has the retrieval work this
 builds on; this file is only about splitting business facts out of `bots`,
 giving them structure, and stopping every turn from going through RAG.
 

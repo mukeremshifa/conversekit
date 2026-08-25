@@ -42,7 +42,7 @@ reset does not invalidate a deployed page.
 
 The landing page carries `data-bot-id="__CK_DEMO_BOT__"`, substituted at build time
 like every hostname on the page. That is what makes the id *checkable*:
-[`scripts/check-landing.mjs`](../scripts/check-landing.mjs) fails the build on any
+``scripts/check-landing.mjs`` fails the build on any
 `__CK_*__` token that survived substitution, and separately asserts the widget tag
 carries a 36-character uuid. Neither check could have caught a hand-typed literal,
 which is why the broken one shipped.
@@ -52,7 +52,7 @@ which is why the broken one shipped.
 ```
 npm run seed:demo                 # provision or update
 npm run seed:demo -- --dry-run    # say what would change, write nothing
-npm run check:demo                # exit non-zero if it is not serving
+npm run seed:demo -- --check      # exit non-zero if it is not serving
 ```
 
 Two credentials in `.env.tools`, alongside the migration token — see
@@ -84,7 +84,7 @@ run, which is what makes that file a description of reality rather than a sugges
 ## After seeding
 
 ```
-npm run check:landing && npm run deploy:site
+npm run deploy:site
 ```
 
 Only needed when `DEMO_BOT_ID` itself changes, which should be never — the id is baked
@@ -95,12 +95,13 @@ into the page, and nothing else the seed writes is.
 **The origin.** A bot's `allowed_origins` are compared exactly: scheme, host and port,
 no trailing slash, no path. A mismatch is a 403 the widget cannot explain and the
 visitor never sees. The seed writes `ORIGINS.site` from `config/origins.js` — the same
-switch that writes the hostnames into the page — so the two cannot disagree. This is
-also why `--env staging` insists on `CK_ENV=staging` being set: without it the staging
-bot would be told to allow the production site.
+switch that writes the hostnames into the page — so the two cannot disagree. Note that
+this means a seed run under `npm run dev` (where `CK_DEV=1` makes `ORIGINS.site`
+`http://localhost:8788`) would point the demo bot at localhost. Seed it from a plain
+shell.
 
 **An empty corpus.** A bot with no chunks loads, greets, and then knows nothing, which
-looks like a working widget and reads as a broken product. `npm run check:demo` asserts
+looks like a working widget and reads as a broken product. `npm run seed:demo -- --check` asserts
 `/health` answers, the site origin is allowed, and `chunk_count` is above zero — the
 three ways this can be provisioned and still not work.
 

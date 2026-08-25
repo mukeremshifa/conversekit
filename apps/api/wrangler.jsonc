@@ -24,10 +24,9 @@
   "compatibility_date": "2026-08-23",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Production answers on api.conversekit.… and nowhere else. Leaving
-  // the .workers.dev hostname live would give the API two addresses,
-  // one of which nothing documents and nothing monitors. Staging keeps
-  // it — see [env.staging] below.
+  // Answers on api.conversekit.… and nowhere else. Leaving the
+  // .workers.dev hostname live would give the API two addresses, one of
+  // which nothing documents and nothing monitors.
   "workers_dev": false,
   "routes": [
     {
@@ -107,8 +106,7 @@
   // launch that the mechanism does not exist is not.
   //
   // `period` may only be 10 or 60. The namespace ids are account-wide
-  // and are what keep one tier's burst out of another tier's counter,
-  // so staging uses a different block of them.
+  // and are what keep one tier's burst out of another tier's counter.
   "ratelimits": [
     { "name": "RL_FREE", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } },
     { "name": "RL_PRO", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } },
@@ -127,48 +125,5 @@
   // :00, and these compete for the same Supabase connection pool as real
   // traffic. Twenty-four minutes apart so the second is not waiting on
   // the first's connections either.
-  "triggers": { "crons": ["17 3 * * *", "41 3 * * *"] },
-
-  // ── Staging ─────────────────────────────────────────────────────
-  //
-  // Lives on .workers.dev. Four more hostnames for an environment only
-  // one person uses is four more certificates to notice when they lapse.
-  //
-  // Bindings and vars are NOT inherited by environments — they have to
-  // be repeated here in full. Everything above them (main, placement,
-  // observability, compatibility_*) is.
-  "env": {
-    "staging": {
-      "workers_dev": true,
-      "routes": [],
-      // Nothing to prune on a database nobody writes to, and both
-      // expressions would otherwise run twice a night against the same
-      // Supabase project as production.
-      "triggers": { "crons": [] },
-      // Same names, different values: staging points at its own Supabase
-      // project. `npm run secrets:push -- --env staging` reads
-      // apps/api/.dev.vars.staging and refuses to push it if its
-      // SUPABASE_URL matches production's.
-      "secrets": {
-        "required": [
-          "SUPABASE_URL",
-          "SUPABASE_ANON_KEY",
-          "SUPABASE_SERVICE_ROLE_KEY",
-          "GEMINI_API_KEY",
-          "GROQ_API_KEY"
-        ]
-      },
-      "ai": { "binding": "AI" },
-      "vars": {
-        "AI_VENDOR": "google",
-        "AI_MODEL": "gemini-3.5-flash-lite",
-        "EMBEDDING_VENDOR": "workers-ai"
-      },
-      "ratelimits": [
-        { "name": "RL_FREE", "namespace_id": "2001", "simple": { "limit": 30, "period": 60 } },
-        { "name": "RL_PRO", "namespace_id": "2002", "simple": { "limit": 120, "period": 60 } },
-        { "name": "RL_SCALE", "namespace_id": "2003", "simple": { "limit": 600, "period": 60 } }
-      ]
-    }
-  }
+  "triggers": { "crons": ["17 3 * * *", "41 3 * * *"] }
 }

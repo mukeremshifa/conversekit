@@ -12,8 +12,8 @@ export declare const ORIGINS: {
   readonly api: string;
 };
 
-/** The Supabase project the dashboard authenticates against. Switched
- *  by CK_ENV alongside ORIGINS, because a dashboard pointed at one
+/** The Supabase project the dashboard authenticates against. One
+ *  project, local and deployed alike — a dashboard pointed at one
  *  project while calling an API backed by another is a split brain that
  *  presents as "sign-in works, everything else 401s". */
 export declare const SUPABASE: {
