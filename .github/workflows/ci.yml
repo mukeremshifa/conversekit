@@ -119,9 +119,11 @@ jobs:
   # whatever was on one laptop; now it is a clean checkout of a commit
   # that passed `verify`.
   #
-  # WORKER SECRETS ARE NOT HERE. They are set once with
-  # `wrangler secret bulk` and live in Cloudflare. This workflow holds one
-  # credential: CLOUDFLARE_API_TOKEN, scoped to editing Workers. A
+  # WORKER SECRETS ARE NOT HERE. They are set from a maintainer's machine
+  # with `npm run secrets:bootstrap` (first deploy of a Worker) or
+  # `npm run secrets:push` (every rotation after), and live in Cloudflare.
+  # This workflow holds one credential: CLOUDFLARE_API_TOKEN, scoped to
+  # editing Workers. A
   # pipeline that can read every production key has a far larger blast
   # radius than one that can only publish code.
   deploy:
