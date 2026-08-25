@@ -17,7 +17,7 @@ Selection resolves most-specific-first:
 
 1. the bot's own `provider_config` (per tenant, supports BYOK)
 2. Worker env — `AI_VENDOR`, `AI_MODEL`, `AI_BASE_URL`, …
-3. the vendor preset in [`src/providers/catalog.ts`](../src/providers/catalog.ts)
+3. the vendor preset in [`apps/api/src/providers/catalog.ts`](../apps/api/src/providers/catalog.ts)
 
 | Vendor id | Notes |
 |---|---|
@@ -35,7 +35,7 @@ Anthropic has no embeddings API and fails with a clear error if selected.
 
 ### Running for free
 
-Platform defaults in [wrangler.toml](../wrangler.toml) are **Gemini for chat**
+Platform defaults in [wrangler.toml](../apps/api/wrangler.jsonc) are **Gemini for chat**
 (`gemini-3.5-flash-lite`) and **Workers AI for embeddings**
 (`@cf/baai/bge-base-en-v1.5`). Both have free tiers, so a bot with no
 `provider_config` costs nothing to run, RAG included.

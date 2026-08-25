@@ -29,7 +29,7 @@ Update the State column as you go; it is the handoff between sessions.
 **To start:**
 
 ```bash
-npm run landing          # static server on :8788, live reload
+npm run dev:site         # build + static server on :8788, live reload
 npm run check:landing    # sprite freshness + every static check; must pass
 npm run check:motion     # drives the page in Chrome: reveals, CLS, reduced motion
 ```
@@ -46,7 +46,7 @@ open. Nothing here is a deviation from a *decision* — §4 and §8 are intact.
 **A — tokens and theme.** The page carries a hand copy of the dashboard's
 palette under short local names (`--fg`, not `--color-fg`) because ~700 lines
 of existing CSS are written against them; the mapping is annotated one-to-one
-per line in the token block, and `dashboard/src/index.css` now says in a
+per line in the token block, and `apps/app/src/index.css` now says in a
 comment that it is the source. Five tokens the dashboard has no equivalent for
 were needed to finish de-hardcoding the page and are derived rather than
 picked: `--gold-hover` (a `color-mix` of the accent toward the foreground, so
@@ -66,7 +66,7 @@ And because the toggle overrides the OS, the two `theme-color` tags carry
 without that, forcing light on a dark OS leaves the address bar black.
 
 **B — typography.** The subset is 2,704 bytes exactly as predicted, the `wght`
-axis survives at 200–800, and `public/fonts/` is now two files totalling 33 KB.
+axis survives at 200–800, and `packages/brand/assets/fonts/` is now two files totalling 33 KB.
 The checker guard that keeps Bricolage confined to the wordmark landed in B
 rather than C — a guard that arrives a phase after the constraint it protects
 is a phase in which the regression can ship.
@@ -115,7 +115,7 @@ three palette blocks, three-state toggle, both `theme-color` tags,
 `color-scheme`), sprite (markers present, every `<use>` resolves), orbit (11
 vendor marks, 6 `is-outer` slots, every logo on a chip), and typography
 (Bricolage declared exactly twice and confined to `.brand .wm`, wordmark subset
-loaded). It stays dependency-free and reads only `public/index.html`.
+loaded). It stays dependency-free and reads only `apps/site/assets/index.html`.
 
 **Two environment notes.**
 
@@ -127,15 +127,15 @@ loaded). It stays dependency-free and reads only `public/index.html`.
   do not verify a phone-width layout with a bare `--screenshot` and believe
   what you see.
 - Verify a scratch copy of the page under `public/__*` (gitignored, and
-  `check-deploy.mjs` guards the deploy), never by editing `public/index.html`
-  and reverting: `git checkout -- public/index.html` throws away every
+  `check-deploy.mjs` guards the deploy), never by editing `apps/site/assets/index.html`
+  and reverting: `git checkout -- apps/site/assets/index.html` throws away every
   uncommitted phase in one keystroke.
 
 **E — shots.** Fourteen images, 56 files, 1.45 MB on disk, every one inside
 the §6 budget with room to spare — the hero is 37 KB AVIF against a 120 KB
 ceiling. Run `npm run shots:shoot`; add `--only=<slot>` while iterating,
 `--no-build` to skip the Vite step, `--keep-png` to leave the raw captures in
-`dashboard/.shots-build/png/`.
+`apps/app/.shots-build/png/`.
 
 The harness mounts **the real `<App/>`**, not a rebuilt Shell. `?screen=` sets
 the hash route, `?theme=` stamps `data-theme`, `window.fetch` is replaced by a
@@ -143,7 +143,7 @@ fixture router and `localStorage` is seeded with a session so `SignIn` never
 renders. That is the whole of the stubbing: `lib/api.ts` is one `fetch()`
 behind a table of endpoints, so intercepting it replaces the backend with no
 seam above it. The widget harness is the same idea one level down — it loads
-the real `public/widget.js`, stubs `/health` and `/v1/chat/stream`, and then
+the real `apps/cdn/assets/widget.js`, stubs `/health` and `/v1/chat/stream`, and then
 *types the visitor's lines into the real composer*, so the panel in the image
 is the widget rendering a conversation rather than a mock-up of one.
 
@@ -195,7 +195,7 @@ Three judgement calls worth knowing about:
   a bento cell that no longer matches the other four. Left as it is; phase F
   should decide whether the crop reads as intent.
 
-`public/shots/manifest.json` ships beside the images: slot, capture size, alt
+`apps/site/assets/shots/manifest.json` ships beside the images: slot, capture size, alt
 text, and every file with its width, format and byte count. **Phase F should
 build the `<picture>` markup from it** rather than pasting eight hashes per
 image into the page by hand. It deliberately carries no timestamp — a
@@ -203,7 +203,7 @@ generated file that changes on every run is a file that says nothing in every
 diff.
 
 **F — wiring.** The `<picture>` markup is generated, not written:
-`scripts/gen-shots.mjs` reads `public/shots/manifest.json` and rewrites a
+`scripts/gen-shots.mjs` reads `apps/site/assets/shots/manifest.json` and rewrites a
 block per slot between `<!-- generated:shot hero -->` markers, exactly as
 the sprite works. Fifty-six content-hashed filenames all change on a
 re-shoot; that is not a thing to maintain by hand. It has a `--check`
@@ -325,7 +325,7 @@ Kept as the "before", not as a description of the file today — phases A–D ha
 landed and §0.1 says what changed. Read it for the constraints, which all still
 hold.
 
-[public/index.html](../public/index.html) — one 36 KB file, no build step, dark only.
+[apps/site/assets/index.html](../apps/site/assets/index.html) — one 36 KB file, no build step, dark only.
 
 | Piece | Today |
 |---|---|
@@ -340,8 +340,8 @@ hold.
 Constraints that survive the redesign, because they are load-bearing:
 
 - **No build step, no CDN, no external host.** Fonts are vendored into
-  `public/fonts/`; the checker fails on anything remote.
-- **`public/` is the deploy root.** [scripts/check-deploy.mjs](../scripts/check-deploy.mjs)
+  `packages/brand/assets/fonts/`; the checker fails on anything remote.
+- **`public/` is the deploy root.** [scripts/check-deploy.mjs](../scripts/build-assets.mjs)
   exists because a screenshot harness (`public/__shot.html`) once shipped to
   production. Any harness we build lives outside `public/`.
 - **The widget on the page is real.** The bubble bottom-right is `widget.js`
@@ -349,7 +349,7 @@ Constraints that survive the redesign, because they are load-bearing:
   demo tenant in the screenshots — see §5.
 
 The design system already exists and is unusually well specified: see the token
-block in [dashboard/src/index.css](../dashboard/src/index.css). It has a
+block in [apps/app/src/index.css](../apps/app/src/index.css). It has a
 complete light and dark palette, a three-state theme switch (`system` / `light`
 / `dark` via `data-theme` on `<html>`), and documented contrast reasoning for
 the gold. The landing page is the only surface not using it.
@@ -435,10 +435,10 @@ What it takes:
 - Replace the hardcoded `:root` block with the dashboard's token set — light
   values on bare `:root`, dark under **both** `@media (prefers-color-scheme:
   dark) :root:not([data-theme="light"])` **and** `:root[data-theme="dark"]`.
-  Copy the values from `dashboard/src/index.css`; do not invent new ones.
+  Copy the values from `apps/app/src/index.css`; do not invent new ones.
 - Same `data-theme` attribute and the same `ck_theme` localStorage key as the
   dashboard, so a visitor's choice carries into `/admin/`.
-- A pre-paint inline script in `<head>` — `dashboard/index.html` already has one
+- A pre-paint inline script in `<head>` — `apps/app/index.html` already has one
   to copy verbatim — so dark users get no white flash.
 - Header theme toggle: the dashboard's three-icon `system` / `light` / `dark`
   radiogroup (`Shell.tsx`, `ThemeToggle`), redrawn in plain HTML with inline
@@ -463,18 +463,18 @@ The 41 KB objection is solved by subsetting to the ten glyphs the wordmark
 needs. Verified with the fontTools already installed on this machine:
 
 ```bash
-python -m fontTools.subset public/fonts/bricolage-grotesque-latin.woff2 \
+python -m fontTools.subset packages/brand/assets/fonts/bricolage-grotesque-latin.woff2 \
     --text="ConverseKit" --flavor=woff2 --layout-features='*' \
-    --output-file=public/fonts/bricolage-wordmark.woff2
+    --output-file=packages/brand/assets/fonts/bricolage-wordmark.woff2
 ```
 
 **2,704 bytes**, and the `wght` axis survives the cut (200–800) so both the 700
 of "Converse" and the 400 of "Kit" still render from the one file. Landing font
 payload: **71 KB → 33 KB**.
 
-Add that command to `public/fonts/README.md` beside the two existing vendoring
+Add that command to `packages/brand/assets/fonts/README.md` beside the two existing vendoring
 notes, or a package bump will quietly restore the full file. Delete
-`bricolage-grotesque-latin.woff2` from `public/fonts/` once the subset is in;
+`bricolage-grotesque-latin.woff2` from `packages/brand/assets/fonts/` once the subset is in;
 the dashboard uses its own fontsource import and is unaffected.
 
 The `.disp` class and every `font-family: "Bricolage"` rule other than the
@@ -652,7 +652,7 @@ images. Invented wholesale; approved as synthetic.
 unlikely to belong to anyone; no real business, customer or person appears
 anywhere.
 
-### Business profile (shapes: `BusinessProfile` in `dashboard/src/lib/api.ts`)
+### Business profile (shapes: `BusinessProfile` in `apps/app/src/lib/api.ts`)
 
 - **Hours** — Mon–Fri `08:00–12:30` and `13:30–18:30` (two intervals, which
   exercises `HoursInterval[]` and makes the shot more interesting), Sat
@@ -770,14 +770,14 @@ Seven raster slots × two themes = **14 images**, AVIF + WebP at two widths.
 ### Why a harness works here
 
 - The dashboard's API layer is a single `fetch()` in
-  [dashboard/src/lib/api.ts](../dashboard/src/lib/api.ts) — trivially stubbed.
+  [apps/app/src/lib/api.ts](../apps/app/src/lib/api.ts) — trivially stubbed.
 - Theme is one attribute on `<html>`.
 - Chrome is installed on this machine and headless capture is verified working
   at `--force-device-scale-factor=2`.
 
 ### Architecture
 
-`dashboard/src/shot.tsx` — a second Vite entry that:
+`apps/app/src/shot.tsx` — a second Vite entry that:
 
 1. reads `?screen=leads&theme=dark` from the URL;
 2. stamps `data-theme` before first paint;
@@ -786,12 +786,12 @@ Seven raster slots × two themes = **14 images**, AVIF + WebP at two widths.
 5. mounts the real `Shell` plus the real screen component — no re-implementation,
    or the shots stop being true.
 
-`dashboard/vite.shot.config.ts` — separate config, **`outDir` outside
-`public/`** (`dashboard/.shots-build/`, gitignored). Not `public/admin/`, where
+`apps/app/vite.shot.config.ts` — separate config, **`outDir` outside
+`public/`** (`apps/app/.shots-build/`, gitignored). Not `apps/app/dist/`, where
 the main config's `emptyOutDir` points. A harness in the deploy root is exactly
 the mistake `check-deploy.mjs` was written after.
 
-`dashboard/src/fixtures/fernbrook.ts` — every value in §5, typed against the
+`apps/app/src/fixtures/fernbrook.ts` — every value in §5, typed against the
 real interfaces so a shape change breaks `tsc -b` instead of the screenshots.
 
 Fixture routes to stub, taken from the `endpoints` map:
@@ -810,12 +810,12 @@ Fixture routes to stub, taken from the `endpoints` map:
 The widget shot is its own page: a plain HTML harness that stubs the widget's
 three endpoints —`GET /v1/bots/:id/health` (returns `name`, `businessName`,
 `primaryColor`, `suggestions`, `profile`, `widget`), `POST /v1/chat` and `POST
-/v1/chat/stream` — then loads the real `public/widget.js`, opens the panel, and
+/v1/chat/stream` — then loads the real `apps/cdn/assets/widget.js`, opens the panel, and
 replays the §5 transcript. It renders inside a 390×844 phone frame drawn in CSS.
 
 `scripts/shoot.mjs` — drives the installed Chrome over CDP with `puppeteer-core`
 (no browser download), `deviceScaleFactor: 2`, clips to the app frame, writes
-`public/shots/<slot>-<theme>.<hash>.{avif,webp}` at two widths via `sharp`, and
+`apps/site/assets/shots/<slot>-<theme>.<hash>.{avif,webp}` at two widths via `sharp`, and
 prints a table of the resulting byte sizes so budget regressions are visible.
 
 ### Budget
@@ -827,7 +827,7 @@ prints a table of the resulting byte sizes so budget regressions are visible.
 - Vendor logos plus lucide glyphs inlined: ~20 KB raw, ~5 KB gzipped.
 - **Under 900 KB for the initial viewport, under 1.5 MB total.**
 
-A `/shots/*` rule joins `/fonts/*` and `/brand/*` in `public/_headers` —
+A `/shots/*` rule joins `/fonts/*` and `/brand/*` in `apps/cdn/assets/_headers` —
 immutable, one-year cache, since filenames are content-hashed.
 
 ---
@@ -840,7 +840,7 @@ Verified against the registry and inspected locally, so this is fact rather than
 recollection:
 
 - **v1.94.0, MIT, 903 icons**, purpose-built for AI/LLM brands.
-- Covers **every** vendor in [src/providers/catalog.ts](../src/providers/catalog.ts):
+- Covers **every** vendor in [apps/api/src/providers/catalog.ts](../apps/api/src/providers/catalog.ts):
   OpenAI, Anthropic / Claude, Google Gemini, Groq, OpenRouter, Mistral,
   DeepSeek, Together AI, Cloudflare (Workers AI), Ollama, LM Studio.
 - Three cuts per brand: `name.svg` (mono, `fill="currentColor"`),
@@ -939,7 +939,7 @@ and "Open the dashboard".
 **One copy bug, already diagnosed:** the current landing page says "Groq for chat
 and Cloudflare Workers AI for embeddings" run the free loop. That is **stale**.
 `wrangler.toml` sets `AI_VENDOR = "google"`, `AI_MODEL = "gemini-3.5-flash-lite"`,
-`EMBEDDING_VENDOR = "workers-ai"`, and `src/providers/index.ts` has
+`EMBEDDING_VENDOR = "workers-ai"`, and `apps/api/src/providers/index.ts` has
 `FALLBACK_VENDOR = 'google'`. The README is the correct one. The rewritten page
 says **Gemini Flash Lite for chat and Workers AI for embeddings**, and the demo
 tenant in §5 is configured the same way so the shots agree with the prose.
@@ -950,20 +950,20 @@ tenant in §5 is configured the same way so the shots agree with the prose.
 
 | File | Change |
 |---|---|
-| `public/index.html` | Rewritten. ~2500 lines after H, of which ~150 are the inlined sprite and ~230 the generated shot markup |
-| `public/shots/*` | Done in E — 14 images x 2 widths x 2 formats, content-hashed, plus `manifest.json` |
-| `public/fonts/bricolage-wordmark.woff2` | New, 2.7 KB; the 41 KB file is deleted |
-| `public/fonts/README.md` | Add the subsetting command |
-| `public/_headers` | Done in E: `/shots/*`, immutable, one year |
+| `apps/site/assets/index.html` | Rewritten. ~2500 lines after H, of which ~150 are the inlined sprite and ~230 the generated shot markup |
+| `apps/site/assets/shots/*` | Done in E — 14 images x 2 widths x 2 formats, content-hashed, plus `manifest.json` |
+| `packages/brand/assets/fonts/bricolage-wordmark.woff2` | New, 2.7 KB; the 41 KB file is deleted |
+| `packages/brand/assets/fonts/README.md` | Add the subsetting command |
+| `apps/cdn/assets/_headers` | Done in E: `/shots/*`, immutable, one year |
 | `scripts/check-landing.mjs` | **Same commit as the page.** Done in A–D: id list, theme block, sprite markers + `<use>` resolution, orbit shape, Bricolage confinement. Done in F: both themes per shot, every `srcset` file on disk, `width`/`height` on every `<img>`, the three swap rules, tab semantics; the id list gained `copy-bento` / `snippet-bento`. Done in H: `h5` in the tag-balance list |
 | `scripts/check-motion.mjs` | **New.** The runtime half of the motion policy in §4.7 — reveals fire at three viewports, CLS budget, reduced motion and no-JS both readable, one perpetual animation. Needs Chrome, like `shoot.mjs`. Throttled-phone frame stats are printed, not asserted; §4.7 says why |
 | `scripts/gen-vendor-sprite.mjs` | Done in C. Manifest-driven, idempotent, `--check` mode. Pruned in H to 22 symbols |
 | `scripts/gen-shots.mjs` | **New in F.** Reads `manifest.json`, writes a `<picture>` pair per slot between `generated:shot` markers, `--check` mode. Not in the original plan — the alternative was 56 hashed filenames maintained by hand |
-| `package.json` | Done in C: `gen:sprite`, `check:landing`; devDeps `@lobehub/icons-static-svg`, `lucide-static`. Done in E: `shots:build`, `shots:shoot`; devDeps `puppeteer-core`, `sharp`. `dashboard/package.json` also gained `build:shots`. Done in F: `gen:shots`, and `check:landing` now runs both generators in `--check` mode first |
+| `package.json` | Done in C: `gen:sprite`, `check:landing`; devDeps `@lobehub/icons-static-svg`, `lucide-static`. Done in E: `shots:build`, `shots:shoot`; devDeps `puppeteer-core`, `sharp`. `apps/app/package.json` also gained `build:shots`. Done in F: `gen:shots`, and `check:landing` now runs both generators in `--check` mode first |
 | `scripts/shoot.mjs` | Done in E. Builds the harness, serves it beside `public/`, drives Chrome, encodes, prunes old hashes, prints the budget table |
-| `dashboard/src/shot.tsx` · `dashboard/src/shot-widget.ts` · `dashboard/shot.html` · `dashboard/shot-widget.html` · `dashboard/vite.shot.config.ts` · `dashboard/src/fixtures/fernbrook.ts` | Done in E — harness, gitignored output |
-| `dashboard/src/index.css` | Done in A: values untouched, comment added marking it the source the landing tokens are copied from |
-| `.gitignore` | Done in E: `dashboard/.shots-build/` |
+| `apps/app/src/shot.tsx` · `apps/app/src/shot-widget.ts` · `apps/app/shot.html` · `apps/app/shot-widget.html` · `apps/app/vite.shot.config.ts` · `apps/app/src/fixtures/fernbrook.ts` | Done in E — harness, gitignored output |
+| `apps/app/src/index.css` | Done in A: values untouched, comment added marking it the source the landing tokens are copied from |
+| `.gitignore` | Done in E: `apps/app/.shots-build/` |
 | `README.md` | Done in H: `docs/media/landing.png` regenerated in dark at 1640px, and the alt text rewritten — it described a dark hero above the install snippet, and the snippet left the hero in D |
 | `scripts/gen-brand-assets.mjs` | Untouched, deliberately, and H left the OG image alone with it — see §0.1 |
 
@@ -972,7 +972,7 @@ tenant in §5 is configured the same way so the shots agree with the prose.
 ## 10. Phases, with acceptance criteria
 
 Run `node scripts/check-landing.mjs` after each. Every phase ends with the page
-loading correctly at `npm run landing`.
+loading correctly at `npm run dev:site`.
 
 **A — Tokens and theme.** ✅ Palette swapped, pre-paint script, three-state
 toggle, dual `theme-color`. Verified: renders correctly in light and dark, the
@@ -981,7 +981,7 @@ a dark OS, and no literal colour survives below the token block.
 
 **B — Typography.** ✅ Wordmark subset generated (2,704 B, `wght` 200–800
 intact), the 41 KB file deleted, `.disp` and every other Bricolage rule gone,
-`<h1>` retuned per §4.2. `public/fonts/` holds two files totalling 33 KB and
+`<h1>` retuned per §4.2. `packages/brand/assets/fonts/` holds two files totalling 33 KB and
 the wordmark still renders both weights.
 
 **C — Sprite.** ✅ Both icon devDeps added, `gen-vendor-sprite.mjs` written,
@@ -999,7 +999,7 @@ is untouched.
 consecutive runs produce byte-identical files (every content hash unchanged),
 every image is inside the §6 budget — the hero at 37 KB AVIF against a 120 KB
 ceiling, the tightest at 63 KB against 70 — and the only thing added to
-`public/` is `public/shots/`. The harness builds to `dashboard/.shots-build/`,
+`public/` is `apps/site/assets/shots/`. The harness builds to `apps/app/.shots-build/`,
 which is gitignored and outside the deploy root.
 
 **F — Wiring.** ✅ Hero shot, bento of four, workflow tabs, and the swap

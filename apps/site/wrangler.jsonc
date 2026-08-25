@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // The landing page. Assets only, and on its own Worker so that a typo
+  // in the marketing copy no longer redeploys the script that runs on
+  // customers' sites.
+  "name": "ck-site",
+  "compatibility_date": "2026-08-23",
+
+  "workers_dev": false,
+  "routes": [
+    {
+      // The apex of the product's subdomain, not the zone apex.
+      // Custom Domain, not a DNS record — see the TLS note in
+      // apps/api/wrangler.jsonc.
+      "pattern": "conversekit.mukeremshifa.com",
+      "custom_domain": true
+    }
+  ],
+
+  "assets": {
+    // Built by scripts/build-assets.mjs — the source holds `__CK_*__`
+    // tokens where hostnames go.
+    "directory": "./dist",
+    // Serves assets/404.html for anything unmatched. Pages used to infer
+    // this from the presence of the file; Workers makes it explicit so a
+    // misconfiguration is visible in the config rather than in the
+    // behaviour.
+    "not_found_handling": "404-page"
+  },
+
+  "observability": { "enabled": true },
+
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "routes": []
+    }
+  }
+}

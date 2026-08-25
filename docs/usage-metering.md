@@ -14,10 +14,10 @@ tenant can read. Budget caps, cross-vendor failover and prompt caching all
 depend on this landing first and are named in §8 as explicitly out.
 
 **STATUS — built.** Phases 0–6 have landed. `supabase/017_usage.sql`, `logUsage`
-and `getUsageLog` in `src/supabase.ts`, `estimateTokens` / `usageTokens` /
-`buildUsage` in `src/stats.ts`, `resolvePrice` in `src/providers/catalog.ts`,
+and `getUsageLog` in `apps/api/src/supabase.ts`, `estimateTokens` / `usageTokens` /
+`buildUsage` in `apps/api/src/stats.ts`, `resolvePrice` in `apps/api/src/providers/catalog.ts`,
 `GET /v1/admin/bots/:id/usage` and `POST /v1/admin/bots/:id/provider/test` in
-`src/index.ts`, a second cron branch for `prune_usage_log`, and a **Usage**
+`apps/api/src/index.ts`, a second cron branch for `prune_usage_log`, and a **Usage**
 screen in the dashboard.
 
 Three things stated plainly, because they are what a reader of this file next
@@ -51,12 +51,12 @@ rather than 012's [7, 365], because a default of 400 cannot survive a ceiling of
 
 **F1 — the pipe is already laid, and it drains into nothing.** All four
 adapters map their vendor's usage onto `Usage` correctly:
-[anthropic.ts:102](../src/providers/anthropic.ts#L102),
-[google.ts:41](../src/providers/google.ts#L41),
-[openai-compat.ts:55](../src/providers/openai-compat.ts#L55),
-[workers-ai.ts:82](../src/providers/workers-ai.ts#L82). It reaches the widget on
-the SSE `done` frame ([index.ts:883](../src/index.ts#L883)) and the dashboard on
-the preview route ([index.ts:1269](../src/index.ts#L1269)), and is dropped in
+[anthropic.ts:102](../apps/api/src/providers/anthropic.ts#L102),
+[google.ts:41](../apps/api/src/providers/google.ts#L41),
+[openai-compat.ts:55](../apps/api/src/providers/openai-compat.ts#L55),
+[workers-ai.ts:82](../apps/api/src/providers/workers-ai.ts#L82). It reaches the widget on
+the SSE `done` frame ([index.ts:883](../apps/api/src/index.ts#L883)) and the dashboard on
+the preview route ([index.ts:1269](../apps/api/src/index.ts#L1269)), and is dropped in
 both places. `POST /v1/chat` does not return it at all. No migration in
 `supabase/001`–`016` has a token column.
 
@@ -65,7 +65,7 @@ which is what makes it small, and is also why it has sat undone: nothing is
 broken, there is just nothing to look at.
 
 **F2 — embeddings are the bigger number and are dropped harder.** `embedPieces`
-in [ingest.ts:238](../src/rag/ingest.ts#L238) throws `res.usage` away and returns
+in [ingest.ts:238](../apps/api/src/rag/ingest.ts#L238) throws `res.usage` away and returns
 `{ vectors, model, dimensions }`. Ingesting a corpus is where a tenant's tokens
 actually go — one document is thousands of input tokens, one chat turn is
 hundreds — and a meter that counts only chat under-reports the bill in the
@@ -78,9 +78,9 @@ This is the fact that decides the schema.
 |---|---|---|
 | Chat, buffered | Gemini | yes |
 | Chat, streamed | Gemini | yes |
-| Embeddings, ingest | Workers AI | **no** — `NO_USAGE`, [workers-ai.ts:173](../src/providers/workers-ai.ts#L173) |
-| Embeddings | Gemini | **no** — batch endpoint omits it, [google.ts:241](../src/providers/google.ts#L241) |
-| Chat, streamed | Ollama / LM Studio / custom | **no** — `supportsStreamUsage: false`, [catalog.ts:178](../src/providers/catalog.ts#L178) |
+| Embeddings, ingest | Workers AI | **no** — `NO_USAGE`, [workers-ai.ts:173](../apps/api/src/providers/workers-ai.ts#L173) |
+| Embeddings | Gemini | **no** — batch endpoint omits it, [google.ts:241](../apps/api/src/providers/google.ts#L241) |
+| Chat, streamed | Ollama / LM Studio / custom | **no** — `supportsStreamUsage: false`, [catalog.ts:178](../apps/api/src/providers/catalog.ts#L178) |
 
 The README's headline claim is that Gemini Flash Lite plus Workers AI
 embeddings run the whole loop free. That is the configuration most deployments
@@ -147,7 +147,7 @@ rather than a blank, not so anyone can bill from it.
 Do not add a flat `pricePer1M` to `VendorPreset`. A tenant on `gpt-4o` pays
 roughly sixteen times a tenant on `gpt-4o-mini`, and both are `vendor: 'openai'`.
 
-Mirror [`resolveSimilarityFloor`](../src/providers/catalog.ts) — it is in the
+Mirror [`resolveSimilarityFloor`](../apps/api/src/providers/catalog.ts) — it is in the
 file being edited, it already solved this exact shape (a property of the
 *model*, defaulted by the *vendor*, reported with its provenance), and matching
 it makes the second function free to understand:
@@ -182,7 +182,7 @@ negotiated rates make it so — so the UI shows `≈` and surfaces `pricedAt`.
 
 `buildUsage(opts)` beside `buildStats` and `buildMissReport`, pure over rows the
 caller fetched, with `USAGE_LOG_CAP` surfaced as `truncated`. The reasoning in
-the [supabase.ts:1099](../src/supabase.ts#L1099) comment applies unchanged: a
+the [supabase.ts:1099](../apps/api/src/supabase.ts#L1099) comment applies unchanged: a
 `group by` means an RPC means a migration means deployment coupling, and at this
 volume the round trip is cheaper. Move to an RPC when a bot regularly hits the
 cap — not before.
@@ -193,7 +193,7 @@ platform actually get tested.
 ### D5 — Written from `waitUntil`, non-fatal, always
 
 Byte-for-byte the `logRetrieval` treatment at
-[supabase.ts:1045](../src/supabase.ts#L1045): try, catch, `console.error`,
+[supabase.ts:1045](../apps/api/src/supabase.ts#L1045): try, catch, `console.error`,
 return. **A metering failure must never cost a visitor their answer.** Metering
 is the platform's bookkeeping; the tenant's customer is mid-sentence.
 
@@ -272,7 +272,7 @@ Write `017_usage.sql` per §3. Apply it. `npm run db:status`. Nothing reads or
 writes it yet, and that is a complete, shippable step.
 
 ### Phase 1 — The write path · ~1 day
-- `UsageLogInsert` and `logUsage()` in `src/supabase.ts`, next to
+- `UsageLogInsert` and `logUsage()` in `apps/api/src/supabase.ts`, next to
   `logRetrieval`.
 - `estimateTokens()` — one exported function, one home, used by every caller.
   Do not inline `chars / 4` in three places.
@@ -298,7 +298,7 @@ touches it yet. Unit-test the resolution order the way `resolveSimilarityFloor`
 is tested.
 
 ### Phase 3 — The aggregate and the route · ~1 day
-- `buildUsage` in `src/stats.ts`, returning: `totals` (input, output, total,
+- `buildUsage` in `apps/api/src/stats.ts`, returning: `totals` (input, output, total,
   calls), `estimatedShare` (0–1, the honesty field), `cost`
   (`{ amount, currency, pricedCalls, unpricedCalls }`, or `null` when nothing
   resolved a price), `byVendor[]`, `byModel[]`, `byKind`, `series[]` reusing
@@ -306,7 +306,7 @@ is tested.
 - `getUsageLog` and `USAGE_LOG_CAP` in `supabase.ts`, modelled on
   `getRetrievalLog`.
 - `GET /v1/admin/bots/:id/usage`, modelled on the retrieval route at
-  [index.ts:2160](../src/index.ts#L2160) — same day clamp, same `UserDb` so RLS
+  [index.ts:2160](../apps/api/src/index.ts#L2160) — same day clamp, same `UserDb` so RLS
   scopes it, **including the 501 branch** when the error message matches
   `usage_log`, so a Worker deployed ahead of 017 names the missing migration
   instead of sending whoever is debugging it to look at RLS.
@@ -327,7 +327,7 @@ without its explanation.
 
 ### Phase 5 — Retention · ~2 hours
 **Its own cron expression and its own branch on `event.cron`.** The comment
-above the scheduled handler in `src/index.ts` says this explicitly and names the
+above the scheduled handler in `apps/api/src/index.ts` says this explicitly and names the
 failure it prevents — a shared "daily maintenance" function where one failure
 takes down unrelated work. Adding a line to the existing handler is the obvious
 move and it is the wrong one. Add the second expression to `wrangler.toml`,
@@ -342,7 +342,7 @@ dashboard scope and never built.
 `POST /v1/admin/bots/:id/provider/test` → `generate` with a five-token prompt →
 `{ vendor, model, latencyMs, usage, reportsUsage }`, or `ProviderError.kind` on
 failure. A button on
-[Providers.tsx](../dashboard/src/screens/Providers.tsx).
+[Providers.tsx](../apps/app/src/screens/Providers.tsx).
 
 Today a wrong BYOK key is discovered by a real visitor's turn failing.
 

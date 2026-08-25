@@ -1,10 +1,14 @@
-// Dev server for the buildless parts of `public/` — the landing page,
-// widget.js and the brand assets.
+// Dev server for the buildless targets — apps/site and apps/cdn — over
+// whatever scripts/build-assets.mjs last wrote into their `dist/`.
 //
-// Deliberately not `wrangler pages dev public`: that reads the root
-// wrangler.toml, and the AI binding there forces a remote connection
-// (see the comment on [ai]) before it will serve a single byte of
-// static HTML. Editing the landing page needs none of that.
+// It serves the BUILT directory, not `assets/`, because the sources hold
+// `__CK_CDN__`-style tokens rather than hostnames. A dev server over the
+// sources would render a landing page whose install snippet says
+// `__CK_WIDGET_SRC__`.
+//
+// Deliberately not `wrangler dev`: for a directory of static files that
+// is a slower path to the same bytes, and the API Worker's AI binding
+// forces a remote session before it will serve anything at all.
 //
 // No dependencies, for the same reason the landing page has no bundler:
 // nothing here is worth a lockfile entry.
@@ -17,7 +21,7 @@ import http from 'node:http';
 const argv = process.argv.slice(2);
 const portFlag = argv.indexOf('--port');
 const PORT = portFlag === -1 ? 8788 : Number(argv[portFlag + 1]);
-const ROOT = path.resolve(argv.find((a) => !a.startsWith('--') && a !== String(PORT)) ?? 'public');
+const ROOT = path.resolve(argv.find((a) => !a.startsWith('--') && a !== String(PORT)) ?? 'apps/site/dist');
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -110,7 +114,7 @@ const server = http.createServer((req, res) => {
   const ext = path.extname(file).toLowerCase();
   const headers = {
     'Content-Type': TYPES[ext] ?? 'application/octet-stream',
-    // Never cache in dev. The production rules live in public/_headers.
+    // Never cache in dev. The production rules live in each app's _headers.
     'Cache-Control': 'no-store',
     // Mirrors _headers so a locally served widget.js and its fonts
     // behave the same when embedded in a test page on another port.
@@ -134,6 +138,6 @@ server.listen(PORT, '127.0.0.1', () => {
   watch();
   console.log(`\n  serving  ${ROOT}`);
   console.log(`  landing  http://localhost:${PORT}/`);
-  console.log(`  widget   http://localhost:${PORT}/widget.js`);
+  console.log(`  widget   http://localhost:${PORT}/v1/widget.js`);
   console.log(`  live reload on\n`);
 });

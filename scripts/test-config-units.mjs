@@ -25,7 +25,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = mkdtempSync(join(tmpdir(), 'ck-config-'));
 
 await build({
-  entryPoints: [join(ROOT, 'src/config.ts'), join(ROOT, 'src/logo.ts'), join(ROOT, 'src/prompt.ts')],
+  entryPoints: [join(ROOT, 'apps/api/src/config.ts'), join(ROOT, 'apps/api/src/logo.ts'), join(ROOT, 'apps/api/src/prompt.ts')],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });
 const { buildSystemPrompt } = await import(`file://${OUT}/prompt.js`);

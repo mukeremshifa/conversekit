@@ -22,8 +22,8 @@ Everything in §4 is written and tested:
 | 1. Migration | `supabase/008_files.sql` + `scripts/rls/files-test.sql` |
 | 2. R2 binding | `wrangler.toml` → `DOCS` |
 | 3. Upload route | `POST /v1/admin/bots/:id/documents/upload` |
-| 4. Parse step | `src/rag/files.ts`, dispatched from `ingest.ts` |
-| 5. Dashboard | drop zone in `dashboard/src/screens/Sources.tsx` |
+| 4. Parse step | `apps/api/src/rag/files.ts`, dispatched from `ingest.ts` |
+| 5. Dashboard | drop zone in `apps/app/src/screens/Sources.tsx` |
 | 6. Workflow | **not built** — §3 concluded it is not warranted |
 
 Verified: 141 unit assertions (was 97); the real converter's output run through
@@ -59,7 +59,7 @@ ConverseKit is a multi-tenant embeddable AI chat widget. One Cloudflare Worker
 Postgres serve many client bots.
 
 **Shipped and deployed:** pluggable AI vendors with streaming and embeddings
-(`src/providers/`), tenancy enforced by Postgres RLS, Supabase Auth, RAG over
+(`apps/api/src/providers/`), tenancy enforced by Postgres RLS, Supabase Auth, RAG over
 text/markdown/URL sources, a React dashboard, HMAC-signed visitor sessions,
 widget markdown rendering, multi-origin locks, a Playground, and rate limiting.
 
@@ -108,7 +108,7 @@ upload → R2 → env.AI.toMarkdown() → the existing chunk/embed pipeline
 ```
 
 No PDF parser in the bundle at all, and markdown is a format
-`src/rag/extract.ts` already handles through `markdownToText()`.
+`apps/api/src/rag/extract.ts` already handles through `markdownToText()`.
 
 The `[ai]` binding is **already enabled** in `wrangler.toml`, and Workers AI is
 already proven in production (it serves embeddings today), so this is a short
@@ -138,15 +138,15 @@ PDF end to end before committing to it.**
 
 3. **Upload route** — multipart to the Worker for small files, or a presigned PUT
    straight to R2 for large ones. Enforce a size ceiling and a MIME allow-list,
-   rejecting anything else with a specific message, the way `src/origin.ts` does
+   rejecting anything else with a specific message, the way `apps/api/src/origin.ts` does
    for origins.
 
 4. **Parse step** — `toMarkdown` if the spike passes, `unpdf` otherwise. Feed the
    result into the existing `chunkText` → embed → `replaceChunks` path in
-   `src/rag/ingest.ts`. That pipeline should not need to change.
+   `apps/api/src/rag/ingest.ts`. That pipeline should not need to change.
 
 5. **Dashboard** — a file drop zone in the Add Source card
-   (`dashboard/src/screens/Sources.tsx`), which currently states PDF is
+   (`apps/app/src/screens/Sources.tsx`), which currently states PDF is
    unsupported. Show upload progress separately from indexing status.
 
 6. **Workflow** — only if §3 concluded you need it.
@@ -158,11 +158,11 @@ Realistically a week; less if `toMarkdown` works.
 ## 5. Constraints you must not break
 
 **Embeddings are 768-dimensional platform-wide.** `chunks.embedding` is
-`vector(768)`, a fixed-width column and a one-way door. `src/rag/ingest.ts`
+`vector(768)`, a fixed-width column and a one-way door. `apps/api/src/rag/ingest.ts`
 throws a deliberate, explanatory error on a mismatch rather than letting Postgres
 emit an opaque one. Changing this means re-embedding every chunk.
 
-**Two database identities, separated at the type level** (`src/supabase.ts`).
+**Two database identities, separated at the type level** (`apps/api/src/supabase.ts`).
 `ServiceDb` bypasses RLS and is for the anonymous chat path only. `UserDb`
 forwards the end user's JWT so RLS decides what they see. Every query function is
 typed to exactly one of them, so mixing them is a compile error. **Ingestion runs
@@ -176,7 +176,7 @@ to new routes.
 **Retrieval must never fail a turn.** No corpus, or an embedding vendor having a
 bad minute, degrades to the plain knowledge-base prompt rather than a 502.
 
-**Ingested text is untrusted.** `src/rag/retrieve.ts` frames retrieved passages
+**Ingested text is untrusted.** `apps/api/src/rag/retrieve.ts` frames retrieved passages
 as data and instructs the model to ignore any directives inside them. A PDF is a
 far more likely injection vector than pasted text — do not weaken that framing.
 
@@ -215,7 +215,7 @@ heredoc or a file tool instead of patching string literals.
 
 **`tsc -b` run from the wrong working directory emits `.js` next to the `.ts`
 sources.** The root tsconfig now sets `noEmit: true` and `.gitignore` covers
-`src/**/*.js`, but take care with `npm --prefix … exec tsc`.
+`apps/api/src/**/*.js`, but take care with `npm --prefix … exec tsc`.
 
 **The `[ai]` binding has no local simulator.** `wrangler dev` runs a remote proxy
 session and requires `wrangler login`. That is the accepted cost of using Workers
@@ -254,8 +254,8 @@ transpiles the pure modules with esbuild and needs no network.
 - Supabase uses the **new API key format** (`sb_publishable_…` / `sb_secret_…`).
   The legacy `eyJ…` keys were disabled when JWT signing keys were enabled. User
   JWTs are **ES256 via JWKS**, so no `SUPABASE_JWT_SECRET` is needed.
-- The dashboard lives in `dashboard/` (Vite + React + Tailwind) and **builds into**
-  `public/admin/`. Edit the source, never the build output. `npm run deploy:pages`
+- The dashboard lives in `apps/app/` (Vite + React + Tailwind) and **builds into**
+  `apps/app/dist/`. Edit the source, never the build output. `npm run deploy:pages`
   builds and deploys in one step so the two cannot drift.
 - `public/` also carries `widget.js` and `test.html`, which is why there is a
   single Pages deploy rather than two.

@@ -29,7 +29,7 @@ more than living with them.
 Any vendor, one interface. Chat, streaming chat, and embeddings.
 
 ```
-src/providers/
+apps/api/src/providers/
 ├── types.ts           ChatProvider / EmbeddingProvider, StreamEvent, ProviderConfig
 ├── errors.ts          ProviderError + kind normalisation + HTTP mapping
 ├── sse.ts             shared SSE reader (handles split frames, CRLF, comments)
@@ -46,7 +46,7 @@ src/providers/
 (`AI_VENDOR`, `AI_MODEL`, …) → vendor preset default.
 
 **Also landed:** `POST /v1/chat/stream` (SSE), `GET /admin/providers` (catalog
-for the dashboard picker), `src/lead-stream.ts` (holds back the `[[LEAD:` marker
+for the dashboard picker), `apps/api/src/lead-stream.ts` (holds back the `[[LEAD:` marker
 so it can't flash on screen mid-stream), widget streaming with automatic
 fallback to the buffered endpoint.
 
@@ -101,7 +101,7 @@ goes down. Full sequence in the migration header and the README.
 ## Phase 2a — RAG ✅ code complete, 005 not yet applied
 
 Shipped: `supabase/005_rag.sql` (documents, chunks, pgvector, `match_chunks`,
-RLS), `src/rag/` (chunker, extractor, ingest, retrieve), retrieval wired into
+RLS), `apps/api/src/rag/` (chunker, extractor, ingest, retrieve), retrieval wired into
 both chat routes, document routes under `/v1/admin`, and a Knowledge Sources
 tab with a chunk inspector.
 
@@ -146,7 +146,7 @@ always and once by similarity, with nothing reconciling the two.
 
 Shipped: `supabase/011_knowledge.sql` (`faq_items`, chunk `kind` / `priority` /
 `metadata` / `search`, the lexical RPC, the cutover flag), `chunkQA` and the
-legacy FAQ parser in `src/rag/chunk.ts`, `ingestFaq`, the FAQ CRUD and cutover
+legacy FAQ parser in `apps/api/src/rag/chunk.ts`, `ingestFaq`, the FAQ CRUD and cutover
 routes, `POST /v1/admin/bots/:id/retrieve-preview`, and one **Knowledge**
 dashboard screen replacing three.
 
@@ -187,14 +187,14 @@ shipped, documented, tested features were dead in production and nothing logged
 it.
 
 Phase 1 shipped: a model-relative similarity floor resolved from the embedder
-(`resolveSimilarityFloor` in `src/providers/catalog.ts`), a code-point and
+(`resolveSimilarityFloor` in `apps/api/src/providers/catalog.ts`), a code-point and
 script-aware short-query gate, citations aligned to the `[n]` markers the model
 actually sees, and `npm run eval:rag` — a golden-set harness whose off-topic
 queries are the assertion that a floor discriminates at all. No migration.
 
 **Phase 2 is one theme: the pipeline stops lying about its own state, and starts
 telling the tenant the truth.** It is all one migration,
-[`012_retrieval.sql`](../supabase/012_retrieval.sql), because everything in it
+[`012_retrieval.sql`](../supabase/005_retrieval.sql), because everything in it
 needed SQL and both retrieval RPCs had to be recreated anyway.
 
 `retrieval_log` records every turn where retrieval ran — the query verbatim,
@@ -220,7 +220,7 @@ the cheap half of a recall trap that is invisible at today's row counts.
 **Phase 3 is also one theme, and it is the riskier one: every item in it changes
 what comes back from a search.** That is a class of change nothing would notice
 going wrong, which is why phase 2's measurement had to exist first. It is one
-migration, [`013_hybrid.sql`](../supabase/013_hybrid.sql), plus pure-Worker
+migration, [`013_hybrid.sql`](../supabase/005_retrieval.sql), plus pure-Worker
 work.
 
 Retrieval got two new modes and both ship **off**. `retrieval_mode: 'hybrid'`
@@ -289,7 +289,7 @@ retrieve-and-cite loop is good.
    retryable. Raw files in R2, text in Postgres.
    - Parsers: plain text and HTML first, then PDF. DOCX last.
    - Chunking: recursive character split, ~800 tokens, ~15% overlap.
-3. **Retrieval** (`src/rag/retrieve.ts`) — embed the query, cosine top-k over
+3. **Retrieval** (`apps/api/src/rag/retrieve.ts`) — embed the query, cosine top-k over
    the tenant's chunks, similarity floor, assemble into the prompt.
    - Tenant filter enforced by **RLS**, not by an application `.eq()`. See Risks.
 4. **Prompt assembly** — `buildSystemPrompt` grows a retrieved-context section
@@ -308,8 +308,8 @@ nothing.
 ## Phase 3 — Dashboard rewrite ✅ shipped
 
 React + Vite + TypeScript + Tailwind v4, with shadcn-style primitives owned in
-`dashboard/src/components/ui` on Radix. Source in `dashboard/`, building into
-`public/admin/` — one Pages deploy, because the same project also serves
+`apps/app/src/components/ui` on Radix. Source in `apps/app/`, building into
+`apps/app/dist/` — one Pages deploy, because the same project also serves
 `widget.js` and `test.html`.
 
 Built in the order that mattered: **AI Providers and Retrieval first**, because
@@ -322,18 +322,18 @@ without server rewrites, dark mode, keyboard-accessible Radix primitives, lead
 CSV export, and conversation transcripts rendered as chat bubbles.
 
 ```
-npm run dashboard        # vite dev server
-npm run build:dashboard  # → public/admin/
-npm run deploy:pages     # build + wrangler pages deploy
+npm run dev:app          # vite dev server
+npm run build:app        # → apps/app/dist/
+npm run deploy:app       # build + wrangler deploy (ck-app)
 ```
 
 ## Phase 3 — original scope (reference)
 
 Scaffold this **during Phase 1**, not after — otherwise there's nothing to
-demo for months. Vanilla `public/admin/` gets replaced, not migrated.
+demo for months. Vanilla `apps/app/dist/` gets replaced, not migrated.
 
 ```
-dashboard/          Vite + React + TypeScript, deployed to Pages
+apps/app/          Vite + React + TypeScript, deployed to Pages
 ├── auth            Supabase Auth session, protected routes
 ├── bots            list, create, settings, knowledge base
 ├── providers       vendor picker driven by GET /admin/providers, BYOK entry,
@@ -376,7 +376,7 @@ behind it (position, logo, greeting, theme, citations, escalation).
 - **Usage metering** ✅ shipped — `supabase/017_usage.sql` (`usage_log`, RLS,
   `prune_usage_log`), `logUsage` on both chat routes, the preview route and both
   ingest paths, `resolvePrice` in the provider catalog, `buildUsage` in
-  `src/stats.ts`, `GET /v1/admin/bots/:id/usage`, and a **Usage** screen. Every
+  `apps/api/src/stats.ts`, `GET /v1/admin/bots/:id/usage`, and a **Usage** screen. Every
   row records whether its numbers were reported by the vendor or estimated from
   text length, because on the platform default three of the four adapter paths
   report nothing — see [usage-metering.md](usage-metering.md).
@@ -415,7 +415,7 @@ single-hostname site:
 - **Per-tenant suggestion chips.** They were hardcoded and dental-specific, so
   every bot on the platform asked its visitors about insurance.
 - **`allowed_origins` is a list** (`006`). Apex + www + staging. Validated in
-  `src/origin.ts`, because a bad origin presents to the widget as an
+  `apps/api/src/origin.ts`, because a bad origin presents to the widget as an
   unexplained 403.
 - **Playground** — `POST /v1/admin/bots/:id/preview`, auth-gated and ephemeral.
   There was previously no way to test a bot without owning the domain in its
@@ -475,7 +475,7 @@ conversation rules.
 filter on a client-supplied `session_id` the widget generated with
 `Math.random()`, so guessing or replaying one returned another visitor's
 conversation. Session ids are now minted and HMAC-signed by the server
-([src/session.ts](../src/session.ts)) and bound to a single bot. An unsigned id is
+([apps/api/src/session.ts](../apps/api/src/session.ts)) and bound to a single bot. An unsigned id is
 deliberately not an error — it loads no history and the caller is handed a
 signed replacement, which closes the disclosure without breaking embedded
 widgets or the documented curl flow. Guarded by `npm run test:session`.

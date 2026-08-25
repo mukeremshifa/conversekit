@@ -1,0 +1,11 @@
+{
+  "name": "conversekit-cdn",
+  "version": "1.1.0",
+  "description": "ck-cdn — widget.js, fonts and brand assets. Serves bytes; knows nothing about who is asking.",
+  "private": true,
+  "scripts": {
+    "build": "node ../../scripts/build-assets.mjs cdn",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "conversekit-site",
+  "version": "1.1.0",
+  "description": "ck-site — the ConverseKit landing page. Buildless HTML plus token substitution.",
+  "private": true,
+  "scripts": {
+    "build": "node ../../scripts/build-assets.mjs site",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging"
+  }
+}

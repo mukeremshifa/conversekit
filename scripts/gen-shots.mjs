@@ -1,13 +1,13 @@
 // ----------------------------------------------------------------
 // Landing-page product shots.
 //
-// scripts/shoot.mjs writes public/shots/manifest.json: every slot, its
+// scripts/shoot.mjs writes apps/site/assets/shots/manifest.json: every slot, its
 // capture size, its alt text, and each file with a content hash in the
 // name. Fourteen images x two widths x two formats is fifty-six hashed
 // filenames, and a re-shoot changes every one of them, so the page reads
 // them from the manifest rather than carrying them by hand.
 //
-// This writes a <picture> pair per slot into public/index.html between
+// This writes a <picture> pair per slot into apps/site/assets/index.html between
 // generated markers, the same arrangement as the icon sprite:
 //
 //   <!-- generated:shot hero --> ... <!-- /generated:shot hero -->
@@ -24,8 +24,8 @@
 // ----------------------------------------------------------------
 import fs from 'fs';
 
-const PAGE = 'public/index.html';
-const MANIFEST = 'public/shots/manifest.json';
+const PAGE = 'apps/site/assets/index.html';
+const MANIFEST = 'apps/site/assets/shots/manifest.json';
 
 // ── Per-slot presentation ────────────────────────────────────────
 // The manifest owns what the file is; this owns how the page asks for

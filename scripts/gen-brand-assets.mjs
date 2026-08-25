@@ -8,7 +8,9 @@ import fs from 'fs';
 import path from 'path';
 import { Resvg } from '@resvg/resvg-js';
 
-const OUT = 'assets';
+// Written straight into the shared brand package — the single copy the
+// site, the dashboard and the CDN are all built from.
+const OUT = 'packages/brand/assets/brand';
 fs.mkdirSync(OUT, { recursive: true });
 
 // ── Palette v2 — crisp neutrals, gold is the only chroma ──
@@ -149,14 +151,20 @@ ${wordmarkText(M + markS + 22, M + markS * 0.72 + 2, 30, BONE, MUTED_D)}
 fs.writeFileSync(path.join(OUT, 'og.png'), rasterize(og, 1200));
 
 // ── 6. Manifest ───────────────────────────────────────────
+// Icon srcs are RELATIVE, and must stay that way. The manifest is served
+// from /brand/, so a root-absolute '/icon-192.png' resolves to the site
+// root where nothing is — it 404s silently and the install prompt just
+// never offers an icon. Relative resolves against the manifest's own
+// directory, which is where the files actually are.
 fs.writeFileSync(path.join(OUT, 'site.webmanifest'), JSON.stringify({
   name: 'ConverseKit', short_name: 'ConverseKit',
   icons: [
-    { src: '/icon-192.png', sizes: '192x192', type: 'image/png' },
-    { src: '/icon-512.png', sizes: '512x512', type: 'image/png' },
-    { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+    { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
+    { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
+    { src: 'icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
   ],
   theme_color: INK, background_color: INK, display: 'standalone',
+  start_url: '/', scope: '/',
 }, null, 2) + '\n');
 
 const rows = fs.readdirSync(OUT).sort()

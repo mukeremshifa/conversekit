@@ -10,7 +10,7 @@ giving them structure, and stopping every turn from going through RAG.
 
 ## STATUS — Phases 1-7 and 9 built; 8 and 10 not started
 
-**Built:** 1 (schema + types + backfill route), 2 (`src/profile.ts` + prompt
+**Built:** 1 (schema + types + backfill route), 2 (`apps/api/src/profile.ts` + prompt
 wiring), 3 (validation + API), 4 (Business Profile screen), 5 (retrieval
 router), 6 (computed hours — D1 landed as **yes**), 7 (FAQ direct match), and
 the Worker half of 9 (the `profile` object on `/health`, and the `booking_url`
@@ -58,7 +58,7 @@ written and **not yet run against any database**.
 
 Three problems, and they are the same problem seen from three sides.
 
-**1. `bots` is a junk drawer.** The row in `src/types.ts` carries six unrelated
+**1. `bots` is a junk drawer.** The row in `apps/api/src/types.ts` carries six unrelated
 concerns — tenancy, business facts, bot persona, widget appearance,
 conversation behaviour, and infra config — and the business-facts tier has
 three generations of the same fields stacked on top of each other:
@@ -69,7 +69,7 @@ three generations of the same fields stacked on top of each other:
 | 002 (Phase 1) | `address`, `contact_email`, `contact_phone`, `business_description` |
 | 011 | corpus chunks, gated behind `knowledge_migrated_at` |
 
-`src/prompt.ts` reconciles them at render time (`bot.address ?? bot.location`)
+`apps/api/src/prompt.ts` reconciles them at render time (`bot.address ?? bot.location`)
 and branches the whole Services/FAQ block on a migration flag. Every new
 business field makes that worse.
 
@@ -79,7 +79,7 @@ from whatever page was ingested. Nothing guarantees the two agree, and nothing
 stops a stale document chunk from being the thing the model reads.
 
 **3. Every turn goes through RAG.** The only gate is `isTooShortToRetrieve`
-(`src/rag/retrieve.ts`) — four codepoints. `"thanks!"`, `"ok sounds good"` and
+(`apps/api/src/rag/retrieve.ts`) — four codepoints. `"thanks!"`, `"ok sounds good"` and
 `"what time do you open"` each fire an embedding round-trip plus a pgvector
 search, and can pull up to `DEFAULT_CONTEXT_CHARS = 6000` (~1,500 tokens) of
 chunks into a prompt that did not need them.
@@ -110,7 +110,7 @@ until 18:00") is the single strongest argument for structured hours over a text
 blob, because an LLM *cannot* derive it — it does not know the current time in
 the business's timezone. It needs a timezone from somewhere.
 
-The timezone picker at `dashboard/src/screens/BotConfiguration.tsx:496` is
+The timezone picker at `apps/app/src/screens/BotConfiguration.tsx:496` is
 inert by design and **is not to be touched** — it is not in `OWNED.general`,
 not in the `general` save payload, and has no column. That is settled.
 
@@ -190,7 +190,7 @@ Notes that are load bearing, not decoration:
   not parsed into Date objects — the Worker never needs them as instants
   except in Phase 6, which does its own conversion.
 - **Empty object is stored as NULL**, via the existing `orNull()` in
-  `src/config.ts`. "Never configured" and "configured back to defaults" must
+  `apps/api/src/config.ts`. "Never configured" and "configured back to defaults" must
   read alike, as they do for `widget_config`, `behavior_config` and
   `lead_config`.
 
@@ -211,7 +211,7 @@ contact       → profile.contact.notes    (only when the two above are null)
 
 Ship the backfill as a **route, not as migration SQL** — `POST
 /v1/admin/bots/:id/profile/backfill`, with `?dry_run=1`, mirroring
-`/knowledge/migrate` in `src/index.ts:1723`. Same reasons: it is reversible, it
+`/knowledge/migrate` in `apps/api/src/index.ts:1723`. Same reasons: it is reversible, it
 reports a plan before it acts, and a tenant who has already filled the new form
 keeps what they typed.
 
@@ -219,7 +219,7 @@ keeps what they typed.
 
 `hours`, `location`, `contact`, `address`, `contact_email`, `contact_phone`
 stay. Read-through deprecated, not dropped — the same treatment
-`allowed_origin` got in 006. Mark them `@deprecated` in `src/types.ts` with a
+`allowed_origin` got in 006. Mark them `@deprecated` in `apps/api/src/types.ts` with a
 pointer to `profile`.
 
 `business_description` **stays where it is** and is not part of the profile. It
@@ -230,7 +230,7 @@ by `PROMPT_TEXT_CAPS`, and moving it buys nothing.
 
 ## Phase 2 — Rendering
 
-New file `src/profile.ts`, exporting:
+New file `apps/api/src/profile.ts`, exporting:
 
 ```ts
 export function profileFor(bot: Bot): BusinessProfile | null;
@@ -239,7 +239,7 @@ export function renderProfile(bot: Bot, now?: Date): string[];
 
 `renderProfile` returns prompt lines and is called from `buildSystemPrompt` in
 place of the current `## Business Information` block
-(`src/prompt.ts:136-166`).
+(`apps/api/src/prompt.ts:136-166`).
 
 ### The contract that matters
 
@@ -272,7 +272,7 @@ instructions" framing `renderContext` applies. It is the same trust level
 ### Size
 
 The profile is prompt-resident on every turn, so it needs a ceiling. Add to
-`LIMITS` in `src/config.ts`:
+`LIMITS` in `apps/api/src/config.ts`:
 
 ```ts
 profile: {
@@ -296,7 +296,7 @@ makes, and for the same reason.
 
 ## Phase 3 — API and validation
 
-`validateProfile(input): Ok<BusinessProfile | null> | Err` in `src/config.ts`,
+`validateProfile(input): Ok<BusinessProfile | null> | Err` in `apps/api/src/config.ts`,
 following the existing `Ok`/`Err` + `text()` + `orNull()` pattern exactly.
 
 Validate:
@@ -313,24 +313,24 @@ Validate:
   not depend on the introspection API — `BotConfiguration.tsx:52` already
   guards it the same way)
 
-Wire into `PUT /v1/admin/bots/:id` (`src/index.ts:956`) alongside the other four
+Wire into `PUT /v1/admin/bots/:id` (`apps/api/src/index.ts:956`) alongside the other four
 validators.
 
-**`mergeConfigs` in `src/supabase.ts`: profile is replaced wholesale, not
+**`mergeConfigs` in `apps/api/src/supabase.ts`: profile is replaced wholesale, not
 merged.** It holds no secret, the form posts the whole object, and a merge would
 make a cleared field un-clearable. It needs no exception of the kind
 `widget_config.logo_key` and `lead_config.webhook_url` get — say so in a
 comment, because the next person will look for one.
 
 Add `profile?: BusinessProfile | null` to `Bot` and `BotUpdatePayload` in
-`src/types.ts`, and mirror both in `dashboard/src/lib/api.ts:255`. `selectBot`
+`apps/api/src/types.ts`, and mirror both in `apps/app/src/lib/api.ts:255`. `selectBot`
 uses `select=*`, so the column flows through with no query change.
 
 ---
 
 ## Phase 4 — Business Profile screen
 
-New `dashboard/src/screens/BusinessProfile.tsx`, route `#profile`.
+New `apps/app/src/screens/BusinessProfile.tsx`, route `#profile`.
 
 Sections, each with its own `SaveBar` and its own `OWNED` entry, following the
 independent-save pattern `BotConfiguration.tsx` established:
@@ -354,7 +354,7 @@ whole profile object** — build it from `saved` with only that section's keys
 overlaid, exactly as `saveSection` does today (`BotConfiguration.tsx:346`).
 Getting this wrong silently saves a neighbouring section's unsaved edits.
 
-Wiring in `dashboard/src/App.tsx`:
+Wiring in `apps/app/src/App.tsx`:
 
 - `NAV` entry `{ id: 'profile', label: 'Business Profile', icon: Building2 }`,
   placed directly above `configuration`
@@ -370,7 +370,7 @@ payload ternary.
 
 ## Phase 5 — The retrieval router
 
-New file `src/rag/route.ts`. This is the phase that actually stops the RAG
+New file `apps/api/src/rag/route.ts`. This is the phase that actually stops the RAG
 calls; Phases 1-4 do not, on their own.
 
 ```ts
@@ -379,7 +379,7 @@ export interface RouteDecision { route: TurnRoute; reason: string }
 export function routeTurn(query: string, bot: Bot): RouteDecision;
 ```
 
-Called from the chat path in `src/index.ts:439` in place of the bare `hasCorpus`
+Called from the chat path in `apps/api/src/index.ts:439` in place of the bare `hasCorpus`
 check, and it subsumes `isTooShortToRetrieve` (which stays exported and
 unit-tested — it is the multilingual codepoint floor from B3 and must not be
 re-derived).
@@ -418,7 +418,7 @@ changes under them on deploy. Same reasoning `retrieval_mode` defaults to
 ### Observability
 
 `retrievalLogRow` currently returns `null` for anything skipped, deliberately
-(`src/rag/retrieve.ts:443`) — a greeting logged as `matched: false` inflates the
+(`apps/api/src/rag/retrieve.ts:443`) — a greeting logged as `matched: false` inflates the
 miss rate. Keep that. Instead:
 
 - add `skipped: 'routed'` to `RetrievalOutcome['skipped']`
@@ -481,7 +481,7 @@ In `retrieve()`, before `resolveEmbeddingProvider`:
 - run the trigram match, `match_count: 1`
 - on a hit above `rag_config.faq_shortcut_threshold` (default `0.5`), return
   that Q&A as a single synthetic chunk and **skip the embed call entirely**
-- add `'faq-direct'` to `RetrievalChannel` in `src/rag/retrieve.ts:56`.
+- add `'faq-direct'` to `RetrievalChannel` in `apps/api/src/rag/retrieve.ts:56`.
   `retrieval_log.channel` is free text in SQL (011), so no migration is needed
   for it — the TS union is the only change.
 
@@ -521,12 +521,12 @@ route as the profile).
 ## Retiring `knowledge_migrated_at`
 
 The flag exists to cut `services` and `faq` out of the prompt once they are in
-the corpus (`src/prompt.ts:172`). Under the tier model its job is done by the
+the corpus (`apps/api/src/prompt.ts:172`). Under the tier model its job is done by the
 tier assignment itself: FAQ stays out of the prompt permanently (Tier 2),
 service *names* come back in permanently (Tier 1).
 
 Retire it **last**, after Phase 8 ships and every bot has been backfilled. Drop
-order: prompt branch first, then the migrate/revert routes (`src/index.ts:1723`,
+order: prompt branch first, then the migrate/revert routes (`apps/api/src/index.ts:1723`,
 `:1817`), then the column. Not before — it is the revert path for 011 and the
 only thing standing between a failed backfill and a bot with no knowledge at
 all.
@@ -555,9 +555,9 @@ Two things the spec did not call out and the implementation needed:
 ---
 
 `GET /v1/bots/:id/health` already serves the widget's public config through
-`widgetPublicConfig` (`src/config.ts:639`). A structured profile means it can
+`widgetPublicConfig` (`apps/api/src/config.ts:639`). A structured profile means it can
 also serve a small card — hours, phone, map link, booking button — that
-`public/widget.js` renders as real affordances instead of a URL the model
+`apps/cdn/assets/widget.js` renders as real affordances instead of a URL the model
 retypes and sometimes gets wrong.
 
 Emit only set fields, camelCase, defaults filled in by the widget not the Worker
@@ -566,7 +566,7 @@ the defaults. Additive: an older widget ignores the object.
 
 **Resolve the `booking_url` overlap here.** `lead_config.booking_url` and
 `profile.links.booking_url` are the same URL in two places. The profile owns it;
-`leadCaptureLines` in `src/prompt.ts` reads `lead_config.booking_url ??
+`leadCaptureLines` in `apps/api/src/prompt.ts` reads `lead_config.booking_url ??
 profile.links.booking_url` so nobody's existing configuration breaks, and the
 lead form's field becomes an override with a "defaults to your Business Profile
 link" hint.
@@ -633,7 +633,7 @@ Phases are listed in dependency order and each is separately shippable.
 | # | Phase | Blocks | Notes |
 |---|---|---|---|
 | 1 | Schema + types + backfill route | 2,3,4 | 015 |
-| 2 | `src/profile.ts` + prompt wiring | 4 | NULL path byte-identical |
+| 2 | `apps/api/src/profile.ts` + prompt wiring | 4 | NULL path byte-identical |
 | 3 | Validation + API | 4 | |
 | 4 | Business Profile screen | — | remove `contact` from Bot Configuration |
 | 5 | Retrieval router | — | default `off`; this is the one that saves the calls |

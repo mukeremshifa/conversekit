@@ -2,8 +2,16 @@
 // catch a bad path or an unclosed tag here, so this stands in for one.
 import fs from 'fs';
 import path from 'path';
+import { ORIGINS, installSrc } from '../config/origins.js';
 
-const ROOT = 'public';
+// The BUILT page, not the source. The source carries `__CK_CDN__`-style
+// tokens where hostnames go, so half these assertions — every URL one —
+// can only be made against the output of scripts/build-assets.mjs.
+const ROOT = 'apps/site/dist';
+if (!fs.existsSync(path.join(ROOT, 'index.html'))) {
+  console.error(`No landing page at ${ROOT}/index.html — run \`npm run build:assets -- site\` first.`);
+  process.exit(1);
+}
 const raw = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
 // A formatter may split attributes across lines; collapse whitespace inside
 // tags so the checks match structure rather than formatting.
@@ -36,8 +44,18 @@ const assets = [
   ...[...html.matchAll(/\ssrc="([^"]+)"/g)].map((m) => m[1]),
   ...[...html.matchAll(/<link[^>]*\shref="([^"]+)"/g)].map((m) => m[1]),
 ];
-const foreign = assets.filter((u) => /^https?:\/\//.test(u) && !/^https:\/\/conversekit-widget\.pages\.dev/.test(u));
+// Our own hosts only. The widget now comes off cdn. rather than from
+// this origin — that is deliberate, so the page exercises the same
+// install path a tenant does — but anything beyond these two is a third
+// party the page has quietly taken a dependency on.
+const OURS = [ORIGINS.site, ORIGINS.cdn];
+const foreign = assets.filter((u) => /^https?:\/\//.test(u) && !OURS.some((o) => u.startsWith(o + '/')));
 foreign.length ? bad('external host: ' + foreign.join(', ')) : ok('no external asset hosts');
+
+// A token that survived the build is a hostname that never got filled
+// in: the page renders, the link is dead, and nothing else notices.
+const leftover = [...new Set([...raw.matchAll(/__CK_[A-Z_]+__/g)].map((m) => m[0]))];
+leftover.length ? bad('unsubstituted token: ' + leftover.join(', ')) : ok('every __CK_*__ token substituted');
 /@import\s+url\(|fonts\.googleapis|unpkg|jsdelivr/.test(html) ? bad('CDN import found') : ok('no CDN imports');
 
 // ── markup ──
@@ -255,7 +273,7 @@ band && !band[1].includes('data-reveal')
 
 // ── product shots ──
 // Seven slots, each shipping a <picture> per theme, all of it written by
-// scripts/gen-shots.mjs out of public/shots/manifest.json. Two failures
+// scripts/gen-shots.mjs out of apps/site/assets/shots/manifest.json. Two failures
 // are invisible on the page you happen to be looking at: a slot that
 // ships only one theme is a hole for everyone using the other one, and a
 // content hash that no longer exists on disk is a hole for everyone,
@@ -349,14 +367,25 @@ raw.includes('/fonts/bricolage-wordmark.woff2') && !raw.includes('bricolage-grot
 const og = (html.match(/property="og:image" content="([^"]+)"/) || [])[1];
 /^https:\/\//.test(og) ? ok('og:image absolute') : bad('og:image not absolute: ' + og);
 
-/<script src="\/widget\.js" data-bot-id="[0-9a-f-]{36}" defer ?>/.test(html)
-  ? ok('widget tag present with uuid bot id')
+// The live widget on this page loads from ck-cdn, on the same
+// major-pinned path a tenant is given — so the page exercises the real
+// install rather than a same-origin shortcut that could keep working
+// after the CDN broke.
+const WIDGET_SRC = installSrc();
+new RegExp(`<script src="${WIDGET_SRC}" data-bot-id="[0-9a-f-]{36}" defer ?>`).test(html)
+  ? ok('widget tag present, off the CDN, with a uuid bot id')
   : bad('widget script tag missing or malformed');
 
 // ── the snippet users copy must be the real deployed URL ──
-html.includes('https://conversekit-widget.pages.dev/widget.js')
-  ? ok('install snippet points at the deployed widget')
+// Major-pinned, never floating: this string ends up in other people's
+// HTML, and /widget.js would opt every one of them into breaking
+// changes they never asked for.
+html.includes(WIDGET_SRC)
+  ? ok('install snippet points at the pinned widget path')
   : bad('install snippet has the wrong widget URL');
+/[">]https:\/\/[^"<]*\/widget\.js/.test(html.split(WIDGET_SRC).join(''))
+  ? bad('an unpinned /widget.js URL is on the page')
+  : ok('no unpinned widget URL on the page');
 
 console.log(fail ? `\n${fail} FAILURE(S)` : '\nAll landing-page checks passed.');
 process.exit(fail ? 1 : 0);

@@ -18,7 +18,7 @@ import { tmpdir } from 'node:os';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = mkdtempSync(join(tmpdir(), 'ck-sess-'));
 await build({
-  entryPoints: [join(ROOT, 'src/session.ts')],
+  entryPoints: [join(ROOT, 'apps/api/src/session.ts')],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });
 const { issueSessionId, verifySessionId } = await import(`file://${OUT}/session.js`);

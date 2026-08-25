@@ -1,0 +1,166 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // ONE API Worker, for every tier, forever. See the "tiers are data,
+  // not deployments" section of docs/deployment-rebuild.md and the note
+  // at the top of src/entitlements.ts: a `ck-api-free` without the AI
+  // binding would make an upgrade a hostname change in someone else's
+  // HTML instead of a database write.
+  "name": "ck-api",
+  "main": "src/index.ts",
+
+  // Current as of this rebuild. The previous value, 2024-11-01, was
+  // nearly two years of runtime behaviour behind; a torn-down stack with
+  // a green test suite is the cheap moment to move it, and it was moved
+  // deliberately rather than drifted into.
+  "compatibility_date": "2026-08-23",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Production answers on api.conversekit.… and nowhere else. Leaving
+  // the .workers.dev hostname live would give the API two addresses,
+  // one of which nothing documents and nothing monitors. Staging keeps
+  // it — see [env.staging] below.
+  "workers_dev": false,
+  "routes": [
+    {
+      // A Custom Domain, NOT a proxied DNS record. Universal SSL on a
+      // full-setup zone covers the apex and first-level subdomains only,
+      // so `*.mukeremshifa.com` does not cover a third-level name like
+      // this one. Attaching as a Custom Domain provisions a certificate
+      // for this exact hostname at any depth; a plain DNS record here
+      // gives a TLS handshake failure with no obvious cause.
+      "pattern": "api.conversekit.mukeremshifa.com",
+      "custom_domain": true
+    }
+  ],
+
+  // The chat path makes several sequential Supabase calls per request,
+  // and each one costs 20–30 ms from a distant region against 1–3 ms
+  // when placed nearby. Supabase is reached over HTTPS/PostgREST rather
+  // than a Postgres driver, so Hyperdrive does not apply — but placement
+  // does, and "smart" measures rather than requiring us to name a region.
+  "placement": { "mode": "smart" },
+
+  "observability": { "enabled": true },
+
+  // ── Secrets ─────────────────────────────────────────────────────
+  //
+  // Declared, not stored — the values live in Cloudflare and never in
+  // this repo. Declaring them makes `wrangler deploy` FAIL when one was
+  // never uploaded, which is the difference between a deploy that stops
+  // and a Worker that answers 502 on /v1/bots/:id/health until somebody
+  // reads the logs.
+  //
+  // Locally these come from apps/api/.dev.vars (beside this file, which
+  // is where wrangler looks). Push them with `npm run secrets:push`,
+  // which allowlists exactly these five — see scripts/secrets.mjs for
+  // why that is not just `wrangler secret bulk`.
+  "secrets": {
+    "required": [
+      "SUPABASE_URL",
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_ROLE_KEY",
+      "GEMINI_API_KEY",
+      "GROQ_API_KEY"
+    ]
+  },
+
+  // Workers AI — the keyless vendor in the provider catalog, and the
+  // embedding provider for RAG (@cf/baai/bge-base-en-v1.5, 768 dims).
+  //
+  // TRADE-OFF: the AI binding has no local simulator, so enabling it
+  // puts `wrangler dev` into a remote proxy session and local runs then
+  // require `wrangler login`. Accepted because it is the only free
+  // 768-dimension embedding source the deployed Worker can actually
+  // reach — Ollama is free too, but Cloudflare's edge cannot see your
+  // laptop.
+  "ai": { "binding": "AI" },
+
+  // Platform defaults. A bot with no provider_config inherits these, so
+  // new bots land on the free stack rather than a metered one. Per-tenant
+  // config in bots.provider_config still overrides them.
+  "vars": {
+    "AI_VENDOR": "google",
+    "AI_MODEL": "gemini-3.5-flash-lite",
+    "EMBEDDING_VENDOR": "workers-ai"
+  },
+
+  // ── Rate limiting ───────────────────────────────────────────────
+  //
+  // Abuse guard for the public chat path. Not monetisation: every bot
+  // shares one Gemini key and one Workers AI allocation, so an
+  // unthrottled endpoint lets anyone holding a bot UUID drain the free
+  // tier from a script.
+  //
+  // ONE BINDING PER TIER, because a limit is static configuration — it
+  // cannot be computed at request time. src/entitlements.ts selects
+  // between them from the org's plan; nothing else reads them. Adding a
+  // fourth tier later is a deploy, which is fine. Discovering after
+  // launch that the mechanism does not exist is not.
+  //
+  // `period` may only be 10 or 60. The namespace ids are account-wide
+  // and are what keep one tier's burst out of another tier's counter,
+  // so staging uses a different block of them.
+  "ratelimits": [
+    { "name": "RL_FREE", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } },
+    { "name": "RL_PRO", "namespace_id": "1002", "simple": { "limit": 120, "period": 60 } },
+    { "name": "RL_SCALE", "namespace_id": "1003", "simple": { "limit": 600, "period": 60 } }
+  ],
+
+  // Retention. ONE EXPRESSION PER TABLE, and the scheduled handler in
+  // src/index.ts branches on `event.cron` rather than doing both in one
+  // pass — see the note above it for why a shared "daily maintenance"
+  // function is the thing this arrangement exists to avoid.
+  //
+  //   17 3  retrieval_log, pruned at 90 days
+  //   41 3  usage_log,     pruned at 400 days
+  //
+  // Both off the hour on purpose: every cron on every platform fires at
+  // :00, and these compete for the same Supabase connection pool as real
+  // traffic. Twenty-four minutes apart so the second is not waiting on
+  // the first's connections either.
+  "triggers": { "crons": ["17 3 * * *", "41 3 * * *"] },
+
+  // ── Staging ─────────────────────────────────────────────────────
+  //
+  // Lives on .workers.dev. Four more hostnames for an environment only
+  // one person uses is four more certificates to notice when they lapse.
+  //
+  // Bindings and vars are NOT inherited by environments — they have to
+  // be repeated here in full. Everything above them (main, placement,
+  // observability, compatibility_*) is.
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "routes": [],
+      // Nothing to prune on a database nobody writes to, and both
+      // expressions would otherwise run twice a night against the same
+      // Supabase project as production.
+      "triggers": { "crons": [] },
+      // Same names, different values: staging points at its own Supabase
+      // project. `npm run secrets:push -- --env staging` reads
+      // apps/api/.dev.vars.staging and refuses to push it if its
+      // SUPABASE_URL matches production's.
+      "secrets": {
+        "required": [
+          "SUPABASE_URL",
+          "SUPABASE_ANON_KEY",
+          "SUPABASE_SERVICE_ROLE_KEY",
+          "GEMINI_API_KEY",
+          "GROQ_API_KEY"
+        ]
+      },
+      "ai": { "binding": "AI" },
+      "vars": {
+        "AI_VENDOR": "google",
+        "AI_MODEL": "gemini-3.5-flash-lite",
+        "EMBEDDING_VENDOR": "workers-ai"
+      },
+      "ratelimits": [
+        { "name": "RL_FREE", "namespace_id": "2001", "simple": { "limit": 30, "period": 60 } },
+        { "name": "RL_PRO", "namespace_id": "2002", "simple": { "limit": 120, "period": 60 } },
+        { "name": "RL_SCALE", "namespace_id": "2003", "simple": { "limit": 600, "period": 60 } }
+      ]
+    }
+  }
+}

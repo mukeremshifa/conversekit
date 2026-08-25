@@ -18,7 +18,7 @@ code. Measurements were taken read-only against the production project on
 B6 (citation/marker alignment), M2 (`npm run eval:rag`), and the housekeeping.
 No SQL migration was needed for any of it.
 
-**Phase 2 shipped**, all on [`012_retrieval.sql`](../supabase/012_retrieval.sql):
+**Phase 2 shipped**, all on [`012_retrieval.sql`](../supabase/005_retrieval.sql):
 M1 (retrieval logging and the tenant-facing miss report), B2 (embedding-model
 drift), B4 (the re-index claim), B5 (ingest retry with backoff), S1's first
 mitigation (`hnsw.ef_search`), and the S2 title fold.
@@ -31,7 +31,7 @@ says so instead of poisoning every answer silently, a raced re-index no longer
 marks a working document `failed`, and a rate limit part-way through a batch no
 longer discards the batches before it.
 
-**Phase 3 shipped**, on [`013_hybrid.sql`](../supabase/013_hybrid.sql) plus
+**Phase 3 shipped**, on [`013_hybrid.sql`](../supabase/005_retrieval.sql) plus
 pure-Worker changes: M8 (near-duplicate suppression), M6 (heading context in
 prose chunks), M4 (real hybrid retrieval), M5 (cross-encoder re-ranking), the
 `hasChunks` half of S2, S1's `iterative_scan`, and the ranking SQL test that was
@@ -65,11 +65,11 @@ The loop is complete and the parts are individually sound:
 
 | Stage | Where | State |
 |---|---|---|
-| Extract | [extract.ts](../src/rag/extract.ts), [files.ts](../src/rag/files.ts) | HTML/markdown/PDF/DOCX, SSRF-guarded |
-| Chunk | [chunk.ts](../src/rag/chunk.ts) | Recursive character split + a Q&A-aware splitter |
-| Embed | [ingest.ts](../src/rag/ingest.ts) | Batched, width-asserted, 11 vendors |
-| Store | [005](../supabase/005_rag.sql), [011](../supabase/011_knowledge.sql), [012](../supabase/012_retrieval.sql) | pgvector, HNSW + `ef_search`, `tsvector` + GIN, RLS |
-| Retrieve | [retrieve.ts](../src/rag/retrieve.ts) | Vector search, priority boost, lexical fallback, drift gate |
+| Extract | [extract.ts](../apps/api/src/rag/extract.ts), [files.ts](../apps/api/src/rag/files.ts) | HTML/markdown/PDF/DOCX, SSRF-guarded |
+| Chunk | [chunk.ts](../apps/api/src/rag/chunk.ts) | Recursive character split + a Q&A-aware splitter |
+| Embed | [ingest.ts](../apps/api/src/rag/ingest.ts) | Batched, width-asserted, 11 vendors |
+| Store | [005](../supabase/004_knowledge.sql), [011](../supabase/004_knowledge.sql), [012](../supabase/005_retrieval.sql) | pgvector, HNSW + `ef_search`, `tsvector` + GIN, RLS |
+| Retrieve | [retrieve.ts](../apps/api/src/rag/retrieve.ts) | Vector search, priority boost, lexical fallback, drift gate |
 | Render | `renderContext` | Numbered excerpts, character budget, injection framing |
 | Inspect | `retrieve-preview` | Runs the real path, reports the channel |
 | Observe | `retrieval_log`, `buildMissReport` | Per-turn outcome, miss report, 90-day retention |
@@ -104,7 +104,7 @@ it: bge-base-en-v1.5 is documented as having a compressed similarity range,
 typically 0.4–0.9. A 0.3 floor is calibrated for an OpenAI-like distribution
 that spreads toward 0. The platform default embedder is not that model.
 
-**What this disables.** In [index.ts](../src/index.ts#L404-L414),
+**What this disables.** In [index.ts](../apps/api/src/index.ts#L404-L414),
 `missedRetrieval = hasCorpus && chunks.length === 0`. If the floor never
 rejects, `chunks` is never empty, so `missedRetrieval` is never true, and:
 
@@ -125,7 +125,7 @@ confident wrong answer — a prompt-level mitigation carrying load that a
 threshold was supposed to carry.
 
 **Fixed.** The floor is now resolved from the embedder that will actually run
-the query, in [catalog.ts](../src/providers/catalog.ts):
+the query, in [catalog.ts](../apps/api/src/providers/catalog.ts):
 
 ```ts
 resolveSimilarityFloor({ vendor, model })  // → { floor, source }
@@ -138,7 +138,7 @@ can point any OpenAI-compatible vendor at them through
 would get that case wrong.
 
 `ragConfigFor(bot, floor?)` takes the resolved value as its default;
-[retrieve.ts](../src/rag/retrieve.ts) resolves the embedder first and then
+[retrieve.ts](../apps/api/src/rag/retrieve.ts) resolves the embedder first and then
 builds the config with it. An explicit tenant `min_similarity` still wins over
 both, which is the whole contract.
 
@@ -203,7 +203,7 @@ Two things that had to be right, and both are asserted in
 
 **In the dashboard, per document.** `GET /v1/admin/bots/:id/documents` now
 returns the model that would resolve *today* alongside the list, and
-[Sources.tsx](../dashboard/src/screens/Sources.tsx) shows **"re-index required"**
+[Sources.tsx](../apps/app/src/screens/Sources.tsx) shows **"re-index required"**
 as a fifth badge beside `pending`/`processing`/`ready`/`failed`, plus a banner
 offering to re-index every affected source. Per document because a mixed corpus
 is real: the bot-level stamp is the last ingest, the per-document column is the
@@ -225,7 +225,7 @@ code units, and 天气如何 is a complete question in four characters while 多
 includes answering in the visitor's language, a Latin-alphabet word-length
 heuristic is the wrong gate.
 
-**Fixed.** `isTooShortToRetrieve` in [retrieve.ts](../src/rag/retrieve.ts)
+**Fixed.** `isTooShortToRetrieve` in [retrieve.ts](../apps/api/src/rag/retrieve.ts)
 counts **code points**, not code units, and drops the floor to 2 when the query
 contains Han, Hiragana, Katakana, Hangul or Thai. Unicode property escapes
 rather than hand-rolled ranges, so CJK Extension B and beyond come out right;
@@ -281,7 +281,7 @@ Three details that are not obvious from the one-line version:
 
 ### B5 — Ingestion does not survive the failure its own comment claims it survives — **FIXED**
 
-[ingest.ts](../src/rag/ingest.ts) opens by saying the design "survives the
+[ingest.ts](../apps/api/src/rag/ingest.ts) opens by saying the design "survives the
 failure that actually happens here, which is a vendor rate-limit part-way
 through a batch." It does not. `embedPieces` loops batches of 32 with no retry,
 no backoff, and no partial-progress record. One 429 on batch 7 of 13 throws,
@@ -309,7 +309,7 @@ On exhaustion the error names the batch (`embedding batch 7 of 13 failed after
 3 attempts: …`), so a tenant can tell "the vendor is throttling you" from "your
 document is broken" — the document reached batch 7, so it is not the file.
 
-The header comment at the top of [ingest.ts](../src/rag/ingest.ts), which had
+The header comment at the top of [ingest.ts](../apps/api/src/rag/ingest.ts), which had
 been claiming all of this since it was written, now describes what the code
 does.
 
@@ -334,14 +334,14 @@ fit the character budget, but citations were built from **all** chunks. The list
 could name a document the model was never shown.
 
 **Fixed.** The budget loop is now `selectContext`, exported from
-[retrieve.ts](../src/rag/retrieve.ts), and the chat path renders exactly what it
+[retrieve.ts](../apps/api/src/rag/retrieve.ts), and the chat path renders exactly what it
 selected. Citations are built from that selection, in rank order, **one entry
 per rendered excerpt with duplicates preserved** — three chunks from one
 document are three markers pointing at it, and collapsing them would renumber
 the list out of step with the prompt. `citations` stays `string[]`, so the
 wire contract is unchanged.
 
-[widget.js](../public/widget.js) renders `[1,3] Pricing · [2] Hours` — markers
+[widget.js](../apps/cdn/assets/widget.js) renders `[1,3] Pricing · [2] Hours` — markers
 intact, each document named once.
 
 Also fixed by the same change: `missedRetrieval` is now computed from the
@@ -453,7 +453,7 @@ and the correction is the interesting part.**
 
 > ~~It can fold into `match_chunks` — returning zero rows *is* "no corpus".~~
 
-**That fold re-opens B1.** `src/index.ts` computes
+**That fold re-opens B1.** `apps/api/src/index.ts` computes
 
 ```ts
 const missedRetrieval = hasCorpus && !staleIndex && rendered.length === 0;
@@ -479,7 +479,7 @@ compute a number that only has to be right at the end. The count is recomputed
 rather than incremented, because a delta is a second source of truth that drifts
 the first time a statement does something unexpected.
 
-`hasChunks()` remains in `src/supabase.ts` as the fallback for a Worker running
+`hasChunks()` remains in `apps/api/src/supabase.ts` as the fallback for a Worker running
 ahead of the migration: **`chunk_count` undefined means unknown, not zero**, and
 reading an absent column as "no corpus" would switch retrieval off for every bot
 on the platform. Free side benefit: Sources can show "11 chunks indexed" without
@@ -516,7 +516,7 @@ would inflate the miss rate with turns nobody expected an answer to, and a
 cannot answer. The decision lives in `retrievalLogRow` — pure, beside the
 outcome it describes, and unit-tested there.
 
-**The report.** `buildMissReport` in [stats.ts](../src/stats.ts) is a pure
+**The report.** `buildMissReport` in [stats.ts](../apps/api/src/stats.ts) is a pure
 function over rows the caller fetched, in the same shape as `buildStats` and in
 the same file so it reuses `normalise()` — "What are your hours?" and "what are
 your hours" group identically in the overview and here. It is served by
@@ -610,10 +610,10 @@ search wins.
 > ~~Running both channels every turn and fusing with reciprocal rank fusion is,
 > as the 011 brief predicted, a scoring change rather than a migration.~~
 
-[`012_retrieval.sql:433`](../supabase/012_retrieval.sql) has `and c.priority >
+[`012_retrieval.sql:433`](../supabase/005_retrieval.sql) has `and c.priority >
 0` hard-coded inside `match_chunks_lexical`. The gate that makes lexical a
 *fallback* is precisely what has to become a parameter, and it lives in SQL. So
-[`013`](../supabase/013_hybrid.sql) drops and recreates the function with
+[`013`](../supabase/005_retrieval.sql) drops and recreates the function with
 `p_min_priority smallint default 1` — the drop is not optional, because a
 defaulted fourth parameter beside the existing three-argument function makes the
 three-argument call ambiguous rather than overloaded.
@@ -707,7 +707,7 @@ extractors destroyed them, each differently:
 
 So a heading arrived at the chunker as a short line indistinguishable from a
 sentence — except for file sources, where it arrived as markdown by accident.
-**M6 starts in [`extract.ts`](../src/rag/extract.ts)**, preserving headings in
+**M6 starts in [`extract.ts`](../apps/api/src/rag/extract.ts)**, preserving headings in
 one canonical form, ATX markdown, because one of the three sources already
 produces it. `markdownToText` keeps the marker; `htmlToText` maps `<h1>`–`<h6>`
 to `\n\n# `…`\n\n` at their own level *before* the generic tag strip, with
@@ -789,7 +789,7 @@ reads as a threshold bug.)*
 ## Housekeeping
 
 - ~~**Stale build artefacts on disk.**~~ **DONE.** Thirteen of them, not four —
-  `src/providers` had nine more that the audit missed. All `tsc` output from
+  `apps/api/src/providers` had nine more that the audit missed. All `tsc` output from
   August 10, all gitignored, all deleted.
 - ~~**No unit tests for `retrieve()` or `ragConfigFor()`.**~~ **DONE.** Added to
   [test-knowledge-units.mjs](../scripts/test-knowledge-units.mjs): channel
@@ -848,7 +848,7 @@ housekeeping. No migration was needed.
 
 **~~Then, one migration:~~ DONE.** M1 with B2, B4 and B5, plus S1's first
 mitigation and the S2 title fold riding
-[012](../supabase/012_retrieval.sql) — everything that needed SQL, in one file,
+[012](../supabase/005_retrieval.sql) — everything that needed SQL, in one file,
 deployed before the Worker because both RPCs widen their return type.
 
 **Still a run rather than a build, and still outstanding — and it is now a gate,
@@ -873,7 +873,7 @@ a side effect of anything else.
 
 **~~Then, quality:~~ DONE**, in that order and for that reason: M8 and M6 are
 pure-function changes with offline tests, then M4 and M5, which change what
-retrieval returns. M4 needed [`013`](../supabase/013_hybrid.sql) after all — see
+retrieval returns. M4 needed [`013`](../supabase/005_retrieval.sql) after all — see
 its entry — and both it and M5 ship switched off.
 
 **~~Before real scale:~~ DONE.** S1's `iterative_scan` and the `hasChunks` half

@@ -1,12 +1,13 @@
 name: CI
 
-# Everything here runs without credentials. `scripts/verify-isolation.mjs` and
-# `scripts/verify-rls.mjs` are deliberately excluded: they assert RLS policy
+# Everything in `verify` runs without credentials. `scripts/verify-isolation.mjs`
+# and `scripts/verify-rls.mjs` are deliberately excluded: they assert RLS policy
 # behaviour against a real Supabase project, which cannot be mocked and cannot
 # be reached from CI without handing this workflow a service-role key.
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -19,7 +20,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  verify:
     name: type-check · test · build
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -27,33 +28,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # One lockfile now. The dashboard used to carry its own, which meant
+      # two `npm ci` steps that could disagree about a shared dependency.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            dashboard/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install (worker)
-        run: npm ci
+      - run: npm ci
 
-      # working-directory rather than `npm ci --prefix`, which has historically
-      # been inconsistent about which lockfile it honours.
-      - name: Install (dashboard)
-        run: npm ci
-        working-directory: dashboard
-
-      - name: Type-check the Worker
+      - name: Type-check the Worker and the dashboard
         run: npm run type-check
 
-      # Widget markdown renderer, signed-session encoding, and the RAG
-      # chunker/extractor. All pure units — no network, no database.
+      # Widget markdown renderer, signed-session encoding, the RAG
+      # chunker/extractor, and the entitlements seam. All pure units — no
+      # network, no database.
       - name: Unit tests
         run: npm test
 
-      - name: Build the dashboard
-        run: npm run build:dashboard
+      # All four targets: the dashboard through Vite, the landing page and
+      # the CDN through scripts/build-assets.mjs.
+      - name: Build
+        run: npm run build
 
       # The landing page has no bundler to catch a bad asset path or an
       # unclosed tag, so this stands in for one. Run via npm so the sprite
@@ -63,4 +60,135 @@ jobs:
         run: npm run check:landing
 
       - name: Check documentation links
-        run: node scripts/check-links.mjs
+        run: npm run check:links
+
+  # ── Which apps changed ──────────────────────────────────────────
+  #
+  # Four deploy targets with different change rates is the whole point of
+  # the split, and the split is wasted if every push redeploys all four.
+  # A landing-page typo must not redeploy the script that runs on
+  # customers' sites.
+  #
+  # Branch pushes only. A tag is a release and deploys everything: an
+  # incremental diff against the previous tag is not what "cut v1.2.0"
+  # means, and paths-filter has no sensible base for a newly created ref
+  # anyway.
+  changes:
+    name: changed apps
+    runs-on: ubuntu-latest
+    needs: verify
+    if: github.event_name == 'push' && github.ref_type == 'branch'
+    outputs:
+      api: ${{ steps.filter.outputs.api }}
+      app: ${{ steps.filter.outputs.app }}
+      cdn: ${{ steps.filter.outputs.cdn }}
+      site: ${{ steps.filter.outputs.site }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # config/ and packages/brand/ feed more than one target, so they
+          # fan out to everything they reach.
+          filters: |
+            shared: &shared
+              - 'config/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - '.github/workflows/ci.yml'
+            assets: &assets
+              - *shared
+              - 'packages/brand/assets/**'
+              - 'scripts/build-assets.mjs'
+            api:
+              - *shared
+              - 'apps/api/**'
+            app:
+              - *assets
+              - 'apps/app/**'
+            cdn:
+              - *assets
+              - 'apps/cdn/**'
+            site:
+              - *assets
+              - 'apps/site/**'
+
+  # ── Deploy ──────────────────────────────────────────────────────
+  #
+  # main → staging. Tag v* → production. The deployed artifact used to be
+  # whatever was on one laptop; now it is a clean checkout of a commit
+  # that passed `verify`.
+  #
+  # WORKER SECRETS ARE NOT HERE. They are set once with
+  # `wrangler secret bulk` and live in Cloudflare. This workflow holds one
+  # credential: CLOUDFLARE_API_TOKEN, scoped to editing Workers. A
+  # pipeline that can read every production key has a far larger blast
+  # radius than one that can only publish code.
+  deploy:
+    name: deploy ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    needs: [verify, changes]
+    # `changes` is skipped on tag pushes, and a skipped dependency would
+    # otherwise skip this job too — hence the explicit verify check rather
+    # than relying on `needs` alone. The per-app half of the condition
+    # cannot live here: `matrix` is not in scope for a job-level `if`, so
+    # it is computed in the first step and every other step gates on it.
+    if: >-
+      !cancelled()
+      && github.event_name == 'push'
+      && needs.verify.result == 'success'
+    # Read by config/origins.js at BUILD time, not deploy time — the
+    # hostnames are baked into the dashboard bundle and into the landing
+    # page, so `--env staging` on its own would ship a staging Worker that
+    # calls the production API.
+    env:
+      CK_ENV: ${{ github.ref_type == 'tag' && 'production' || 'staging' }}
+    strategy:
+      # Sequential, api first: a dashboard or widget build that expects a
+      # field the API does not serve yet is the failure this ordering
+      # exists to avoid. `fail-fast: false` so one target's failure does
+      # not strand the other three mid-rollout.
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        app: [api, cdn, app, site]
+    steps:
+      - name: Does ${{ matrix.app }} need deploying?
+        id: gate
+        run: echo "go=${{ github.ref_type == 'tag' || needs.changes.outputs[matrix.app] == 'true' }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.go == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.go == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+        if: steps.gate.outputs.go == 'true'
+
+      # apps/app needs Vite; apps/cdn and apps/site need the token
+      # substitution pass. apps/api needs neither — wrangler bundles it.
+      - name: Build ${{ matrix.app }}
+        if: steps.gate.outputs.go == 'true' && matrix.app != 'api'
+        run: |
+          case "${{ matrix.app }}" in
+            app)  npm run build:app ;;
+            cdn)  node scripts/build-assets.mjs cdn ;;
+            site) node scripts/build-assets.mjs site ;;
+          esac
+
+      # The wrangler from package-lock.json, not whatever a marketplace
+      # action decides to install: the tool that publishes the artifact
+      # should be pinned by the same lockfile the artifact was built with.
+      - name: Deploy ${{ matrix.app }}
+        if: steps.gate.outputs.go == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          npx wrangler deploy \
+            --config "apps/${{ matrix.app }}/wrangler.jsonc" \
+            ${{ github.ref_type == 'tag' && '' || '--env staging' }}

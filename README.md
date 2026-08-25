@@ -8,11 +8,10 @@
 while it talks, installs with one `<script>` tag.
 
 [![CI](https://github.com/mukeremshifa/conversekit/actions/workflows/ci.yml/badge.svg)](https://github.com/mukeremshifa/conversekit/actions/workflows/ci.yml)
-[![Live](https://img.shields.io/badge/live-conversekit--widget.pages.dev-EEBA2B)](https://conversekit-widget.pages.dev/)
 [![License](https://img.shields.io/badge/license-proprietary-0A0A0C)](LICENSE)
 
-[Live site](https://conversekit-widget.pages.dev/) ·
-[Dashboard](https://conversekit-widget.pages.dev/admin/) ·
+[Live site](https://conversekit.mukeremshifa.com) ·
+[Dashboard](https://app.conversekit.mukeremshifa.com) ·
 [Documentation](#documentation)
 
 </div>
@@ -21,17 +20,22 @@ while it talks, installs with one `<script>` tag.
 
 ## What it is
 
-A multi-tenant conversational AI platform. One Cloudflare Worker serves the API
-and one Pages site serves the widget and admin dashboard, together supporting an
-unlimited number of client bots. Each bot is a row in Postgres with its own
-branding, knowledge base, allowed origins and AI provider.
+A multi-tenant conversational AI platform, deployed as four Cloudflare Workers —
+the API, the dashboard, the widget CDN and the landing page — each with its own
+hostname, cache policy and blast radius. Together they support an unlimited
+number of client bots. Each bot is a row in Postgres with its own branding,
+knowledge base, allowed origins and AI provider.
+
+Tiers, when they exist, will be rows in that table too. There is one API Worker
+for every plan and one widget artifact for every plan; see
+[`apps/api/src/entitlements.ts`](apps/api/src/entitlements.ts) for why.
 
 Onboarding a client is inserting a row and handing them a script tag. No
 redeploy, and no build step on their side.
 
 ```html
 <script
-  src="https://conversekit-widget.pages.dev/widget.js"
+  src="https://cdn.conversekit.mukeremshifa.com/v1/widget.js"
   data-bot-id="YOUR_BOT_ID"
   defer></script>
 ```
@@ -62,8 +66,8 @@ redeploy, and no build step on their side.
 
 ## Stack
 
-Cloudflare Workers · Hono · Cloudflare Pages · Supabase Postgres · pgvector ·
-React + Vite + Tailwind v4
+Cloudflare Workers (four of them, static assets and all) · Hono ·
+Supabase Postgres · pgvector · React + Vite + Tailwind v4 · npm workspaces
 
 ## Documentation
 
@@ -80,15 +84,16 @@ React + Vite + Tailwind v4
 ## Quick start
 
 ```bash
-npm install                    # Worker dependencies
-npm ci --prefix dashboard      # dashboard dependencies
+npm install                    # one lockfile, all four workspaces
 
-npm run dashboard              # dashboard  → localhost:5173/admin/
-npm run landing                # landing page → localhost:8788
-npm run dev                    # Worker API  → localhost:8787
+npm run dev:app                # dashboard    → localhost:5173
+npm run dev:site               # landing page → localhost:8788
+npm run dev:cdn                # widget + fonts → localhost:8789
+npm run dev:api                # API Worker   → localhost:8787
 
-npm test                       # widget, session and RAG unit tests
-npm run type-check             # tsc --noEmit
+npm test                       # widget, session, RAG and entitlement units
+npm run type-check             # the Worker and the dashboard
+npm run build                  # all four deploy targets
 ```
 
 Full setup — migrations, secrets and the first bot — is in
@@ -96,12 +101,15 @@ Full setup — migrations, secrets and the first bot — is in
 
 ## Live URLs
 
-| What | URL |
-|---|---|
-| Landing page | https://conversekit-widget.pages.dev/ |
-| Admin dashboard | https://conversekit-widget.pages.dev/admin/ |
-| Widget script | https://conversekit-widget.pages.dev/widget.js |
-| API Worker | https://conversekit.mukeremshifa.workers.dev |
+| What | Worker | URL |
+|---|---|---|
+| Landing page | `ck-site` | https://conversekit.mukeremshifa.com |
+| Admin dashboard | `ck-app` | https://app.conversekit.mukeremshifa.com |
+| Widget script | `ck-cdn` | https://cdn.conversekit.mukeremshifa.com/v1/widget.js |
+| API | `ck-api` | https://api.conversekit.mukeremshifa.com |
+
+Staging is the same four on `.workers.dev`: `ck-<service>-staging.mukeremshifa.workers.dev`.
+Hostnames are written in exactly one place, [`config/origins.js`](config/origins.js).
 
 ## Widget API
 
