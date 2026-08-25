@@ -10,7 +10,7 @@
     "build:shots": "vite build --config vite.shot.config.ts",
     "preview": "vite preview",
     "type-check": "tsc -b",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler deploy --env=",
     "deploy:staging": "wrangler deploy --env staging"
   },
   "dependencies": {

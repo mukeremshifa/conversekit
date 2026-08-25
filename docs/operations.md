@@ -109,6 +109,21 @@ npm run secrets:push -- --dry-run       # names only, nothing uploaded
 npm run secrets:list                    # what the Worker currently holds
 ```
 
+**A Worker's very first deploy needs `secrets:bootstrap` instead.** `secret bulk`
+has to attach to a Worker that exists, and `deploy` refuses to create one while
+`secrets.required` is unmet — a cycle. `wrangler deploy --secrets-file` breaks it
+by sending the secrets up with the version, so the Worker is created and
+satisfied in one operation:
+
+```bash
+npm run secrets:bootstrap                    # creates ck-api with its secrets
+npm run secrets:bootstrap -- --env staging   # creates ck-api-staging
+```
+
+That is the one path that writes a secrets file. It goes to the OS temp
+directory, never the working tree, and is removed whether the deploy succeeds or
+fails. Afterwards use `secrets:push` — the Worker exists by then.
+
 Rather than a bare `wrangler secret bulk`, because that uploads whatever is in
 the file it is handed. This pushes an **allowlist** — the same five names
 declared as `secrets.required` in `wrangler.jsonc`, and it fails if the two

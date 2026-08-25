@@ -565,16 +565,18 @@ present on the newer project.
 
 Nothing is blocked any more. In order:
 
-1. **Push the secrets.** The zone account has never held these Workers, so both
-   secret stores are empty.
+1. **Bootstrap the API Worker.** The zone account has never held these Workers,
+   so `ck-api` does not exist there yet — and `secret bulk` cannot attach to a
+   Worker that does not exist while `deploy` refuses to create one with
+   `secrets.required` unmet. `secrets:bootstrap` breaks that cycle by sending
+   the secrets up with the version.
 
    ```bash
-   npm run secrets:push                    # → ck-api,         conversekit-prod
-   npm run secrets:push -- --env staging   # → ck-api-staging, conversekit-staging
+   npm run secrets:bootstrap                    # creates ck-api,  conversekit-prod
+   npm run secrets:bootstrap -- --env staging   # done — ck-api-staging is live
    ```
 
-   `secrets.required` makes a deploy *fail* on a missing secret rather than
-   shipping a Worker that 502s, so this comes first.
+   Use `secrets:push` for every rotation after this; the Worker exists by then.
 
 2. **Deploy.** Creates all four Workers on the zone account and attaches the
    four Custom Domains, writing the DNS records itself.

@@ -25,7 +25,8 @@
  *     stdin, so there is no secrets.json left in the working tree for
  *     the next `git add -A` to find.
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
@@ -54,7 +55,8 @@ const NEVER = {
   CLOUDFLARE_API_TOKEN: 'deploys Workers — a GitHub Actions secret, not a Worker secret',
 };
 
-const die = (msg) => { console.error(`\n${msg}\n`); process.exit(1); };
+const LF = String.fromCharCode(10);
+const die = (msg) => { console.error(LF + msg + LF); process.exit(1); };
 
 function parseEnvFile(path) {
   const out = {};
@@ -86,15 +88,35 @@ const dryRun = args.includes('--dry-run');
 const envIdx = args.indexOf('--env');
 const env = envIdx === -1 ? null : args[envIdx + 1];
 
-if (!['push', 'list'].includes(command)) die(`Unknown command '${command}'. Use: push | list`);
+if (!['push', 'list', 'bootstrap'].includes(command)) die(`Unknown command '${command}'. Use: push | bootstrap | list`);
 if (envIdx !== -1 && !env) die('--env needs a value, e.g. --env staging');
 
 const worker = env ? `ck-api-${env}` : 'ck-api';
-const wrangler = (extra, input) => spawnSync(
-  process.platform === 'win32' ? 'npx.cmd' : 'npx',
-  ['wrangler', ...extra, '--config', CONFIG, ...(env ? ['--env', env] : [])],
-  { input, encoding: 'utf8', stdio: input === undefined ? 'inherit' : ['pipe', 'inherit', 'inherit'] },
-);
+
+/**
+ * Run the lockfile's wrangler through node directly rather than via
+ * `npx`. On Windows `npx` is `npx.cmd`, and since Node 20.12 spawnSync
+ * refuses to launch a .cmd without `shell: true` — it returns
+ * `error: EINVAL` with a null status. Going straight to the .js entry
+ * point puts no shell in the path at all, and pins the same wrangler the
+ * artifact was built with.
+ */
+const WRANGLER = join(ROOT, 'node_modules', 'wrangler', 'bin', 'wrangler.js');
+
+function wrangler(extra, input) {
+  const r = spawnSync(
+    process.execPath,
+    [WRANGLER, ...extra, '--config', CONFIG, ...(env ? ['--env', env] : [])],
+    { input, encoding: 'utf8', stdio: input === undefined ? 'inherit' : ['pipe', 'inherit', 'inherit'] },
+  );
+  // A launch failure leaves status null. Checking only the status — as
+  // this did — turned that into a silent exit(1) AFTER the script had
+  // printed the list of secrets it was about to push, which reads
+  // exactly like success. The deploy was then the thing that discovered
+  // nothing had been uploaded.
+  if (r.error) die(`Could not run wrangler (${r.error.code || r.error.message}).` + LF + LF + `  tried: ${WRANGLER}`);
+  return r;
+}
 
 if (command === 'list') {
   const r = wrangler(['secret', 'list']);
@@ -156,7 +178,8 @@ Create a second Supabase project, apply the migrations to it
 
 const payload = Object.fromEntries(ALLOWED.map((k) => [k, parsed[k]]));
 
-console.log(`\n  ${relative(ROOT, file)}  →  ${worker}\n`);
+console.log(LF + `  ${relative(ROOT, file)}  →  ${worker}` +
+            (command === 'bootstrap' ? '   (first deploy)' : '') + LF);
 for (const k of ALLOWED) console.log(`  push    ${k}`);
 for (const k of ignored) console.log(`  skip    ${k}  (not in secrets.required)`);
 
@@ -166,6 +189,35 @@ if (dryRun) {
 }
 
 // Over stdin, so no file of secrets is ever written to the working tree.
+if (command === 'bootstrap') {
+  // First deploy of a Worker that does not exist yet. `secret bulk`
+  // cannot help — it needs a Worker to attach to — and `deploy` refuses
+  // because secrets.required is unmet. `--secrets-file` breaks the
+  // cycle: the secrets go up WITH the version, so the Worker is created
+  // and satisfied in one operation.
+  //
+  // A file on disk is the one thing this script otherwise refuses to
+  // produce, so it goes to the OS temp directory rather than the working
+  // tree, and is removed whether or not the deploy succeeds.
+  const dir = mkdtempSync(join(tmpdir(), 'ck-secrets-'));
+  const path = join(dir, 'secrets.json');
+  let status;
+  try {
+    writeFileSync(path, JSON.stringify(payload), { mode: 0o600 });
+    status = wrangler(['deploy', '--secrets-file', path]).status;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  if (status !== 0) die(`wrangler exited ${status}.`);
+  console.log(LF + `  ${worker} created with ${ALLOWED.length} secrets.` + LF);
+  process.exit(0);
+}
+
 const r = wrangler(['secret', 'bulk'], JSON.stringify(payload));
-if (r.status !== 0) process.exit(r.status ?? 1);
+if (r.status !== 0) {
+  die(`wrangler exited ${r.status} — nothing was uploaded.` + LF + LF +
+      `If it said the Worker was not found, this is its first deploy:` + LF +
+      `  npm run secrets:bootstrap${env ? ` -- --env ${env}` : ''}` + LF +
+      `creates it and uploads the secrets in one step.`);
+}
 console.log(`\n  ${ALLOWED.length} secrets on ${worker}.\n`);

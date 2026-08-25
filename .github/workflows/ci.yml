@@ -191,4 +191,4 @@ jobs:
         run: |
           npx wrangler deploy \
             --config "apps/${{ matrix.app }}/wrangler.jsonc" \
-            ${{ github.ref_type == 'tag' && '' || '--env staging' }}
+            ${{ github.ref_type == 'tag' && '--env=' || '--env staging' }}

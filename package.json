@@ -37,6 +37,7 @@
     "check:motion": "node scripts/build-assets.mjs site && node scripts/check-motion.mjs",
     "check:links": "node scripts/check-links.mjs",
     "secrets:push": "node scripts/secrets.mjs push",
+    "secrets:bootstrap": "node scripts/secrets.mjs bootstrap",
     "secrets:list": "node scripts/secrets.mjs list",
     "db:status": "node scripts/migrate.mjs status",
     "db:migrate": "node scripts/migrate.mjs up",
