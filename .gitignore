@@ -1,26 +1,48 @@
 node_modules/
-dist/
 .wrangler/
-.dev.vars
+
+# Secrets. Two files, two audiences, and the split is the point:
+#
+#   apps/api/.dev.vars   runtime secrets for the ck-api Worker. Beside
+#                        wrangler.jsonc because that is where `wrangler
+#                        dev` looks, and everything in it is uploaded to
+#                        the edge by `npm run secrets:push`.
+#   .env.tools           credentials for local tooling. Read only by
+#                        scripts/migrate.mjs, uploaded nowhere.
+#
+# `.dev.vars*` also covers the per-environment .dev.vars.staging that
+# wrangler loads for `--env staging`.
+.dev.vars*
+.env.tools
 *.env
+
+# ...except the templates, which are the documentation.
+!*.example
+
+# Build output. Every one of these is produced by `npm run build` from
+# tracked sources, and CI builds from a clean checkout — so a committed
+# copy can only ever be a stale copy that outranks the real one.
+dist/
+apps/*/dist/
 
 # tsc emits these next to their sources if it is ever run without
 # --noEmit; wrangler builds from the .ts, so they are always litter.
-src/**/*.js
+apps/api/src/**/*.js
 *.tsbuildinfo
 
-# Scratch harnesses. Keeps them out of git; the deploy itself is guarded
-# by the predeploy:pages script, because `wrangler pages deploy public`
-# uploads the whole directory regardless of what git ignores — an
-# uncommitted debug page reached production once that way.
-public/__*
+# Scratch harnesses. scripts/build-assets.mjs also refuses to copy any
+# `__*` file into a dist/, so one of these cannot reach a deploy even if
+# git is somehow persuaded to track it — see the note there for the time
+# a screenshot rig with seeded fake messages was served from the site
+# root.
+apps/*/assets/__*
 
-# Vite local overrides (dashboard/.env.local). The `*.env` rule above
+# Vite local overrides (apps/app/.env.local). The `*.env` rule above
 # does not match these — they end in .local, not .env.
 .env.local
 .env.*.local
 
-# The screenshot harness's build output (dashboard/vite.shot.config.ts).
-# Deliberately outside public/, so `wrangler pages deploy public` cannot
-# reach it whatever git thinks.
-dashboard/.shots-build/
+# The screenshot harness's build output (apps/app/vite.shot.config.ts).
+# Deliberately outside any assets/ directory, so no build step can
+# sweep it into a deploy whatever git thinks.
+apps/app/.shots-build/

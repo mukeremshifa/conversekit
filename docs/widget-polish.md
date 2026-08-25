@@ -4,7 +4,7 @@ Widget 0.10.0 closed the profile-card gap, the HTTP-status bugs, and the
 dark-mode literals. **Widget 0.11.0 shipped everything this document used to
 list as remaining, with two exceptions recorded at the bottom.**
 
-Everything below is in `public/widget.js` unless a section says otherwise. Line
+Everything below is in `apps/cdn/assets/widget.js` unless a section says otherwise. Line
 numbers move; the anchors are function and selector names.
 
 ---
@@ -110,7 +110,7 @@ What the move actually required, beyond the selectors:
 - **`data-api-base`** is read off the script tag with the old constant as the
   fallback, and validated as an https **origin** — no path, query, or fragment.
   It becomes the prefix of every URL this file fetches, so it is refused rather
-  than trimmed into shape. `dashboard/src/screens/Install.tsx` emits it only
+  than trimmed into shape. `apps/app/src/screens/Install.tsx` emits it only
   when the dashboard is pointed somewhere other than that default; see the
   remaining work below for why.
 - **`visualViewport`** is tracked while the panel is open, and the wrapper's
@@ -150,8 +150,8 @@ is the only hostname currently serving the API, and repointing the constant
 would break every widget already installed.
 
 The order is: add the custom domain to `wrangler.toml`, deploy, confirm it
-answers, *then* change `DEFAULT_API_BASE` in `public/widget.js` and
-`DEFAULT_API` in `dashboard/src/lib/config.ts` in the same commit. Until then
+answers, *then* change `DEFAULT_API_BASE` in `apps/cdn/assets/widget.js` and
+`DEFAULT_API` in `apps/app/src/lib/config.ts` in the same commit. Until then
 the `data-api-base` override is the whole of the self-hosting story, which is
 the half that actually needed the code.
 

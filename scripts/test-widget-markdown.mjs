@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const src = readFileSync(join(ROOT, 'public/widget.js'), 'utf8');
+const src = readFileSync(join(ROOT, 'apps/cdn/assets/widget.js'), 'utf8');
 
 // Lift the pure renderer functions out of the IIFE — they have no DOM
 // dependencies, so they can be evaluated standalone.

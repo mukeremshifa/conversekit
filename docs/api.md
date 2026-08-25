@@ -36,6 +36,13 @@ in sync, and it would freeze today's defaults into every bot.
 
 `logoUrl` is a URL this Worker serves, never the R2 object key.
 
+A top-level **`branding`** boolean says whether the widget shows the "Powered by
+ConverseKit" line. It is resolved from the organization's plan by
+[`entitlements.ts`](../apps/api/src/entitlements.ts), and it is a **field, not a
+second widget build** — one artifact on the CDN is what keeps the test coverage
+of that file meaning anything. A widget older than the field keeps showing the
+line, which is the safe direction for the default to fail in.
+
 A `profile` object carries the business facts the widget can render as real
 affordances — a `tel:` link, a map, a booking button — rather than as a URL the
 model retypes and sometimes gets a character wrong. Same rule as `widget`: only
@@ -186,7 +193,7 @@ what came back and an inspector that omitted them would be showing a result it
 could not explain.
 
 **Two `rag_config` fields were added by
-[`013_hybrid.sql`](../supabase/013_hybrid.sql)**, and both default to the
+[`013_hybrid.sql`](../supabase/005_retrieval.sql)**, and both default to the
 behaviour that shipped before them:
 
 | Field | Values | Default | What it does |
@@ -327,14 +334,16 @@ swallowed, so neither can affect the chat response.
 ## Testing with curl
 
 ```bash
+API=https://api.conversekit.mukeremshifa.com   # or ck-api-staging.mukeemoha.workers.dev
+
 # Liveness
-curl https://conversekit.mukeremshifa.workers.dev/
+curl $API/
 
 # Bot health (replace with a real bot UUID)
-curl https://conversekit.mukeremshifa.workers.dev/v1/bots/YOUR_BOT_ID/health
+curl $API/v1/bots/YOUR_BOT_ID/health
 
 # Chat
-curl -X POST https://conversekit.mukeremshifa.workers.dev/v1/chat \
+curl -X POST $API/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"botId":"YOUR_BOT_ID","message":"What services do you offer?","sessionId":"test-001"}'
 ```

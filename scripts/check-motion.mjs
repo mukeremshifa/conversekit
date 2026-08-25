@@ -26,7 +26,9 @@ import fs from 'fs';
 import path from 'path';
 import puppeteer from 'puppeteer-core';
 
-const ROOT = 'public';
+// The BUILT landing page: the source holds `__CK_*__` tokens rather
+// than hostnames, so `npm run build:assets -- site` has to have run.
+const ROOT = 'apps/site/dist';
 const PORT = 8799;
 
 const CHROME_CANDIDATES = [
@@ -54,6 +56,11 @@ const TYPES = {
   '.woff2': 'font/woff2', '.webp': 'image/webp', '.avif': 'image/avif', '.png': 'image/png',
   '.ico': 'image/x-icon', '.json': 'application/json', '.txt': 'text/plain',
 };
+if (!fs.existsSync(path.join(ROOT, 'index.html'))) {
+  console.error(`No landing page at ${ROOT}/index.html — run \`npm run build:assets -- site\` first.`);
+  process.exit(1);
+}
+
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
   if (p.endsWith('/')) p += 'index.html';

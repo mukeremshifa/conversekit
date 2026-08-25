@@ -37,7 +37,7 @@ end of its reply:
 [[LEAD:{"name":"…","email":"…","phone":"…","inquiry":"…"}]]
 ```
 
-[`src/leads.ts`](../src/leads.ts) strips this marker from the visible reply (the
+[`apps/api/src/leads.ts`](../apps/api/src/leads.ts) strips this marker from the visible reply (the
 visitor never sees it) and, if it contains at least a name and a valid email,
 saves a row to the `leads` table. Leads show up in the admin dashboard's **Leads**
 tab.
@@ -80,7 +80,7 @@ window here would force a privacy rule onto data that has no privacy exposure,
 and throw away the platform's own billing history four times a year for nothing.
 
 `prune_usage_log(p_days integer default 400)` in
-[`017_usage.sql`](../supabase/017_usage.sql) clamps into **`[30, 800]`** inside
+[`017_usage.sql`](../supabase/006_usage.sql) clamps into **`[30, 800]`** inside
 its own body, on exactly the reasoning below — wider bounds than
 `prune_retrieval_log`, same placement and the same reason for it. It runs on its
 **own cron expression** (`41 3 * * *`), with its own branch in the scheduled
@@ -106,8 +106,8 @@ that already exists for the same turn.
 ### Retention is enforced in the database, not the Worker
 
 `prune_retrieval_log(p_days integer default 90)` is a `security definer`
-function in [`012_retrieval.sql`](../supabase/012_retrieval.sql). A Cron Trigger
-(`17 3 * * *`, see [`wrangler.toml`](../wrangler.toml)) calls it once a day with
+function in [`012_retrieval.sql`](../supabase/005_retrieval.sql). A Cron Trigger
+(`17 3 * * *`, see [`wrangler.toml`](../apps/api/wrangler.jsonc)) calls it once a day with
 90 and logs the number of rows removed.
 
 **The function clamps `p_days` into `[7, 365]` inside its own body**, and that

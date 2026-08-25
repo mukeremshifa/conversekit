@@ -55,10 +55,10 @@ const OUT = mkdtempSync(join(tmpdir(), 'ck-profile-'));
 
 await build({
   entryPoints: [
-    join(ROOT, 'src/profile.ts'),
-    join(ROOT, 'src/prompt.ts'),
-    join(ROOT, 'src/config.ts'),
-    join(ROOT, 'src/rag/route.ts'),
+    join(ROOT, 'apps/api/src/profile.ts'),
+    join(ROOT, 'apps/api/src/prompt.ts'),
+    join(ROOT, 'apps/api/src/config.ts'),
+    join(ROOT, 'apps/api/src/rag/route.ts'),
   ],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });

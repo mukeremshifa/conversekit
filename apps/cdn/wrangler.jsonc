@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  // widget.js, its fonts, and the brand assets. Assets only: this host
+  // serves bytes and knows nothing about who is asking — no auth, no
+  // tenancy, no tier. The moment it needs a `main` to answer a question
+  // about the caller, it has stopped being a CDN.
+  //
+  // Cache and CORS rules live in assets/_headers, which Workers static
+  // assets supports natively.
+  "name": "ck-cdn",
+
+  // The account holding the mukeremshifa.com zone. Stated rather than
+  // left to wrangler's account picker, because the OAuth token now
+  // reaches two accounts and a Worker route cannot cross them: deploying
+  // to the other one is how the custom domains failed to attach the
+  // first time. Not a secret — account ids are identifiers, not
+  // credentials.
+  "account_id": "caaf93a371272a19ac9afc1a78d575e3",
+  "compatibility_date": "2026-08-23",
+
+  "workers_dev": false,
+  "routes": [
+    {
+      // Custom Domain, not a DNS record — see the TLS note in
+      // apps/api/wrangler.jsonc.
+      "pattern": "cdn.conversekit.mukeremshifa.com",
+      "custom_domain": true
+    }
+  ],
+
+  "assets": {
+    // Built by scripts/build-assets.mjs: token substitution, then one
+    // widget build written to three paths with three cache policies.
+    "directory": "./dist"
+    // No not_found_handling. A miss here is a miss — a 404 for an asset
+    // that does not exist is the correct answer, and both alternatives
+    // (an index.html, a 404 page) would hand a <script src> something
+    // that parses as JavaScript badly.
+  },
+
+  "observability": { "enabled": true },
+
+  "env": {
+    "staging": {
+      "workers_dev": true,
+      "routes": []
+    }
+  }
+}

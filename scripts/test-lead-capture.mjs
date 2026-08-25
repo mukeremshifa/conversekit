@@ -34,10 +34,10 @@ const OUT = mkdtempSync(join(tmpdir(), 'ck-leads-'));
 
 await build({
   entryPoints: [
-    join(ROOT, 'src/config.ts'),
-    join(ROOT, 'src/prompt.ts'),
-    join(ROOT, 'src/leads.ts'),
-    join(ROOT, 'src/notify.ts'),
+    join(ROOT, 'apps/api/src/config.ts'),
+    join(ROOT, 'apps/api/src/prompt.ts'),
+    join(ROOT, 'apps/api/src/leads.ts'),
+    join(ROOT, 'apps/api/src/notify.ts'),
   ],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });

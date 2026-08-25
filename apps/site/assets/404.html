@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Not found · ConverseKit</title>
+    <meta name="robots" content="noindex" />
+
+    <!-- Runs before the stylesheet for the same reason it does on the
+         landing page: /admin used to write ck_theme and a visitor who
+         chose dark must not get a white flash on the way to a 404. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('ck_theme');
+          if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+        } catch (e) { /* storage unavailable - follow the OS */ }
+      })();
+    </script>
+
+    <meta name="theme-color" content="#FCFCFD" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0A0A0C" media="(prefers-color-scheme: dark)" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="/brand/favicon.ico" sizes="any" />
+    <link rel="icon" href="/brand/icon.svg" type="image/svg+xml" />
+
+    <style>
+      :root {
+        --bg: #fcfcfd;
+        --fg: #0a0a0c;
+        --muted: #5b5b66;
+        --gold: #eeba2b;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          --bg: #0a0a0c;
+          --fg: #f7f7f8;
+          --muted: #a1a1ac;
+        }
+      }
+      :root[data-theme='dark'] {
+        --bg: #0a0a0c;
+        --fg: #f7f7f8;
+        --muted: #a1a1ac;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 2rem;
+        background: var(--bg);
+        color: var(--fg);
+        font: 400 16px/1.6 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        text-align: center;
+      }
+      .code { font-size: 3.5rem; font-weight: 700; letter-spacing: -0.03em; margin: 0 0 0.25rem; }
+      .dot { color: var(--gold); }
+      h1 { font-size: 1.125rem; font-weight: 600; margin: 0 0 0.5rem; }
+      p { color: var(--muted); margin: 0 0 1.75rem; }
+      a {
+        display: inline-block;
+        padding: 0.6rem 1.1rem;
+        border-radius: 0.6rem;
+        background: var(--fg);
+        color: var(--bg);
+        font-weight: 600;
+        text-decoration: none;
+      }
+      a:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p class="code">404<span class="dot">.</span></p>
+      <h1>There is nothing at this address.</h1>
+      <p>The page may have moved, or the link may have been mistyped.</p>
+      <a href="/">Back to ConverseKit</a>
+    </main>
+  </body>
+</html>

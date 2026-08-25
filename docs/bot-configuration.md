@@ -15,13 +15,13 @@ the safe order: the schema is ahead of the code, never behind it.
 
 | Phase | Where |
 |---|---|
-| 0. Rename | `dashboard/src/screens/BotConfiguration.tsx`, `App.tsx` (`#settings` still resolves) |
-| 1. Schema + validators | `supabase/009_bot_configuration.sql`, `src/config.ts`, `src/types.ts` |
-| 2. Logo pipeline | `src/logo.ts`, three routes in `src/index.ts`, `setBotLogoKey` in `src/supabase.ts` |
-| 3. Widget pass | `public/widget.js` v0.9.0 — position, logo, greeting + delay, theme, typing |
+| 0. Rename | `apps/app/src/screens/BotConfiguration.tsx`, `App.tsx` (`#settings` still resolves) |
+| 1. Schema + validators | `supabase/009_bot_configuration.sql`, `apps/api/src/config.ts`, `apps/api/src/types.ts` |
+| 2. Logo pipeline | `apps/api/src/logo.ts`, three routes in `apps/api/src/index.ts`, `setBotLogoKey` in `apps/api/src/supabase.ts` |
+| 3. Widget pass | `apps/cdn/assets/widget.js` v0.9.0 — position, logo, greeting + delay, theme, typing |
 | 4. Dashboard editors | `BotConfiguration.tsx` — swatches, suggestion rows, origin rows |
 | 5. Live preview | **built, then removed** at the author's request. See the note under Phase 5. |
-| 6. Behaviour | `preflight()` in `src/index.ts`, `src/prompt.ts`, `countTrailingMisses` |
+| 6. Behaviour | `preflight()` in `apps/api/src/index.ts`, `apps/api/src/prompt.ts`, `countTrailingMisses` |
 | 7. Integrations | not started, and still a separate screen |
 
 Verified: 60 new unit assertions across `test:config` and `test:widget-theme`,
@@ -65,27 +65,27 @@ Read these before touching anything — three of them contradict assumptions tha
 are easy to make from the outside.
 
 **1. The widget has exactly one config channel: `GET /v1/bots/:id/health`.**
-[src/index.ts:149](../src/index.ts#L149) returns a *fixed field list*, and the
+[apps/api/src/index.ts:149](../apps/api/src/index.ts#L149) returns a *fixed field list*, and the
 comment there says why: it is the only thing keeping knowledge-base text and
 provider config from leaking to an anonymous caller. Every new widget-visible
 setting is an explicit line in that response. Do not switch it to spreading the
 bot row.
 
 **2. Widget copies go stale, and tenants may self-host them.**
-`ASSET_BASE` in [public/widget.js](../public/widget.js) is read from the script
+`ASSET_BASE` in [apps/cdn/assets/widget.js](../apps/cdn/assets/widget.js) is read from the script
 tag's own `src` precisely so a tenant can serve their own copy. So every new
 config field must be *additive and ignorable*: absent field → today's exact
 behaviour. The existing `if (d.name) config.name = d.name` pattern in
 `fetchConfig` is the model to follow.
 
 **3. The dashboard's build output is committed to git.**
-`public/admin/assets/*` are tracked files (see commit `63289a1 chore(build):
+`apps/app/dist/assets/*` are tracked files (see commit `63289a1 chore(build):
 rebuild dashboard assets`). Any screen change is not shipped until
-`npm run build:dashboard` has run and the rebuilt assets are committed. This is
+`npm run build:app` has run. This is
 the single easiest step to forget in every phase below.
 
 **4. The chat hot path is one function: `preflight()`.**
-[src/index.ts:192](../src/index.ts#L192) is shared by `/v1/chat` and
+[apps/api/src/index.ts:192](../apps/api/src/index.ts#L192) is shared by `/v1/chat` and
 `/v1/chat/stream`. Everything in Phase 6 lands there, which makes Phase 6 the
 only phase that can fail a visitor's turn. It already has the right instinct —
 retrieval failure is caught and downgraded to "answer without context" — and
@@ -110,10 +110,10 @@ separate columns.
 precedent, and the integrations section in §7 will want another five to ten
 fields. Ten columns now means a migration per setting later. The cost is that
 validation moves from Postgres to the Worker — which is where the origin and
-suggestion validators already live ([src/origin.ts](../src/origin.ts)), so
+suggestion validators already live ([apps/api/src/origin.ts](../apps/api/src/origin.ts)), so
 there is a place to put them.
 
-**Watch out:** `mergeConfigs()` in [src/supabase.ts](../src/supabase.ts)
+**Watch out:** `mergeConfigs()` in [apps/api/src/supabase.ts](../apps/api/src/supabase.ts)
 deep-merges `provider_config`/`embedding_config` because of the write-only API
 key. These two columns have no secret in them and the form always posts the
 whole object, so they use plain replace semantics — do **not** add them to that
@@ -146,7 +146,7 @@ Three constraints that come with it:
 - **512 KB cap**, sniffed the same way `detectFileType` sniffs uploads —
   filename and content-type are both tenant-supplied.
 - **Keep it out of `documents`.** The org storage cap in
-  [008_files.sql](../supabase/008_files.sql) is enforced by a trigger over that
+  [008_files.sql](../supabase/004_knowledge.sql) is enforced by a trigger over that
   table. A logo is not a knowledge source; give it its own key prefix and let
   the 512 KB cap be its whole quota story.
 
@@ -155,7 +155,7 @@ Three constraints that come with it:
 The working direction suggests counting how often the bot's fallback phrasing
 ("I don't know", "I'm not sure") fires. That breaks on contact with the
 existing prompt, which says *"Reply in the same language the visitor uses"*
-([src/prompt.ts](../src/prompt.ts)) — an English regex over a Turkish reply
+([apps/api/src/prompt.ts](../apps/api/src/prompt.ts)) — an English regex over a Turkish reply
 counts zero every time.
 
 **Recommendation, in preference order:**
@@ -166,7 +166,7 @@ counts zero every time.
    "I could not answer that". Free — the signal is already computed and
    currently thrown away.
 2. **A `[[NOANSWER]]` marker**, if #1 proves too coarse. The machinery exists:
-   [src/lead-stream.ts](../src/lead-stream.ts) already holds back a `[[LEAD:`
+   [apps/api/src/lead-stream.ts](../apps/api/src/lead-stream.ts) already holds back a `[[LEAD:`
    marker mid-stream so it cannot flash on screen. A second marker is a small
    generalisation of a filter that is already written and tested.
 
@@ -185,7 +185,7 @@ the column unless the feature is on.
 `screens/BotSettings.tsx` → `screens/BotConfiguration.tsx`, nav label and
 screen title to "Bot Configuration", hash route `settings` → `configuration`.
 `#settings` is a bookmarkable URL today, so `useHashRoute` in
-[dashboard/src/App.tsx](../dashboard/src/App.tsx) gets a one-line alias map
+[apps/app/src/App.tsx](../apps/app/src/App.tsx) gets a one-line alias map
 rather than a broken link.
 
 ---
@@ -202,7 +202,7 @@ times, and there is one version bump and one Pages deploy instead of four.
 
 | | |
 |---|---|
-| **Files** | `dashboard/src/screens/BotSettings.tsx` → `BotConfiguration.tsx`, `dashboard/src/App.tsx` |
+| **Files** | `apps/app/src/screens/BotSettings.tsx` → `BotConfiguration.tsx`, `apps/app/src/App.tsx` |
 | **Steps** | Rename with `git mv` so history follows. Component `BotSettings` → `BotConfiguration`. NAV label → "Bot Configuration", id → `configuration`. `Header title` → "Bot Configuration". Alias `settings` → `configuration` in `useHashRoute`. Update `onNewBot: () => navigate('configuration')`. |
 | **Verify** | `npm run type-check`, then `#settings` and `#configuration` both land on the screen. |
 | **Ship gate** | Rebuild dashboard assets and commit (fact 3). |
@@ -216,9 +216,9 @@ Nothing user-visible. This is the spine every later phase hangs off.
 
 | | |
 |---|---|
-| **Files** | `supabase/009_bot_configuration.sql` (new), `src/types.ts`, `src/config.ts` (new, validators), `src/index.ts`, `src/supabase.ts`, `dashboard/src/lib/api.ts` |
-| **Steps** | 1. Migration adding `widget_config jsonb` and `behavior_config jsonb`, both nullable, no default — additive and re-runnable, same shape as 004/005/006. 2. `WidgetConfig` / `BehaviorConfig` interfaces in `types.ts`, both fully optional, plus the two fields on `BotUpdatePayload`. 3. `validateWidgetConfig` / `validateBehaviorConfig` in a new `src/config.ts`, modelled on `validateSuggestions` — return `{ ok, value }` or `{ ok, error }`, clamp numbers, reject unknown keys. 4. Wire both into `PUT /v1/admin/bots/:id` beside the existing origin and suggestion validators. 5. Extend the `/health` response with the widget-visible subset **only**. |
-| **Tests** | `scripts/test-config-units.mjs`, built the way `test-stats-units.mjs` builds `src/stats.ts` with esbuild and asserts over a pure module. Add to the `test` script. Cover: clamping, unknown-key rejection, and that `null`/`undefined` round-trips to "widget defaults". |
+| **Files** | `supabase/009_bot_configuration.sql` (new), `apps/api/src/types.ts`, `apps/api/src/config.ts` (new, validators), `apps/api/src/index.ts`, `apps/api/src/supabase.ts`, `apps/app/src/lib/api.ts` |
+| **Steps** | 1. Migration adding `widget_config jsonb` and `behavior_config jsonb`, both nullable, no default — additive and re-runnable, same shape as 004/005/006. 2. `WidgetConfig` / `BehaviorConfig` interfaces in `types.ts`, both fully optional, plus the two fields on `BotUpdatePayload`. 3. `validateWidgetConfig` / `validateBehaviorConfig` in a new `apps/api/src/config.ts`, modelled on `validateSuggestions` — return `{ ok, value }` or `{ ok, error }`, clamp numbers, reject unknown keys. 4. Wire both into `PUT /v1/admin/bots/:id` beside the existing origin and suggestion validators. 5. Extend the `/health` response with the widget-visible subset **only**. |
+| **Tests** | `scripts/test-config-units.mjs`, built the way `test-stats-units.mjs` builds `apps/api/src/stats.ts` with esbuild and asserts over a pure module. Add to the `test` script. Cover: clamping, unknown-key rejection, and that `null`/`undefined` round-trips to "widget defaults". |
 | **Risk** | PostgREST 400s on a PATCH naming a column that does not exist, so a Worker deployed ahead of `009` breaks *saving*. Migration first, always — the sequencing note in [operations.md](operations.md) applies. Reads are safe: `select=*` just omits the column and every field is optional. |
 
 **Field list** (validators enforce these bounds):
@@ -240,8 +240,8 @@ Nothing user-visible. This is the spine every later phase hangs off.
 
 | | |
 |---|---|
-| **Files** | `src/index.ts` (two routes), `src/logo.ts` (new), `dashboard/src/screens/BotConfiguration.tsx` |
-| **Steps** | 1. `POST /v1/admin/bots/:id/logo` — multipart, same `c.req.raw.formData()` shape as the document upload route ([src/index.ts:729](../src/index.ts#L729)), sniffed, 512 KB cap, key `logos/{orgId}/{botId}/{contentHash}.{ext}`, writes `widget_config.logo_key`, deletes the previous object. 2. `DELETE` on the same path. 3. `GET /v1/bots/:id/logo` — **public**, no auth, streams from R2 with the immutable cache headers, 404s when unset. 4. Dashboard: a small drop zone reusing the upload/progress plumbing already in `lib/api.ts` (`sendFile` reports progress; `uploadDocument` is the template). |
+| **Files** | `apps/api/src/index.ts` (two routes), `apps/api/src/logo.ts` (new), `apps/app/src/screens/BotConfiguration.tsx` |
+| **Steps** | 1. `POST /v1/admin/bots/:id/logo` — multipart, same `c.req.raw.formData()` shape as the document upload route ([apps/api/src/index.ts:729](../apps/api/src/index.ts#L729)), sniffed, 512 KB cap, key `logos/{orgId}/{botId}/{contentHash}.{ext}`, writes `widget_config.logo_key`, deletes the previous object. 2. `DELETE` on the same path. 3. `GET /v1/bots/:id/logo` — **public**, no auth, streams from R2 with the immutable cache headers, 404s when unset. 4. Dashboard: a small drop zone reusing the upload/progress plumbing already in `lib/api.ts` (`sendFile` reports progress; `uploadDocument` is the template). |
 | **Tests** | Sniffing and cap logic as unit assertions in `test-config-units.mjs`. Route behaviour against `wrangler dev` with R2 local — the pattern Phase 2B used. |
 | **Risk** | Bytes are stored before the DB write in the document route, with orphan cleanup on failure; mirror that ordering exactly. Without a `DOCS` binding this must 501 like the document route, not throw. |
 
@@ -252,10 +252,10 @@ typing toggle. Bump `WIDGET_VERSION`, one CHANGELOG entry, one Pages deploy.
 
 | | |
 |---|---|
-| **Files** | `public/widget.js`, `src/index.ts` (`/health` fields, if not already done in Phase 1) |
-| **Steps** | 1. `fetchConfig` learns the new fields, each behind an existence check. 2. **Position** — `#aicb-root` is `bottom:24px;right:24px` at [widget.js:163](../public/widget.js#L163); flipping also needs `#aicb-panel{right:0}` → `left:0`, its `transform-origin:bottom right`, `#aicb-badge{right:-1px}`, and the `#aicb-panel{right:-16px}` mobile rule. Do it with a `ck-left` class on the root and a paired CSS block — not by patching four inline styles. 3. **Logo** — replaces `ICON_BOT` in `#aicb-avatar` and the bubble icon; keep the SVG as the fallback when the image 404s. 4. **Greeting** — the hardcoded string in `init()` at [widget.js:604](../public/widget.js#L604) becomes the configured greeting or today's string; `setTimeout` before it, with the chips rendering after. 5. **Theme** — add a dark `--ck-*` block toggled by a `ck-dark` class; `auto` reads `prefers-color-scheme` **and** keeps listening, the way `lib/theme.ts` does. 6. **Typing** — one conditional around `classList.add('visible')`. |
+| **Files** | `apps/cdn/assets/widget.js`, `apps/api/src/index.ts` (`/health` fields, if not already done in Phase 1) |
+| **Steps** | 1. `fetchConfig` learns the new fields, each behind an existence check. 2. **Position** — `#aicb-root` is `bottom:24px;right:24px` at [widget.js:163](../apps/cdn/assets/widget.js#L163); flipping also needs `#aicb-panel{right:0}` → `left:0`, its `transform-origin:bottom right`, `#aicb-badge{right:-1px}`, and the `#aicb-panel{right:-16px}` mobile rule. Do it with a `ck-left` class on the root and a paired CSS block — not by patching four inline styles. 3. **Logo** — replaces `ICON_BOT` in `#aicb-avatar` and the bubble icon; keep the SVG as the fallback when the image 404s. 4. **Greeting** — the hardcoded string in `init()` at [widget.js:604](../apps/cdn/assets/widget.js#L604) becomes the configured greeting or today's string; `setTimeout` before it, with the chips rendering after. 5. **Theme** — add a dark `--ck-*` block toggled by a `ck-dark` class; `auto` reads `prefers-color-scheme` **and** keeps listening, the way `lib/theme.ts` does. 6. **Typing** — one conditional around `classList.add('visible')`. |
 | **Tests** | Extend `scripts/test-widget-markdown.mjs`'s trick of lifting pure functions out of the IIFE: assert `inkVariant` against both surfaces, and assert the greeting falls back when unset. |
-| **Risk — read this one** | `inkVariant()` at [widget.js:140](../public/widget.js#L140) walks lightness *down* until it clears 4.5:1 **against white** (`ratio(luminance(candidate), 1)`). On a dark surface that is backwards — it will happily return near-black text on a near-black panel. Dark mode needs the mirrored search (lighten until it clears the dark surface's luminance), not a reused `inkVariant`. This is the one place in the widget where dark mode is more than a palette swap. |
+| **Risk — read this one** | `inkVariant()` at [widget.js:140](../apps/cdn/assets/widget.js#L140) walks lightness *down* until it clears 4.5:1 **against white** (`ratio(luminance(candidate), 1)`). On a dark surface that is backwards — it will happily return near-black text on a near-black panel. Dark mode needs the mirrored search (lighten until it clears the dark surface's luminance), not a reused `inkVariant`. This is the one place in the widget where dark mode is more than a palette swap. |
 
 ### Phase 4 — Dashboard editors · ~1 day
 
@@ -263,8 +263,8 @@ Pure UI. No schema, no widget, no Worker. Can run in parallel with Phase 3.
 
 | | |
 |---|---|
-| **Files** | `dashboard/src/screens/BotConfiguration.tsx`, possibly `components/ui/index.tsx` |
-| **Steps** | 1. **Colour** — swatch grid over the dashboard's own tokens (`--color-accent` `#EEBA2B`, `--color-chart-2` `#1D5FA8`, `--color-danger` `#B42318`, `--color-success` `#157347`, … from [index.css](../dashboard/src/index.css)) plus a "custom" swatch revealing today's hex input. Same `primary_color` string underneath. 2. **Suggestions** — one input row each, add/remove/reorder, live counter against the 6 × 80 limits `validateSuggestions` already enforces. 3. **Origins** — row-per-origin table; port `validateOrigins`' rules to inline per-row errors. The Worker stays the authority — client-side checks are for the message, not the gate. |
+| **Files** | `apps/app/src/screens/BotConfiguration.tsx`, possibly `components/ui/index.tsx` |
+| **Steps** | 1. **Colour** — swatch grid over the dashboard's own tokens (`--color-accent` `#EEBA2B`, `--color-chart-2` `#1D5FA8`, `--color-danger` `#B42318`, `--color-success` `#157347`, … from [index.css](../apps/app/src/index.css)) plus a "custom" swatch revealing today's hex input. Same `primary_color` string underneath. 2. **Suggestions** — one input row each, add/remove/reorder, live counter against the 6 × 80 limits `validateSuggestions` already enforces. 3. **Origins** — row-per-origin table; port `validateOrigins`' rules to inline per-row errors. The Worker stays the authority — client-side checks are for the message, not the gate. |
 | **Note** | Duplicating `validateOrigins`' logic in TypeScript is the pragmatic call here (the Worker's copy is 40 lines and stable). If it drifts twice, extract a shared module then, not now. |
 
 ### Phase 5 — Live preview · built, then removed
@@ -288,8 +288,8 @@ or an iframe that can only show what is already saved.
 Everything here is inside `preflight()`. Every one of these must degrade to
 today's behaviour on failure — none may fail a visitor's turn.
 
-**Files:** `src/index.ts`, `src/prompt.ts`, `src/rag/retrieve.ts`,
-`src/supabase.ts`, `public/widget.js`.
+**Files:** `apps/api/src/index.ts`, `apps/api/src/prompt.ts`, `apps/api/src/rag/retrieve.ts`,
+`apps/api/src/supabase.ts`, `apps/cdn/assets/widget.js`.
 
 **6a — Max conversation length.** Deterministic and cheap, but note the trap:
 `getSessionHistory` ends with `limit=20` **ascending**, so it returns the
@@ -311,7 +311,7 @@ substitute: replacing model output wholesale would break streaming and answer
 in the wrong language.
 
 **6c — Source citations.** `match_chunks` returns `document_id` but no title
-([005_rag.sql:147](../supabase/005_rag.sql#L147)). Rather than version the SQL
+([005_rag.sql:147](../supabase/004_knowledge.sql)). Rather than version the SQL
 function, do a second lookup on `documents` by the handful of ids retrieved —
 cheap, and no migration. Pass titles out through the `/v1/chat` JSON body and
 the SSE `done` event (both additive; an old widget ignores them), then render
@@ -354,9 +354,10 @@ Order is load-bearing — the middle two can be swapped, the ends cannot.
    column 400s on every save.
 2. **Worker** (`npm run deploy`) — `/health` must serve the fields before a
    widget asks for them.
-3. **Dashboard** (`npm run build:dashboard`, commit `public/admin/assets`).
-4. **Pages** (`npm run deploy:pages`) — ships the widget and the dashboard
-   together; `predeploy:pages` runs the scratch-file check first.
+3. **Dashboard** (`npm run deploy:app` — builds, then deploys `ck-app`).
+4. **Widget** (`npm run deploy:cdn`), if `widget.js` changed. The two are
+   separate Workers now, so a dashboard change no longer redeploys the script
+   running on customers' sites.
 
 Rolling back is per-layer: an older widget ignores fields it does not know, and
 an older dashboard simply does not send them. The migration is additive, so

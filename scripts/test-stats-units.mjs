@@ -18,7 +18,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = mkdtempSync(join(tmpdir(), 'ck-stats-'));
 
 await build({
-  entryPoints: [join(ROOT, 'src/stats.ts')],
+  entryPoints: [join(ROOT, 'apps/api/src/stats.ts')],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });
 const { buildStats, buildMissReport, dayKey } = await import(`file://${OUT}/stats.js`);

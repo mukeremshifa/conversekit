@@ -34,14 +34,14 @@ question that was actually asked.
 
 | Piece | Where |
 |---|---|
-| Documents, chunks, `match_chunks`, RLS | [supabase/005_rag.sql](../supabase/005_rag.sql) |
-| File sources, storage cap | [supabase/008_files.sql](../supabase/008_files.sql) |
-| FAQ items, chunk metadata, lexical channel, cutover flag | [supabase/011_knowledge.sql](../supabase/011_knowledge.sql) |
-| Retrieval log, drift stamp, re-index claim, title fold | [supabase/012_retrieval.sql](../supabase/012_retrieval.sql) |
-| Hybrid gate, `iterative_scan`, `bots.chunk_count` | [supabase/013_hybrid.sql](../supabase/013_hybrid.sql) |
-| Chunkers, extractor, ingest, retrieve | [src/rag/](../src/rag/) |
-| Upload, conversion, type sniffing | [src/rag/files.ts](../src/rag/files.ts) |
-| Prompt assembly and the caps | [src/prompt.ts](../src/prompt.ts), [src/config.ts](../src/config.ts) |
+| Documents, chunks, `match_chunks`, RLS | [supabase/005_rag.sql](../supabase/004_knowledge.sql) |
+| File sources, storage cap | [supabase/008_files.sql](../supabase/004_knowledge.sql) |
+| FAQ items, chunk metadata, lexical channel, cutover flag | [supabase/011_knowledge.sql](../supabase/004_knowledge.sql) |
+| Retrieval log, drift stamp, re-index claim, title fold | [supabase/012_retrieval.sql](../supabase/005_retrieval.sql) |
+| Hybrid gate, `iterative_scan`, `bots.chunk_count` | [supabase/013_hybrid.sql](../supabase/005_retrieval.sql) |
+| Chunkers, extractor, ingest, retrieve | [apps/api/src/rag/](../apps/api/src/rag/) |
+| Upload, conversion, type sniffing | [apps/api/src/rag/files.ts](../apps/api/src/rag/files.ts) |
+| Prompt assembly and the caps | [apps/api/src/prompt.ts](../apps/api/src/prompt.ts), [apps/api/src/config.ts](../apps/api/src/config.ts) |
 | Dashboard | one **Knowledge** screen: FAQ, Sources, Retrieval |
 
 ---
@@ -238,7 +238,7 @@ Per-bot, in `bots.rag_config`:
   "retrieval_mode": "fallback", "rerank": false }
 ```
 
-Caps enforced in [src/config.ts](../src/config.ts), with `CHECK … NOT VALID`
+Caps enforced in [apps/api/src/config.ts](../apps/api/src/config.ts), with `CHECK … NOT VALID`
 backstops in 011:
 
 | Field | Cap |
@@ -303,7 +303,7 @@ Retrieval tab as **"What would this retrieve?"**.
 the `DOCS` R2 bucket, and converts them with Workers AI's `toMarkdown()` — so
 there is no PDF parser in the Worker bundle. `.pdf` and `.docx`, 10 MB per file,
 100 MB per organization. Two things that are easy to get wrong and are guarded
-in [src/rag/files.ts](../src/rag/files.ts):
+in [apps/api/src/rag/files.ts](../apps/api/src/rag/files.ts):
 
 - **The converter validates nothing.** Handed a `.zip` it returns the bytes back
   as "markdown". The upload route is the only gate, so it checks the extension,

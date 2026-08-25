@@ -1,6 +1,6 @@
 # Demo bot — paste-ready knowledge base
 
-The landing page at `public/index.html` carries a live widget. It currently
+The landing page at `apps/site/assets/index.html` carries a live widget. It currently
 points at the Pearl Dental demo bot, which works but talks about dentistry on a
 page about ConverseKit.
 
@@ -13,14 +13,14 @@ This file exists so replacing it is copy-paste rather than a writing task.
    missed. The bot must allow the page's origin exactly:
 
    ```
-   https://conversekit-widget.pages.dev
+   https://conversekit.mukeremshifa.com
    ```
 
    No trailing slash and no path — the API compares origins exactly, scheme and
    port included, and rejects anything else with a 403.
 3. Set **primary color** to `#EEBA2B` so the widget matches the page.
 4. Paste the sections below into their homes. Since
-   [011](../supabase/011_knowledge.sql) those are three different places, and
+   [011](../supabase/004_knowledge.sql) those are three different places, and
    the split is the point — see [knowledge.md](knowledge.md):
    - **Business description**, **hours** and **contact** → Bot Configuration.
      Small, and always in the prompt, so the bot knows them whatever it is asked.
@@ -29,9 +29,9 @@ This file exists so replacing it is copy-paste rather than a writing task.
      indexed on its own.
    - **Services / features** → Knowledge → Sources, as a `text` source. It is
      prose, and prose is what the ordinary chunker is for.
-5. Copy the new bot's id into `public/index.html` — the single `data-bot-id`
+5. Copy the new bot's id into `apps/site/assets/index.html` — the single `data-bot-id`
    on the last script tag, which is commented as the line to change.
-6. Redeploy: `npm run deploy:pages`.
+6. Redeploy: `npm run deploy:cdn` for the widget, `npm run deploy:site` for the landing page.
 
 Optionally add this file itself as a **source** (type: text) under Knowledge →
 Sources, which gives the bot retrieval over its own documentation.

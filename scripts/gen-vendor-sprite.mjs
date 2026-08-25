@@ -4,7 +4,7 @@
 // The landing page has no build step, so nothing can resolve a bare npm
 // import for it the way the dashboard does. This reads the two icon
 // packages out of node_modules and writes an inline <symbol> block into
-// public/index.html between generated markers.
+// apps/site/assets/index.html between generated markers.
 //
 // Inline rather than an external sprite file on purpose: currentColor
 // does not reliably cross an external <use> boundary, and half the
@@ -23,7 +23,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const PAGE = 'public/index.html';
+const PAGE = 'apps/site/assets/index.html';
 const OPEN = '<!-- generated:sprite -->';
 const CLOSE = '<!-- /generated:sprite -->';
 
@@ -248,7 +248,7 @@ const unused = symbols
 
 if (process.argv.includes('--check')) {
   if (next !== html) {
-    console.error('\n  The sprite in public/index.html is stale.');
+    console.error('\n  The sprite in apps/site/assets/index.html is stale.');
     console.error('  Run `npm run gen:sprite` and commit the result.\n');
     process.exit(1);
   }

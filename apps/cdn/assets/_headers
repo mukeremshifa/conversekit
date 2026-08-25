@@ -1,0 +1,42 @@
+# Header rules for ck-cdn. Natively supported by Workers static assets.
+#
+# This host serves bytes and nothing else. It knows nothing about who is
+# asking — no auth, no tenancy, no tier. Keep it that way: the moment a
+# rule here depends on the caller, the CDN has become an application.
+
+# ── Fonts ─────────────────────────────────────────────────────────
+# The widget is injected into other people's sites, so every asset it
+# pulls is a cross-origin request. Fonts in particular are fetched in
+# CORS mode by the browser regardless of crossorigin= on the tag, and a
+# response without Access-Control-Allow-Origin is discarded silently —
+# the widget would just render in the fallback face on every customer
+# site while looking fine on ours.
+#
+# A placeholder rather than a literal /v1/, so the next major inherits
+# this the day it is created. Forgetting to add a rule for /v2/fonts/
+# would be that same silent failure, on a path nobody thinks to check.
+/:major/fonts/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=31536000, immutable
+
+# ── Widget ────────────────────────────────────────────────────────
+# One path. The major is in the URL because this string gets pasted into
+# other people's HTML and can never be changed afterwards — a breaking
+# change bumps WIDGET_MAJOR in config/origins.js and /v1/ keeps serving
+# the old build for everyone who already installed it.
+#
+# Ten minutes is short enough that a fix reaches every tenant the same
+# day, and long enough that a busy site is not revalidating on every
+# page view.
+/v1/widget.js
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=600, must-revalidate
+
+# ── Brand ─────────────────────────────────────────────────────────
+# Favicons, logos and the OG image. Referenced by absolute URL from
+# other people's link previews, so CORS-open and cached for a week —
+# these are not content-hashed, so a year would be too long to correct
+# a bad OG image.
+/brand/*
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=604800

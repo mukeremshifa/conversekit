@@ -10,20 +10,35 @@
  *   npm run db:status              what is applied, what is pending
  *   npm run db:migrate             apply everything pending
  *   npm run db:migrate -- --dry-run
- *   npm run db:baseline            record existing files as applied
- *                                  WITHOUT running them (first-time setup
- *                                  on a database that was migrated by hand)
+ *   npm run db:reset -- --yes      DESTROY the public schema and every
+ *                                  auth user, then apply every migration
+ *                                  from scratch
  *
- * Two transports, whichever credential you have. Both go in .dev.vars:
+ *   ... -- --env staging           run against the staging project
+ *                                  instead, whose SUPABASE_URL is read
+ *                                  from apps/api/.dev.vars.staging —
+ *                                  the same file wrangler and
+ *                                  secrets:push use for that
+ *                                  environment, so there is one answer
+ *                                  to "which database is staging".
  *
- *   SUPABASE_ACCESS_TOKEN=sbp_...     Management API. Create at
- *                                     supabase.com/dashboard/account/tokens
- *                                     Preferred: revocable, and never
- *                                     needs the database password.
+ * TWO FILES, and which one a credential sits in decides where it can go:
  *
- *   SUPABASE_DB_URL=postgresql://...  Direct connection, run through psql.
- *                                     Dashboard → Project Settings →
- *                                     Database → Connection string.
+ *   apps/api/.dev.vars   Worker runtime secrets. This runner reads only
+ *                        SUPABASE_URL from it, to derive the project ref.
+ *
+ *   .env.tools           The credential that performs the migration.
+ *                        Uploaded to nothing, ever — which is the whole
+ *                        reason it is not in the file above:
+ *
+ *     SUPABASE_ACCESS_TOKEN=sbp_...     Management API. Create at
+ *                                       supabase.com/dashboard/account/tokens
+ *                                       Preferred: revocable, and never
+ *                                       needs the database password.
+ *
+ *     SUPABASE_DB_URL=postgresql://...  Direct connection, run through psql.
+ *                                       Dashboard → Project Settings →
+ *                                       Database → Connection string.
  *
  * The project ref is read from SUPABASE_URL, so neither transport needs
  * it configured separately.
@@ -43,11 +58,12 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIR = join(ROOT, 'supabase');
 
 // ---------------------------------------------------------------
-// Config. .dev.vars is the project's existing secret store; reading it
-// here means the runner needs no separate setup.
+// Config. Split across two files on purpose — see the header. The
+// runner needs one value from each: WHICH project (SUPABASE_URL, which
+// is also a Worker runtime secret, so it lives with them) and WHAT MAY
+// ACT on it (the tooling credential, which is uploaded to nothing).
 // ---------------------------------------------------------------
-function loadDevVars() {
-  const path = join(ROOT, '.dev.vars');
+function loadEnvFile(path) {
   if (!existsSync(path)) return {};
   const out = {};
   // Normalise CRLF first. `\r` is a line terminator to a JS regex, so a
@@ -61,15 +77,42 @@ function loadDevVars() {
   return out;
 }
 
-const env = { ...loadDevVars(), ...process.env };
-const { SUPABASE_URL, SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL } = env;
-
+// Arguments come first, because --env decides which file the project
+// ref is read from.
 const args = process.argv.slice(2);
-const command = args.find((a) => !a.startsWith('-')) ?? 'status';
+const envIdx = args.indexOf('--env');
+const targetEnv = envIdx === -1 ? null : args[envIdx + 1];
+if (envIdx !== -1 && (!targetEnv || targetEnv.startsWith('-'))) {
+  console.error('--env needs a value, e.g. --env staging');
+  process.exit(2);
+}
+// `--env staging` leaves a bare word in argv that is not the command.
+// Guarded on envIdx !== -1: without it, `envIdx + 1` is 0 and the filter
+// swallows the command itself.
+const positional = args.filter((a, i) => !a.startsWith('-') && !(envIdx !== -1 && i === envIdx + 1));
+const command = positional[0] ?? 'status';
 const dryRun = args.includes('--dry-run');
 
-if (!['status', 'up', 'migrate', 'baseline'].includes(command)) {
-  console.error(`Unknown command '${command}'. Use: status | up | baseline`);
+// wrangler loads .dev.vars.<env> INSTEAD OF .dev.vars rather than
+// merging the two, so this does the same: one project or the other,
+// never a blend. Pointing at the wrong database is the mistake this
+// runner cannot undo.
+const varsFile = join(ROOT, 'apps', 'api', targetEnv ? `.dev.vars.${targetEnv}` : '.dev.vars');
+if (targetEnv && !existsSync(varsFile)) {
+  console.error(`
+No apps/api/.dev.vars.${targetEnv} — nothing here says which database '${targetEnv}' is.
+
+Copy apps/api/.dev.vars.example to that path and point the three
+SUPABASE_ values at a separate Supabase project.
+`);
+  process.exit(2);
+}
+
+const env = { ...loadEnvFile(varsFile), ...loadEnvFile(join(ROOT, '.env.tools')), ...process.env };
+const { SUPABASE_URL, SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL } = env;
+
+if (!['status', 'up', 'migrate', 'reset'].includes(command)) {
+  console.error(`Unknown command '${command}'. Use: status | up | reset   [--env <name>] [--dry-run]`);
   process.exit(2);
 }
 
@@ -146,7 +189,7 @@ if (!SUPABASE_ACCESS_TOKEN && !SUPABASE_DB_URL) {
   console.error(`
 No way to reach the database.
 
-Add ONE of these to .dev.vars:
+Add ONE of these to .env.tools:
 
   SUPABASE_ACCESS_TOKEN=sbp_...
       Create at https://supabase.com/dashboard/account/tokens
@@ -178,12 +221,47 @@ const migrations = files.map((file) => {
 });
 
 // ---------------------------------------------------------------
+// Teardown, for `reset`.
+//
+// EVERYTHING THIS PROJECT OWNS LIVES IN `public`. Supabase's own
+// objects are in auth, storage, realtime and extensions, and none of
+// them are touched — which is what makes dropping the whole schema a
+// reasonable thing to do rather than a reckless one.
+//
+// The order is load-bearing. Dropping the schema takes
+// public.handle_new_user with it, and CASCADE takes the trigger on
+// auth.users that calls it; only then can the users themselves go. The
+// other way round and the delete fires a trigger that inserts into
+// tables it is about to lose.
+//
+// The users have to go at all because that trigger is the ONLY thing
+// that provisions an org, a membership and a bot, and it fires on
+// INSERT. An account that survived this would sign in against nothing,
+// with no way to make itself an org — the exact stranding
+// create_organization exists to rescue people from.
+// ---------------------------------------------------------------
+const TEARDOWN = `
+drop schema if exists public cascade;
+create schema public;
+grant usage on schema public to anon, authenticated, service_role;
+grant all   on schema public to service_role;
+delete from auth.users;
+`;
+
+// ---------------------------------------------------------------
 const LEDGER = `
 create table if not exists public.schema_migrations (
   version    text primary key,
   checksum   text not null,
   applied_at timestamptz not null default now()
 );
+-- Stated rather than inherited. Supabase enables RLS on new public
+-- tables by default on projects created after roughly mid-2026, so
+-- leaving this implicit means two projects running the same migrations
+-- disagree about the ledger depending on when they were created — which
+-- is exactly the kind of drift a migration runner exists to prevent.
+-- No policy accompanies it: nothing but the runner should read this.
+alter table public.schema_migrations enable row level security;
 -- Tenants have no business reading the schema history. Guarded on the
 -- roles existing so the runner also works against a plain Postgres,
 -- where anon and authenticated are Supabase's inventions and absent.
@@ -202,6 +280,33 @@ async function applied() {
   await run(LEDGER);
   const rows = await query('select version, checksum from public.schema_migrations order by version');
   return new Map(rows.map((r) => [r.version, r.checksum]));
+}
+
+/**
+ * Apply migrations in order, recording each one only after it succeeds.
+ *
+ * Recorded AFTER rather than before, and one at a time rather than in a
+ * batch at the end: a file that fails leaves the ledger saying it never
+ * ran, so a re-run picks up exactly where this stopped. That is only
+ * survivable because every migration here is written to be re-runnable
+ * — the half that did apply is applied again harmlessly.
+ */
+async function applyAll(list) {
+  for (const m of list) {
+    process.stdout.write(`  applying ${m.file} … `);
+    try {
+      await run(m.sql);
+      await run(record(m));
+      console.log('ok');
+    } catch (err) {
+      console.log('FAILED\n');
+      console.error(`${err.message}\n`);
+      console.error(`${m.file} was not recorded as applied. Fix it and run again —`);
+      console.error('every migration in this project is written to be safely re-runnable.\n');
+      process.exit(1);
+    }
+  }
+  console.log(`\n${list.length} migration(s) applied.\n`);
 }
 
 function record(m) {
@@ -242,13 +347,33 @@ async function main() {
     return;
   }
 
-  if (command === 'baseline') {
-    if (!pending.length) { console.log('Nothing to baseline — every migration is already recorded.\n'); return; }
-    console.log('Recording these as applied WITHOUT running them:');
-    for (const m of pending) console.log(`  ${m.file}`);
-    if (dryRun) { console.log('\n--dry-run: nothing written.\n'); return; }
-    await run(pending.map(record).join('\n'));
-    console.log(`\n${pending.length} migration(s) baselined.\n`);
+  if (command === 'reset') {
+    // Two gates rather than one prompt: this runner is non-interactive
+    // by design (it runs in shells that have no tty), so the
+    // confirmation has to be in the command line itself.
+    if (!args.includes('--yes')) {
+      console.log('This DESTROYS the public schema and every auth user on the target above,');
+      console.log('then applies every migration from scratch. There is no undo and no');
+      console.log('point-in-time recovery on this project.\n');
+      console.log('Re-run with --yes if that is what you want:\n');
+      console.log('  npm run db:reset -- --yes\n');
+      process.exit(1);
+    }
+    if (dryRun) {
+      console.log('--dry-run: would drop schema public, delete every auth user, then apply:');
+      for (const m of migrations) console.log(`  ${m.file}`);
+      console.log('');
+      return;
+    }
+
+    process.stdout.write('  dropping schema public and every auth user … ');
+    await run(TEARDOWN);
+    console.log('ok');
+    // The ledger lived in `public` and went with it, so it has to be
+    // recreated before anything can be recorded — and everything is
+    // pending again by definition.
+    await run(LEDGER);
+    await applyAll(migrations);
     return;
   }
 
@@ -268,22 +393,7 @@ async function main() {
   if (dryRun) { console.log('\n--dry-run: nothing applied.\n'); return; }
   console.log('');
 
-  for (const m of pending) {
-    process.stdout.write(`  applying ${m.file} … `);
-    try {
-      await run(m.sql);
-      await run(record(m));
-      console.log('ok');
-    } catch (err) {
-      console.log('FAILED\n');
-      console.error(`${err.message}\n`);
-      console.error(`${m.file} was not recorded as applied. Fix it and run again —`);
-      console.error('every migration in this project is written to be safely re-runnable.\n');
-      process.exit(1);
-    }
-  }
-
-  console.log(`\n${pending.length} migration(s) applied.\n`);
+  await applyAll(pending);
 }
 
 main().catch((err) => { console.error(`\n${err.message}\n`); process.exit(1); });

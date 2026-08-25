@@ -46,7 +46,7 @@ Today a bot has **two knowledge systems that do not know about each other**.
 
 `bots.business_description`, `bots.services`, `bots.faq` and
 `bots.custom_instructions` are inlined verbatim into every system prompt by
-`buildSystemPrompt` ([src/prompt.ts](../src/prompt.ts)). `documents` → `chunks`
+`buildSystemPrompt` ([apps/api/src/prompt.ts](../apps/api/src/prompt.ts)). `documents` → `chunks`
 → `match_chunks` is a separate pipeline that never sees them. A tenant who
 uploads their FAQ as a PDF *and* fills in the FAQ box ships it twice — once
 always, once by similarity — and nothing reconciles the two.
@@ -54,7 +54,7 @@ always, once by similarity — and nothing reconciles the two.
 Five concrete problems fall out of that:
 
 1. **The prompt is unbounded.** Those four columns are plain `text` with no cap
-   in the schema, none in `src/config.ts`, none in the UI. A tenant who pastes
+   in the schema, none in `apps/api/src/config.ts`, none in the UI. A tenant who pastes
    40KB of FAQ ships 40KB on every turn, on every message, forever. It also
    crowds out the retrieved chunks and the conversation history — the roadmap's
    "budget the context window: retrieved chunks compete with conversation
@@ -118,7 +118,7 @@ window and a `BotUpdatePayload` break to buy nothing. What is actually wanted is
 *caps* and *one owning screen*, and both arrive without moving a byte.
 
 Caps: `business_description` **600 chars**, `custom_instructions` **2000 chars**.
-Enforced in `src/config.ts` alongside the existing `LIMITS` (authoritative, the
+Enforced in `apps/api/src/config.ts` alongside the existing `LIMITS` (authoritative, the
 same way `validateOrigins` is), plus a `CHECK … NOT VALID` in the migration —
 which guards every new write while leaving legacy over-length rows alone rather
 than failing the migration on them.
@@ -253,11 +253,11 @@ Pure Worker and validation work, shippable on its own and valuable on its own.
 
 | Change | File |
 |---|---|
-| `LIMITS.businessDescription = 600`, `LIMITS.customInstructions = 2000` | [src/config.ts](../src/config.ts) |
-| Cap both on write in the bot `PUT` handler | [src/index.ts:822](../src/index.ts#L822) |
-| `renderContext` takes a character budget (D7) | [src/rag/retrieve.ts](../src/rag/retrieve.ts) |
-| `context_chars` and `priority_boost` in `ragConfigFor` | [src/rag/ingest.ts](../src/rag/ingest.ts) |
-| `RagConfig` fields | [src/types.ts](../src/types.ts) |
+| `LIMITS.businessDescription = 600`, `LIMITS.customInstructions = 2000` | [apps/api/src/config.ts](../apps/api/src/config.ts) |
+| Cap both on write in the bot `PUT` handler | [apps/api/src/index.ts:822](../apps/api/src/index.ts#L822) |
+| `renderContext` takes a character budget (D7) | [apps/api/src/rag/retrieve.ts](../apps/api/src/rag/retrieve.ts) |
+| `context_chars` and `priority_boost` in `ragConfigFor` | [apps/api/src/rag/ingest.ts](../apps/api/src/rag/ingest.ts) |
+| `RagConfig` fields | [apps/api/src/types.ts](../apps/api/src/types.ts) |
 
 **Tests:** extend `scripts/test-config-units.mjs` for the two caps; new
 assertions in `scripts/test-rag-units.mjs` that the budget trims from the tail
@@ -301,12 +301,12 @@ org A cannot select org B's `faq_items`.
 
 | Change | File |
 |---|---|
-| `chunkQA()` — one item per chunk; question carried into every piece of a split answer | [src/rag/chunk.ts](../src/rag/chunk.ts) |
-| `ingestFaq()` — read enabled items, chunk, embed, `replaceChunks` at `kind='faq'`, `priority=1`, `metadata.faq_item_id` | [src/rag/ingest.ts](../src/rag/ingest.ts) |
-| `replaceChunks` accepts `kind`, `priority`, `metadata` | [src/supabase.ts:603](../src/supabase.ts#L603) |
-| `faq_items` CRUD helpers | [src/supabase.ts](../src/supabase.ts) |
-| `GET/POST/PUT/DELETE /v1/admin/bots/:id/faq` plus a reorder endpoint | [src/index.ts](../src/index.ts) |
-| Validation: 200 items, 300 / 2000 chars | [src/config.ts](../src/config.ts) |
+| `chunkQA()` — one item per chunk; question carried into every piece of a split answer | [apps/api/src/rag/chunk.ts](../apps/api/src/rag/chunk.ts) |
+| `ingestFaq()` — read enabled items, chunk, embed, `replaceChunks` at `kind='faq'`, `priority=1`, `metadata.faq_item_id` | [apps/api/src/rag/ingest.ts](../apps/api/src/rag/ingest.ts) |
+| `replaceChunks` accepts `kind`, `priority`, `metadata` | [apps/api/src/supabase.ts:603](../apps/api/src/supabase.ts#L603) |
+| `faq_items` CRUD helpers | [apps/api/src/supabase.ts](../apps/api/src/supabase.ts) |
+| `GET/POST/PUT/DELETE /v1/admin/bots/:id/faq` plus a reorder endpoint | [apps/api/src/index.ts](../apps/api/src/index.ts) |
+| Validation: 200 items, 300 / 2000 chars | [apps/api/src/config.ts](../apps/api/src/config.ts) |
 
 A write to any item re-ingests **that bot's FAQ document**, not the whole
 corpus. Editing one answer costs one embedding call.
@@ -323,12 +323,12 @@ of them, and the chunk inspector shows one chunk per item.
 
 | Change | File |
 |---|---|
-| Pass `priority_boost` through to `match_chunks` | [src/rag/retrieve.ts](../src/rag/retrieve.ts) |
-| On zero vector results, try `match_chunks_lexical` | [src/rag/retrieve.ts](../src/rag/retrieve.ts) |
-| `RetrievedChunk` carries `kind`, `priority`, `channel: 'vector' \| 'lexical'` | [src/rag/retrieve.ts](../src/rag/retrieve.ts) |
-| `POST /v1/admin/bots/:id/retrieve-preview` | [src/index.ts](../src/index.ts) |
+| Pass `priority_boost` through to `match_chunks` | [apps/api/src/rag/retrieve.ts](../apps/api/src/rag/retrieve.ts) |
+| On zero vector results, try `match_chunks_lexical` | [apps/api/src/rag/retrieve.ts](../apps/api/src/rag/retrieve.ts) |
+| `RetrievedChunk` carries `kind`, `priority`, `channel: 'vector' \| 'lexical'` | [apps/api/src/rag/retrieve.ts](../apps/api/src/rag/retrieve.ts) |
+| `POST /v1/admin/bots/:id/retrieve-preview` | [apps/api/src/index.ts](../apps/api/src/index.ts) |
 
-`missedRetrieval` at [src/index.ts:400](../src/index.ts#L400) must be computed
+`missedRetrieval` at [apps/api/src/index.ts:400](../apps/api/src/index.ts#L400) must be computed
 **after** the fallback, or every lexical save still counts as a miss and the
 escalation logic in `behavior_config` fires on questions the bot just answered.
 
@@ -340,8 +340,8 @@ the lexical channel.
 
 | Change | File |
 |---|---|
-| `POST /v1/admin/bots/:id/knowledge/migrate` — create the FAQ and services documents, parse `bots.faq` into items, ingest, stamp `knowledge_migrated_at` on success only | [src/index.ts](../src/index.ts) |
-| `buildSystemPrompt` drops `## Services` / `## FAQ` **only when the flag is set** | [src/prompt.ts](../src/prompt.ts) |
+| `POST /v1/admin/bots/:id/knowledge/migrate` — create the FAQ and services documents, parse `bots.faq` into items, ingest, stamp `knowledge_migrated_at` on success only | [apps/api/src/index.ts](../apps/api/src/index.ts) |
+| `buildSystemPrompt` drops `## Services` / `## FAQ` **only when the flag is set** | [apps/api/src/prompt.ts](../apps/api/src/prompt.ts) |
 | `scripts/migrate-knowledge.mjs` — drive it per bot, dry-run first | `scripts/` |
 
 The `bots.faq` parser splits on `Q:` / `A:` — the shape `002_phase1.sql` seeded
@@ -363,12 +363,12 @@ Playground, and every unmigrated bot's prompt is provably unchanged.
 
 | Change | File |
 |---|---|
-| Business description and custom instructions with counters | [dashboard/src/screens/BotConfiguration.tsx](../dashboard/src/screens/BotConfiguration.tsx) |
-| `KnowledgeBase.tsx` → `Knowledge.tsx`, three tabs | [dashboard/src/screens/](../dashboard/src/screens/) |
+| Business description and custom instructions with counters | [apps/app/src/screens/BotConfiguration.tsx](../apps/app/src/screens/BotConfiguration.tsx) |
+| `KnowledgeBase.tsx` → `Knowledge.tsx`, three tabs | [apps/app/src/screens/](../apps/app/src/screens/) |
 | FAQ item editor — add, edit, reorder, enable, per-item index state | new |
-| Retrieval tab gains boost and the lexical toggle | [dashboard/src/screens/Retrieval.tsx](../dashboard/src/screens/Retrieval.tsx) |
+| Retrieval tab gains boost and the lexical toggle | [apps/app/src/screens/Retrieval.tsx](../apps/app/src/screens/Retrieval.tsx) |
 | "What would this retrieve?" panel | new |
-| Nav collapses three entries into one | [dashboard/src/App.tsx:30](../dashboard/src/App.tsx#L30) |
+| Nav collapses three entries into one | [apps/app/src/App.tsx:30](../apps/app/src/App.tsx#L30) |
 | Migration banner for unmigrated bots, with the one-click cutover | new |
 
 Hash routes are public surface — `#knowledge`, `#sources` and `#retrieval` must

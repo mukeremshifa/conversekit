@@ -16,13 +16,13 @@ the schema is ahead of the code, never behind it.
 
 | Phase | Where |
 |---|---|
-| 1. Schema + validators | `supabase/010_lead_capture.sql`, `src/config.ts`, `src/types.ts` |
-| 2. Prompt | `leadCaptureLines()` in `src/prompt.ts`, the `after_messages` note in `preflight()` |
-| 3. Notifications | `src/notify.ts`, `announceLead()` + `waitUntil` in `src/index.ts` |
+| 1. Schema + validators | `supabase/010_lead_capture.sql`, `apps/api/src/config.ts`, `apps/api/src/types.ts` |
+| 2. Prompt | `leadCaptureLines()` in `apps/api/src/prompt.ts`, the `after_messages` note in `preflight()` |
+| 3. Notifications | `apps/api/src/notify.ts`, `announceLead()` + `waitUntil` in `apps/api/src/index.ts` |
 | 4. Dashboard config | `BotConfiguration.tsx` — one `Section`, one `OWNED` entry |
 | 5. Data path | `extractLead` field set, `saveLead` columns, `Leads.tsx` table + CSV |
 | 6. Transcript drawer | `components/Transcript.tsx`, `?session_id=` on the conversations route |
-| 7. Email | `emailLead()` in `src/notify.ts`, `RESEND_API_KEY` + `LEAD_EMAIL_FROM` |
+| 7. Email | `emailLead()` in `apps/api/src/notify.ts`, `RESEND_API_KEY` + `LEAD_EMAIL_FROM` |
 
 **Phase 5 was pulled forward from the second pass**, because 1-4 alone would
 have shipped a `fields` setting that the prompt honours but extraction throws
@@ -48,8 +48,8 @@ against real rows. See *After deploying* at the bottom.
 ---
 
 009 is applied and is the pattern this follows exactly: one
-more JSONB column on `bots`, validated in `src/config.ts`, consumed in
-`src/prompt.ts`. The 009 migration header already anticipated this work —
+more JSONB column on `bots`, validated in `apps/api/src/config.ts`, consumed in
+`apps/api/src/prompt.ts`. The 009 migration header already anticipated this work —
 *"the notifications work already has another half-dozen fields queued behind
 it"* — so this is the thing that comment was holding a place for.
 
@@ -59,14 +59,14 @@ it"* — so this is the thing that comment was holding a place for.
 
 | Piece | File | Shape |
 |---|---|---|
-| The instruction | `src/prompt.ts:97-108` | 11 hardcoded lines, always emitted |
+| The instruction | `apps/api/src/prompt.ts:97-108` | 11 hardcoded lines, always emitted |
 | The marker | `[[LEAD:{name,email,phone,inquiry}]]` | fixed shape |
-| Extraction | `src/leads.ts` | `ExtractedLead` hardcoded to those four |
-| Streaming guard | `src/lead-stream.ts` | marker-agnostic — **needs no change** |
-| Save | `saveLead()` `src/supabase.ts:385` | fixed columns |
-| Fired from | `persistTurn()` `src/index.ts:470` | awaited, in-request |
+| Extraction | `apps/api/src/leads.ts` | `ExtractedLead` hardcoded to those four |
+| Streaming guard | `apps/api/src/lead-stream.ts` | marker-agnostic — **needs no change** |
+| Save | `saveLead()` `apps/api/src/supabase.ts:385` | fixed columns |
+| Fired from | `persistTurn()` `apps/api/src/index.ts:470` | awaited, in-request |
 | Table | `leads` `supabase/002_phase1.sql:19` | `email NOT NULL CHECK (email LIKE '%@%')` |
-| Dashboard | `dashboard/src/screens/Leads.tsx` | read-only table, search, CSV |
+| Dashboard | `apps/app/src/screens/Leads.tsx` | read-only table, search, CSV |
 
 There is no config surface and no notification infrastructure at all.
 
@@ -83,7 +83,7 @@ There is no config surface and no notification infrastructure at all.
 | Consent text | `lead_config.consent_text` | Injected as a line the bot must say before asking for details. See the honesty note under *Consent* below. |
 | Booking link | `lead_config.booking_url` | Prompt tells the bot to offer it after capture. Also travels in the webhook payload. |
 | Lead tagging | `lead_config.tag` + `leads.tag` | Applied server-side at `saveLead` time, never by the model. Renders as a `Badge` — the component already exists. |
-| Generic webhook | `lead_config.webhook_url` + `src/notify.ts` | Fired from `ctx.waitUntil`, not from the awaited `persistTurn`. See *D5* below. |
+| Generic webhook | `lead_config.webhook_url` + `apps/api/src/notify.ts` | Fired from `ctx.waitUntil`, not from the awaited `persistTurn`. See *D5* below. |
 | Slack / Teams | `lead_config.webhook_format` | Same dispatcher, three body shapes. Explicit select — **no** sniffing the hostname to guess the format. |
 | Custom CRM | — | Zero code. It is the generic webhook with different docs. |
 | View transcript from a lead | `Leads.tsx` + one query param | The best effort-to-payoff item on the list. See *D8* below. |
@@ -264,7 +264,7 @@ in 003 are table-level, so new columns are covered as they are added.
 is a test assertion, not an aspiration — `scripts/test-config-units.mjs`
 already bundles and calls `buildSystemPrompt`, so it is a direct comparison.
 
-Validation limits, following `LIMITS` in `src/config.ts`:
+Validation limits, following `LIMITS` in `apps/api/src/config.ts`:
 
 | Field | Rule |
 |---|---|
@@ -282,26 +282,26 @@ Validation limits, following `LIMITS` in `src/config.ts`:
 
 **New**
 - `supabase/010_lead_capture.sql`
-- `src/notify.ts` — ~90 lines: three body shapes, one guarded `fetch`
-- `dashboard/src/components/Transcript.tsx` — lifted from `Conversations.tsx`
+- `apps/api/src/notify.ts` — ~90 lines: three body shapes, one guarded `fetch`
+- `apps/app/src/components/Transcript.tsx` — lifted from `Conversations.tsx`
 - `scripts/test-lead-capture.mjs` — bundles `config.ts`, `prompt.ts`,
   `leads.ts`, `notify.ts`, matching the `test:rag` / `test:config` convention
 
 **Modified**
-- `src/types.ts` — `LeadConfig`, `Bot.lead_config`, `BotUpdatePayload.lead_config`, `Lead` gains `tag` / `company` / `consent_given`
-- `src/config.ts` — `validateLeadConfig`, `leadConfigFor`, `validateWebhookUrl`
-- `src/prompt.ts` — the `## Lead Capture` block becomes generated
-- `src/leads.ts` — `extractLead(raw, fields?)`, `company` on `ExtractedLead`
-- `src/supabase.ts` — `saveLead` writes the new columns, `mergeConfigs` learns `lead_config` (D3), `getConversations` gains `sessionId?`
-- `src/index.ts` — `validateLeadConfig` in the PUT route, `redactBotSecrets` (D2), the `after_messages` situational note, `waitUntil` dispatch (D5), `?session_id=` on the conversations route
-- `dashboard/src/lib/api.ts` — `LeadConfig` type, widened `Lead`, `sessionId` arg
-- `dashboard/src/screens/BotConfiguration.tsx` — one `Section`, one `OWNED` entry
-- `dashboard/src/screens/Leads.tsx` — tag badge, transcript action, widened CSV
-- `dashboard/src/screens/Conversations.tsx` — use `Transcript.tsx`
+- `apps/api/src/types.ts` — `LeadConfig`, `Bot.lead_config`, `BotUpdatePayload.lead_config`, `Lead` gains `tag` / `company` / `consent_given`
+- `apps/api/src/config.ts` — `validateLeadConfig`, `leadConfigFor`, `validateWebhookUrl`
+- `apps/api/src/prompt.ts` — the `## Lead Capture` block becomes generated
+- `apps/api/src/leads.ts` — `extractLead(raw, fields?)`, `company` on `ExtractedLead`
+- `apps/api/src/supabase.ts` — `saveLead` writes the new columns, `mergeConfigs` learns `lead_config` (D3), `getConversations` gains `sessionId?`
+- `apps/api/src/index.ts` — `validateLeadConfig` in the PUT route, `redactBotSecrets` (D2), the `after_messages` situational note, `waitUntil` dispatch (D5), `?session_id=` on the conversations route
+- `apps/app/src/lib/api.ts` — `LeadConfig` type, widened `Lead`, `sessionId` arg
+- `apps/app/src/screens/BotConfiguration.tsx` — one `Section`, one `OWNED` entry
+- `apps/app/src/screens/Leads.tsx` — tag badge, transcript action, widened CSV
+- `apps/app/src/screens/Conversations.tsx` — use `Transcript.tsx`
 - `package.json` — `test:leads`, added to the `test` chain
 - `docs/api.md`, `CHANGELOG.md`
 
-`src/lead-stream.ts` is untouched — it matches on `[[LEAD:` and `]]` and does
+`apps/api/src/lead-stream.ts` is untouched — it matches on `[[LEAD:` and `]]` and does
 not care what is between them.
 
 ---
@@ -340,7 +340,7 @@ Email notification is a phase 7 that should not block a demo.
    see [operations.md](operations.md). Skipping this leaves email off and
    changes nothing else.
 2. `npm run deploy` (Worker).
-3. `npm run deploy:pages` (dashboard).
+3. `npm run deploy:app` (dashboard).
 
 Nothing changes for any existing bot on deploy: `lead_config` is NULL on all of
 them, which reproduces the pre-010 prompt exactly, and the new `leads` columns

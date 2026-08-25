@@ -1,0 +1,19 @@
+# Header rules for ck-site — the landing page and nothing else.
+#
+# The landing page itself is deliberately absent: it changes, and the
+# default Workers asset policy (revalidate against the ETag) is the
+# right one for a document. Only the assets under it are pinned.
+
+# Product shots. Content-hashed by scripts/shoot.mjs — the filename
+# changes whenever the bytes do — so a year of immutable caching can
+# never serve a stale image.
+/shots/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Copied from packages/brand at build time. Same reasoning as ck-cdn's
+# rule, minus the CORS header: nothing off-site loads these from here.
+/brand/*
+  Cache-Control: public, max-age=604800
+
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable

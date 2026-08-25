@@ -43,15 +43,15 @@ const OUT = mkdtempSync(join(tmpdir(), 'ck-knowledge-'));
 
 await build({
   entryPoints: [
-    join(ROOT, 'src/rag/chunk.ts'),
-    join(ROOT, 'src/rag/extract.ts'),
-    join(ROOT, 'src/rag/retrieve.ts'),
-    join(ROOT, 'src/rag/ingest.ts'),
-    join(ROOT, 'src/supabase.ts'),
-    join(ROOT, 'src/providers/catalog.ts'),
-    join(ROOT, 'src/providers/errors.ts'),
-    join(ROOT, 'src/prompt.ts'),
-    join(ROOT, 'src/config.ts'),
+    join(ROOT, 'apps/api/src/rag/chunk.ts'),
+    join(ROOT, 'apps/api/src/rag/extract.ts'),
+    join(ROOT, 'apps/api/src/rag/retrieve.ts'),
+    join(ROOT, 'apps/api/src/rag/ingest.ts'),
+    join(ROOT, 'apps/api/src/supabase.ts'),
+    join(ROOT, 'apps/api/src/providers/catalog.ts'),
+    join(ROOT, 'apps/api/src/providers/errors.ts'),
+    join(ROOT, 'apps/api/src/prompt.ts'),
+    join(ROOT, 'apps/api/src/config.ts'),
   ],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });

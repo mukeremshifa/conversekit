@@ -15,7 +15,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT  = mkdtempSync(join(tmpdir(), 'ck-rag-'));
 
 await build({
-  entryPoints: [join(ROOT, 'src/rag/chunk.ts'), join(ROOT, 'src/rag/extract.ts'), join(ROOT, 'src/rag/files.ts')],
+  entryPoints: [join(ROOT, 'apps/api/src/rag/chunk.ts'), join(ROOT, 'apps/api/src/rag/extract.ts'), join(ROOT, 'apps/api/src/rag/files.ts')],
   outdir: OUT, format: 'esm', bundle: true, platform: 'neutral',
 });
 

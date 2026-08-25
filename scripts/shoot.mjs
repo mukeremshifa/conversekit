@@ -3,7 +3,7 @@
 // The landing page's product shots.
 //
 // Seven screens x two themes = fourteen images, each encoded as AVIF
-// and WebP at two widths and written to public/shots/ under a
+// and WebP at two widths and written to apps/site/assets/shots/ under a
 // content-hashed name. Nobody takes these by hand: fourteen images that
 // have to agree with each other about one fictional clinic, and that
 // have to be retaken every time a screen changes, is a job for a script
@@ -22,8 +22,8 @@
 // motion, which the dashboard's stylesheet already honours by killing
 // every keyframe), and the colour profile (sRGB).
 //
-// The harness itself is dashboard/src/shot.tsx and
-// dashboard/src/shot-widget.ts; it mounts the real app and the real
+// The harness itself is apps/app/src/shot.tsx and
+// apps/app/src/shot-widget.ts; it mounts the real app and the real
 // widget over stubbed fetches, so these are photographs of the product
 // rather than pictures of a mock-up.
 // ----------------------------------------------------------------
@@ -37,15 +37,21 @@ import puppeteer from 'puppeteer-core';
 import sharp from 'sharp';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const BUILD_DIR = path.join(ROOT, 'dashboard', '.shots-build');
-const PUBLIC_DIR = path.join(ROOT, 'public');
-const OUT_DIR = path.join(PUBLIC_DIR, 'shots');
+const APP_DIR = path.join(ROOT, 'apps', 'app');
+const BUILD_DIR = path.join(APP_DIR, '.shots-build');
+// The widget harness loads the REAL widget, which is a ck-cdn artifact
+// now. Serving the CDN's build alongside the harness is what lets it,
+// without either side knowing about the other.
+const CDN_DIR = path.join(ROOT, 'apps', 'cdn', 'dist');
+// Shots are landing-page source, not build output: they are committed,
+// and gen-shots.mjs writes their <picture> markup into the page here.
+const OUT_DIR = path.join(ROOT, 'apps', 'site', 'assets', 'shots');
 const PNG_DIR = path.join(BUILD_DIR, 'png');
 
 /**
  * The instant every page is frozen at.
  *
- * MUST MATCH `SHOT_NOW_ISO` in dashboard/src/fixtures/fernbrook.ts —
+ * MUST MATCH `SHOT_NOW_ISO` in apps/app/src/fixtures/fernbrook.ts —
  * the fixtures date their leads and transcripts relative to it, and the
  * widget bolds whichever row of opening hours is "today". The harness
  * reports its own copy back as `window.__ckShotNow` and this script
@@ -279,12 +285,10 @@ function freezeClock(fixedMs) {
   globalThis.Date = proxy;
 }
 
-// ── A static server over the harness and public/ ─────────────────
+// ── A static server over the harness and the CDN build ───────────
 //
-// Two roots, checked in order: the built harness, then public/ — which
-// is where widget.js lives. The widget harness loads the REAL widget,
-// and joining the two directories here is what lets it, without either
-// one having to know about the other.
+// Two roots, checked in order: the built harness, then apps/cdn/dist —
+// which is where widget.js and its font live.
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -366,7 +370,7 @@ async function capture(browser, base, slot, theme) {
   if (now !== SHOT_NOW_ISO) {
     throw new Error(
       `clock drift: the harness is dated ${now}, this script freezes at ${SHOT_NOW_ISO}.\n`
-      + '  Bring SHOT_NOW_ISO in scripts/shoot.mjs and dashboard/src/fixtures/fernbrook.ts back into step.',
+      + '  Bring SHOT_NOW_ISO in scripts/shoot.mjs and apps/app/src/fixtures/fernbrook.ts back into step.',
     );
   }
 
@@ -395,7 +399,7 @@ async function capture(browser, base, slot, theme) {
 
   // One slot's frame is not a constant: the widget's is its panel's
   // box, which only the harness can measure. See __ckShotCrop in
-  // dashboard/src/shot-widget.ts. The two themes must agree — the
+  // apps/app/src/shot-widget.ts. The two themes must agree — the
   // manifest carries one size per slot, not one per theme — so the
   // second capture checks the first rather than quietly overwriting it.
   if (slot.cropFromPage) {
@@ -421,7 +425,7 @@ const hash8 = (buf) => createHash('sha256').update(buf).digest('hex').slice(0, 8
 /**
  * Drop older hashes of the same image. Content-hashed names mean a
  * re-encode lands beside its predecessor rather than replacing it, and
- * public/shots/ would otherwise grow a copy per shoot.
+ * apps/site/assets/shots/ would otherwise grow a copy per shoot.
  *
  * The extension is part of the match, not just the prefix: an AVIF and
  * its WebP fallback share every part of the name except the hash and
@@ -505,11 +509,17 @@ if (!skipBuild) {
   // .bin: on Windows that shim is a .cmd, and Node refuses to spawn a
   // .cmd without a shell — which fails with an empty stdout and looks
   // exactly like a build that produced no output.
-  const vite = path.join(ROOT, 'dashboard', 'node_modules', 'vite', 'bin', 'vite.js');
+  // npm workspaces hoists shared deps to the root, so vite lands in
+  // either place depending on what else is installed.
+  const vite = [
+    path.join(APP_DIR, 'node_modules', 'vite', 'bin', 'vite.js'),
+    path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js'),
+  ].find((p) => fs.existsSync(p));
+  if (!vite) throw new Error('vite not installed — run `npm install` at the repo root');
   const built = spawnSync(
     process.execPath,
     [vite, 'build', '--config', 'vite.shot.config.ts'],
-    { cwd: path.join(ROOT, 'dashboard'), stdio: 'inherit' },
+    { cwd: APP_DIR, stdio: 'inherit' },
   );
   if (built.error) throw built.error;
   if (built.status !== 0) process.exit(built.status ?? 1);
@@ -518,7 +528,7 @@ if (!skipBuild) {
 fs.mkdirSync(OUT_DIR, { recursive: true });
 if (keepPng) fs.mkdirSync(PNG_DIR, { recursive: true });
 
-const { server, port } = await serve([BUILD_DIR, PUBLIC_DIR]);
+const { server, port } = await serve([BUILD_DIR, CDN_DIR]);
 const base = `http://127.0.0.1:${port}`;
 
 const browser = await puppeteer.launch({

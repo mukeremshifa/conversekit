@@ -1,11 +1,112 @@
 # Changelog
 
 Notable changes to ConverseKit. The widget carries its own version, shown in
-`window.ConverseKit.version` and in the banner at the top of `public/widget.js`.
+`window.ConverseKit.version` and in the banner at the top of `apps/cdn/assets/widget.js`.
 
 ## Unreleased
 
 ### Added
+
+- **Four deploy targets instead of one, on Workers rather than Pages.** The
+  landing page, the dashboard, the widget CDN and the API are now four Workers
+  with four hostnames, four cache policies and four blast radii. Before this, a
+  typo in the marketing copy redeployed the script running on customers' sites.
+  The plan and the record of executing it are in
+  [docs/deployment-rebuild.md](docs/deployment-rebuild.md).
+
+  | Role | Worker | Hostname |
+  |---|---|---|
+  | Landing | `ck-site` | `conversekit.mukeremshifa.com` |
+  | Dashboard | `ck-app` | `app.conversekit.mukeremshifa.com` |
+  | Widget + fonts + brand | `ck-cdn` | `cdn.conversekit.mukeremshifa.com` |
+  | API | `ck-api` | `api.conversekit.mukeremshifa.com` |
+
+  Cloudflare has Pages in soft maintenance and the docs now say plainly to start
+  new projects with Workers; `_headers`, `_redirects` and SPA routing are all
+  native there. One toolchain, one config format, and `wrangler.jsonc` per app.
+
+  Custom Domains rather than proxied DNS records, and that is not a style
+  choice: Universal SSL covers the apex and first-level subdomains only, so
+  `*.mukeremshifa.com` does not cover `api.conversekit.mukeremshifa.com`. A
+  plain record at that depth gives a TLS handshake failure with no obvious
+  cause; a Custom Domain provisions a certificate for the exact hostname.
+
+- **`config/origins.js` — the only place a hostname is written.** It was twelve
+  places. The dashboard reads it through Vite `define`; the landing page and
+  `widget.js` have no bundler, so they carry `__CK_API__`-style tokens that
+  `scripts/build-assets.mjs` substitutes at build time. `check-landing.mjs`
+  fails the build if any token survives, or if the page loads an asset from a
+  host we do not own. Moving to `conversekit.io` is an edit to `ZONE`.
+
+- **The widget is served major-pinned, from one URL.**
+  `cdn.conversekit.…/v1/widget.js`, `max-age=600, must-revalidate`, and nothing
+  else. The major belongs in the URL because that string gets pasted into other
+  people's HTML and can never be changed afterwards — free to do now, impossible
+  to retrofit later. A breaking change bumps `WIDGET_MAJOR` in
+  `config/origins.js` and `/v1/` keeps serving the old build to everyone who
+  already installed it.
+
+  `/v1/` carries its own copy of the fonts, because the widget derives its asset
+  base from its own `<script src>`: without that a tenant would ask for
+  `/v1/fonts/…`, get a 404, and render in the fallback face on every page with
+  nothing in the console to say so. `_headers` matches `/:major/fonts/*` rather
+  than a literal `/v1/`, so `/v2/` inherits the CORS header the day it exists.
+
+- **`apps/api/src/entitlements.ts` — tiers are data, not deployments.** One API
+  Worker for every plan, with every binding always present; the code gates
+  access and the config never does. Deploying a `ck-api-free` without the AI
+  binding would make an upgrade a hostname change in someone else's HTML instead
+  of a database write.
+
+  `getEntitlements(org)` returns the same permissive object for every plan
+  today. The point is not the gating, it is that every call site already asks:
+  the rate limiter, `retrieve()`, vendor selection on bot update, the org
+  storage cap, the health payload's new `branding` field, and `/v1/admin/me`.
+  `selectBot` embeds `organizations(plan)` so the seam stays synchronous.
+
+  `branding: false` removes the "Powered by ConverseKit" line from the **one**
+  widget artifact. There is no second bundle, and there must never be one:
+  forking the widget doubles the CDN surface and halves the test coverage of
+  both copies.
+
+- **Per-tier rate limiting on the GA `ratelimits` binding.** `RL_FREE` 30/min,
+  `RL_PRO` 120/min, `RL_SCALE` 600/min, selected in code from the org's plan.
+  A limit is static configuration and cannot be computed per request, so this is
+  the one genuinely deploy-time part of a tier — cheap now, annoying to
+  retrofit. Staging uses a separate block of namespace ids so its counters never
+  touch production's. Replaces the pre-GA `[[unsafe.bindings]]` form.
+
+- **`npm run db:reset -- --yes`** — drops the `public` schema and every auth
+  user, then applies every migration from scratch. Replaces `npm run db:baseline`,
+  which existed only because migrations `001`–`008` were applied by hand before
+  the runner did.
+
+- **Smart Placement on `ck-api`.** The chat path makes several sequential
+  Supabase calls per request, and each costs 20–30 ms from a distant region
+  against 1–3 ms when placed nearby. Supabase is reached over PostgREST rather
+  than a Postgres driver, so Hyperdrive does not apply — but placement does.
+
+- **CI deploys; laptops do not.** `.github/workflows/ci.yml` gained a
+  path-filtered deploy matrix: `main` → staging, tag `v*` → production, api
+  first. Only changed apps deploy. The pipeline holds one credential scoped to
+  editing Workers, because a pipeline that can read every production key has a
+  far larger blast radius than one that can only publish code.
+
+- **Secrets: one store per audience, and the store decides where a credential
+  can travel.** `apps/api/.dev.vars` holds the five Worker runtime secrets and
+  sits beside `wrangler.jsonc` — where wrangler actually looks, which the repo
+  root is not. `.env.tools` holds `SUPABASE_ACCESS_TOKEN`, which can drop and
+  recreate the schema and is therefore uploaded to nothing. GitHub holds
+  `CLOUDFLARE_API_TOKEN`. Nothing is in two places.
+
+  `npm run secrets:push` replaces a bare `wrangler secret bulk`, which uploads
+  whatever file you hand it. It pushes an allowlist checked against
+  `secrets.required` in `wrangler.jsonc` and fails if they drift, refuses a file
+  containing a tooling credential, refuses a staging push whose `SUPABASE_URL`
+  matches production's, and streams over stdin so no `secrets.json` is left
+  behind for the next `git add -A`. Declaring `secrets.required` also makes a
+  deploy **fail** on a missing secret, rather than shipping a Worker that 502s
+  on every health check until somebody reads the logs.
 
 - **Widget v0.11.0 — shadow DOM, accessibility, and streaming that does not
   fight the browser.** Five things, shipped together because four of them are
@@ -54,7 +155,7 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
   nothing could be copied out of a reply until it finished, and a link in an
   already-painted part was replaced under the cursor mid-click. A delta that
   cannot change how anything already rendered **parses** now goes straight onto
-  the trailing text node. Most deltas from every provider in `src/providers/`
+  the trailing text node. Most deltas from every provider in `apps/api/src/providers/`
   are plain prose, so that is the common path. Smooth scrolling is also off
   while a reply streams: `scrollTop` was being assigned every token and each
   assignment restarted the smooth animation from wherever the last one had
@@ -290,6 +391,58 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 
 ### Changed
 
+- **npm workspaces, one lockfile.** `src/` → `apps/api/src/`, `dashboard/` →
+  `apps/app/`, and `public/` split into `apps/cdn/assets/` (widget, and the
+  `_headers` that carry its CORS and cache rules) and `apps/site/assets/`
+  (landing page, product shots). `packages/brand/assets/` is now the single copy
+  of the favicons, logos and web fonts, copied into all three static targets at
+  build time rather than referenced cross-origin — the landing page and the
+  dashboard keep same-origin icon and font loads, and neither is down because
+  `cdn.` is.
+
+  The dashboard's second `package-lock.json` is gone, which is what made CI need
+  two `npm ci` steps that could disagree about a shared dependency. Everything
+  moved with `git mv`, so history follows.
+
+- **`apps/app/dist/` is generated and gitignored.** The dashboard bundle used to
+  be committed under `public/admin/`, which meant the deployed artifact was
+  whichever copy happened to be on someone's laptop, and every build produced a
+  diff of minified noise.
+
+- **The dashboard is served from `/`, not `/admin/`.** It has its own hostname
+  now. Routing is still hash-based, so nothing else changed.
+
+- **Seventeen migrations became six.** `001_tenancy`, `002_bots`,
+  `003_conversations`, `004_knowledge`, `005_retrieval`, `006_usage`. Dropped:
+  seed rows, one-time backfills, the `unclaimed` holding org, the guarded
+  single-bot index dance, the constraint drop-and-recreate dances, and every
+  superseded version of a retrieval function — the schema could previously only
+  be understood by replaying its own history.
+
+  **Not dropped: a single column the Worker reads.** The deprecated
+  business-facts columns on `bots` are still read-through-deprecated, because
+  removing them is a code change in `prompt.ts` and `profile.ts`, not a
+  migration. [supabase/README.md](supabase/README.md) maps the old seventeen
+  numbers onto the new six, so every code comment citing
+  `supabase/012_retrieval.sql` still resolves.
+
+- **`compatibility_date` 2024-11-01 → 2026-08-23.** Nearly two years of runtime
+  behaviour, moved deliberately on a torn-down stack with a green test suite
+  rather than drifted into.
+
+- **`scripts/check-deploy.mjs` retired.** Its job — never let a `__*` scratch
+  file reach a deploy — moved into `scripts/build-assets.mjs`, where it is
+  structural rather than a predeploy hook that only ever ran on one machine.
+  `wrangler pages deploy public` uploaded the directory as it found it, git's
+  opinion notwithstanding; there is no such upload any more.
+
+- **Dev servers renamed and repointed.** `npm run dev:api`, `dev:app`,
+  `dev:site`, `dev:cdn`. The two static ones build first and serve `dist/`,
+  because the sources hold `__CK_*__` tokens where hostnames go — a dev server
+  over the sources would render an install snippet reading `__CK_WIDGET_SRC__`.
+  `VITE_WIDGET_BASE` became `VITE_WIDGET_SRC`, and is now the full script src
+  rather than an origin.
+
 - **`hnsw.iterative_scan` is set before the vector search** on pgvector 0.8+
   (supabase/013), the second half of the recall mitigation `hnsw.ef_search`
   started. Guarded by an exception block, because setting an unknown parameter
@@ -377,7 +530,7 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
   label. Full brief: [docs/lead-capture.md](docs/lead-capture.md).
   **A bot with no `lead_config` produces the pre-010 prompt byte for byte**, and
   a test compares the two strings directly rather than trusting the reading.
-- **Lead notifications** (`src/notify.ts`) — one webhook per captured lead, as
+- **Lead notifications** (`apps/api/src/notify.ts`) — one webhook per captured lead, as
   generic JSON, a Slack message, or a Teams Adaptive Card. Dispatched from
   `waitUntil` after the lead is committed, 5s timeout, no retries: a webhook is
   a missed notification when it fails, never a lost lead or a slower reply.
@@ -472,7 +625,7 @@ Notable changes to ConverseKit. The widget carries its own version, shown in
 - **`npm run test:stats`** — 33 assertions over the aggregation, mostly on day
   bucketing, where an off-by-one puts every chart a day out invisibly.
 - **Theme toggle** — System / Light / Dark in the sidebar, persisted, with a
-  pre-paint script in `dashboard/index.html` so a dark-mode user never gets a
+  pre-paint script in `apps/app/index.html` so a dark-mode user never gets a
   white flash. The dark palette already existed in `index.css` and nothing had
   ever been able to select it.
 - **Skeletons** replacing the `Spinner` on Leads, Conversations, Sources and
@@ -569,7 +722,7 @@ where it stopped looking like a work in progress.
   radii and spacing.
 - **CI** — type-check, unit tests, dashboard build, plus static checks on the
   landing page and every documentation link. No secrets required.
-- **`public/_headers`** so cross-origin font and asset requests from tenant
+- **`apps/cdn/assets/_headers`** so cross-origin font and asset requests from tenant
   sites succeed.
 - **LICENSE** — proprietary, all rights reserved.
 
@@ -598,7 +751,7 @@ where it stopped looking like a work in progress.
   neutral chat bubbles had no background at all.
 - **`og:image` was relative.** Open Graph requires absolute URLs; link previews
   would have silently had no image.
-- Two dead README links to `public/admin/admin.js`, deleted when the React
+- Two dead README links to `apps/app/dist/admin.js`, deleted when the React
   dashboard replaced the vanilla one.
 
 ### Changed
