@@ -228,7 +228,13 @@ const block = [
   `    ${CLOSE}`,
 ].join('\n');
 
-const html = fs.readFileSync(PAGE, 'utf8');
+// Normalise CRLF first. The block above is joined with '\n', so on a
+// Windows checkout — where git hands over CRLF — the generated block
+// never equals the one in the file and `--check` calls a perfectly
+// fresh sprite stale, every time. Reading canonical LF also means the
+// write path emits what the repo already stores, rather than flipping
+// every line of the landing page on whichever machine ran it last.
+const html = fs.readFileSync(PAGE, 'utf8').replace(/\r\n/g, '\n');
 const start = html.indexOf(OPEN);
 const end = html.indexOf(CLOSE);
 if (start === -1 || end === -1 || end < start) {
