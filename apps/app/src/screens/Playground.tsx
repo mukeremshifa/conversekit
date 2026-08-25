@@ -10,7 +10,7 @@
 // so testing cannot pollute real transcripts or capture a fake lead.
 // ----------------------------------------------------------------
 import { useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { RotateCcw, Send } from 'lucide-react';
 import { endpoints, type Bot, type PreviewTurn } from '@/lib/api';
 import {

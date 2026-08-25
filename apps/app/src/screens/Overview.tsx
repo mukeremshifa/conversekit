@@ -15,7 +15,7 @@
 // blended figure the Usage screen exists to avoid.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { ArrowDownRight, ArrowUpRight, MessagesSquare, Target, Search } from 'lucide-react';
 import { endpoints, type Bot, type Stats } from '@/lib/api';
 import {

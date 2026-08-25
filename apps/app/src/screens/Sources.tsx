@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Boxes, FileText, FileUp, HelpCircle, Link2, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import { endpoints, uploadDocument, type Bot, type Chunk, type Doc } from '@/lib/api';
 import { formatDate } from '@/lib/utils';

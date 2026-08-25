@@ -11,7 +11,7 @@
 // every tab deep-linkable for free.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { ArrowRight, Boxes, HelpCircle } from 'lucide-react';
 import { endpoints, type Bot } from '@/lib/api';
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui';

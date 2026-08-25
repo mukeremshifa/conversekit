@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Plus, Trash2, ArrowUp, ArrowDown, Upload, ImageOff } from 'lucide-react';
 import {
   endpoints, uploadLogo, type Bot, type WidgetPosition, type WidgetTheme,

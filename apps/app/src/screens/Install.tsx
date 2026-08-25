@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Check, Copy } from 'lucide-react';
 import { API, API_IS_DEFAULT, WIDGET_SRC } from '@/lib/config';
 import type { Bot } from '@/lib/api';

@@ -28,7 +28,7 @@
 // from the last saved values with only its own section overlaid.
 // ----------------------------------------------------------------
 import { useCallback, useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Gauge, ListChecks, RefreshCw, SearchX, Zap } from 'lucide-react';
 import {
   ApiError, endpoints,

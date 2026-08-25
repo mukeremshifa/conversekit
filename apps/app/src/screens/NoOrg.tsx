@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { endpoints } from '@/lib/api';
 import { Wordmark } from '@/components/Mark';
 import { Button, Card, CardContent, CardDescription, Field, Input } from '@/components/ui';

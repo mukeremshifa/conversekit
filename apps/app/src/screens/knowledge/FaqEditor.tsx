@@ -14,7 +14,7 @@
 // polls it the same way Sources does.
 // ----------------------------------------------------------------
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { ArrowDown, ArrowUp, HelpCircle, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { endpoints, type Bot, type Doc, type FaqItem } from '@/lib/api';
 import {

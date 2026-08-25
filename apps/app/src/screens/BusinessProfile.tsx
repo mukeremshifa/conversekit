@@ -19,7 +19,7 @@
 // same reason and with the same shape.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Plus, Trash2 } from 'lucide-react';
 import {
   endpoints,

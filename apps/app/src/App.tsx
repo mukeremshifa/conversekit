@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Toaster, toast } from 'sonner';
 import {
   LayoutDashboard,
   BookText, Building2, Cable, Coins, Cpu, HelpCircle, MessageSquareText, MessagesSquare, Plug, Search, Settings2, Target,
 } from 'lucide-react';
 import { clearSession, currentSession } from '@/lib/auth';
 import { endpoints, type Bot, type Me } from '@/lib/api';
+import { toast } from '@/lib/toast';
 import { SignIn } from '@/screens/SignIn';
 import { Shell, NewBotDialog, type NavItem } from '@/components/Shell';
 import { BotConfiguration } from '@/screens/BotConfiguration';
@@ -21,6 +21,7 @@ import { Playground } from '@/screens/Playground';
 import { Overview } from '@/screens/Overview';
 import { NoOrg } from '@/screens/NoOrg';
 import { EmptyState, Spinner } from '@/components/ui';
+import { Toaster } from '@/components/Toaster';
 import { CommandPalette, buildCommands, useCommandPalette } from '@/components/CommandPalette';
 import { readTheme, setTheme } from '@/lib/theme';
 
@@ -167,7 +168,7 @@ export default function App() {
     return (
       <>
         <SignIn onAuthed={() => setAuthed(true)} />
-        <Toaster richColors position="top-center" />
+        <Toaster />
       </>
     );
   }
@@ -187,7 +188,7 @@ export default function App() {
     return (
       <>
         <NoOrg email={me.email} onCreated={load} onSignOut={onSignOut} />
-        <Toaster richColors position="top-center" />
+        <Toaster />
       </>
     );
   }
@@ -256,7 +257,7 @@ export default function App() {
           onCycleTheme: cycleTheme,
         })}
       />
-      <Toaster richColors position="top-center" />
+      <Toaster />
     </>
   );
 }

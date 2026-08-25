@@ -17,7 +17,7 @@
 // everything else. This renders the list.
 // ----------------------------------------------------------------
 import { useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { MessageCircleQuestion, Plus, Trash2 } from 'lucide-react';
 import { endpoints, type Bot, type MissQuestion, type MissReport as Report } from '@/lib/api';
 import { formatDate } from '@/lib/utils';

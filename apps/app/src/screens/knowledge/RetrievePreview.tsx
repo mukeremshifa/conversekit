@@ -15,7 +15,7 @@
 // flipping the flag that stops pasting the FAQ into every prompt.
 // ----------------------------------------------------------------
 import { useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Search, Sparkles, Type } from 'lucide-react';
 import {
   endpoints, type Bot, type EffectiveRetrieval, type RetrievePreview as Result,

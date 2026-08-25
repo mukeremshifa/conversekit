@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Download, MessageSquareText, RefreshCw, Search, Target } from 'lucide-react';
 import { endpoints, type Bot, type Lead, type Message } from '@/lib/api';
 import { formatDate } from '@/lib/utils';

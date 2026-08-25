@@ -25,7 +25,7 @@
 // multiplied by a rate looks exactly like a bill if you let it.
 // ----------------------------------------------------------------
 import { useCallback, useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { AlertTriangle, Coins, Cpu, Info, RefreshCw, Sigma } from 'lucide-react';
 import { ApiError, endpoints, type Bot, type UsageGroup, type UsageReport } from '@/lib/api';
 import {

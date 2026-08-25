@@ -8,7 +8,7 @@
 // chat-model change would be pointless.
 // ----------------------------------------------------------------
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { CheckCircle2, CircleAlert, KeyRound, Plug, XCircle } from 'lucide-react';
 import { endpoints, type Bot, type ProviderTest, type Vendor, type VendorConfig } from '@/lib/api';
 import {

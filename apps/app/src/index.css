@@ -230,6 +230,80 @@
   .ck-press:active { transform: translateY(1px); }
 }
 
+/* ── Toasts ──────────────────────────────────────────────────────
+   The toast itself is dressed in ordinary utilities over in
+   components/Toaster.tsx, which is where anything about how it LOOKS
+   belongs. What is left here is the handful of rules a className
+   cannot reach.
+
+   They are deliberately outside every @layer, and each one carries a
+   class on top of the attribute sonner selects on. Sonner ships its
+   stylesheet inside its module and appends it to <head> on import,
+   which lands after Vite's own <link>: unlayered beats layered
+   whatever the specificity, and a tie on specificity goes to whoever
+   is later, which is always sonner. Anything here that has to win has
+   to out-specify it.
+
+   Reduced motion needs nothing: sonner carries its own !important
+   suppression, and the global block below covers the rest. */
+
+[data-sonner-toaster].ck-toaster {
+  /* Sonner hardcodes a ui-sans-serif stack. */
+  font-family: var(--font-sans);
+
+  /* Lifted off a near-white page: two shadows, a wide soft one for the
+     lift and a tight one to keep the card's own edge crisp. Built on
+     the fg near-black rather than pure black, so the cool cast of the
+     neutrals carries into the shadow. */
+  --ck-toast-shadow:
+    0 12px 32px -12px rgb(10 10 12 / .28),
+    0 4px 10px -6px rgb(10 10 12 / .14);
+}
+
+/* On the dark ground the same shadow is invisible — black on #0A0A0C
+   is nothing — so it goes deeper and wider, and the border does most
+   of the separating. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [data-sonner-toaster].ck-toaster {
+    --ck-toast-shadow:
+      0 18px 44px -14px rgb(0 0 0 / .75),
+      0 6px 14px -8px rgb(0 0 0 / .55);
+  }
+}
+:root[data-theme="dark"] [data-sonner-toaster].ck-toaster {
+  --ck-toast-shadow:
+    0 18px 44px -14px rgb(0 0 0 / .75),
+    0 6px 14px -8px rgb(0 0 0 / .55);
+}
+
+/* Stated twice on purpose: sonner replaces box-shadow outright when a
+   toast takes focus, which would drop the card flat onto the page at
+   the moment a keyboard user reaches it. The focus ring itself is the
+   global outline, same as everywhere else. */
+[data-sonner-toast].ck-toast,
+[data-sonner-toast].ck-toast:focus-visible {
+  box-shadow: var(--ck-toast-shadow);
+}
+
+/* The app's curve rather than sonner's plain ease, matching .ck-route
+   and .ck-stagger — a toast that arrives on a different easing to the
+   screen behind it reads as a separate piece of software. Swipes and
+   removals keep sonner's own timings, which are more specific. */
+[data-sonner-toast].ck-toast {
+  transition:
+    transform .4s cubic-bezier(.2,.7,.3,1),
+    opacity .3s cubic-bezier(.2,.7,.3,1),
+    height .4s cubic-bezier(.2,.7,.3,1);
+}
+
+/* Only the front toast shows its contents; the ones behind are the
+   edges of stacked cards. Sonner's copy of this rule is gated on the
+   styling that `unstyled` turned off, and without it the stack renders
+   as two messages printed on top of each other. */
+[data-sonner-toast].ck-toast[data-expanded="false"][data-front="false"] > * {
+  opacity: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* Suppressed, not merely shortened. The shimmer highlight is removed
      outright rather than left parked over the block. */

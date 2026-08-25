@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { LogOut, Plus, Menu, Monitor, Moon, Sun, Search } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { endpoints, type Bot, type Org } from '@/lib/api';
 import { Wordmark } from '@/components/Mark';
 import { readTheme, setTheme, type Theme } from '@/lib/theme';
