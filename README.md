@@ -108,7 +108,7 @@ Full setup — migrations, secrets and the first bot — is in
 | Widget script | `ck-cdn` | https://cdn.conversekit.mukeremshifa.com/v1/widget.js |
 | API | `ck-api` | https://api.conversekit.mukeremshifa.com |
 
-Staging is the same four on `.workers.dev`: `ck-<service>-staging.mukeremshifa.workers.dev`.
+Staging is the same four on `.workers.dev`: `ck-<service>-staging.mukeemoha.workers.dev`.
 Hostnames are written in exactly one place, [`config/origins.js`](config/origins.js).
 
 ## Widget API

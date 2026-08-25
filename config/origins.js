@@ -34,7 +34,17 @@ const PRODUCTION = {
  * widget would load from the production CDN. A staging environment that
  * only exercises production is not one.
  */
-const WORKERS_DEV = process.env.CK_WORKERS_DEV ?? 'mukeremshifa.workers.dev';
+// The account's workers.dev subdomain — NOT the zone name, and not
+// derivable from it. It is whatever was claimed when the account was
+// created; check with:
+//
+//   curl -H "Authorization: Bearer $TOKEN" //     https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/subdomain
+//
+// This was wrong once already: it read `mukeremshifa.workers.dev`, which
+// resolves nowhere, so every staging build baked an API host that did
+// not exist. Nothing caught it, because check-landing only asserts that
+// assets come from a host we name — not that the host answers.
+const WORKERS_DEV = process.env.CK_WORKERS_DEV ?? 'mukeemoha.workers.dev';
 
 const STAGING = {
   site: `https://ck-site-staging.${WORKERS_DEV}`,

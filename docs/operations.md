@@ -249,7 +249,7 @@ deploy, so a landing-page typo no longer redeploys the script running on
 customers' sites.
 
 ```
-                push to main  →  ck-*-staging.mukeremshifa.workers.dev
+                push to main  →  ck-*-staging.mukeemoha.workers.dev
                 tag v1.2.0    →  the four custom domains
 ```
 

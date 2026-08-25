@@ -7,6 +7,14 @@
   // binding would make an upgrade a hostname change in someone else's
   // HTML instead of a database write.
   "name": "ck-api",
+
+  // The account holding the mukeremshifa.com zone. Stated rather than
+  // left to wrangler's account picker, because the OAuth token now
+  // reaches two accounts and a Worker route cannot cross them: deploying
+  // to the other one is how the custom domains failed to attach the
+  // first time. Not a secret — account ids are identifiers, not
+  // credentials.
+  "account_id": "caaf93a371272a19ac9afc1a78d575e3",
   "main": "src/index.ts",
 
   // Current as of this rebuild. The previous value, 2024-11-01, was

@@ -443,20 +443,32 @@ payload removes the Powered-by line from the **one** widget artifact.
 binding the code names is declared in both environments and that no two plans
 share a namespace id.
 
-### Phase 4 — custom domains ❌ BLOCKED
+### Phase 4 — custom domains ⏳ READY, NOT YET ATTACHED
 
-`wrangler` refuses: **"Could not find zone for `conversekit.mukeremshifa.com`."**
+Blocked for most of this rebuild, and no longer. `wrangler` refused with
+**"Could not find zone for `conversekit.mukeremshifa.com`"** because the zone and
+the Workers were on different accounts, and a Worker route cannot cross accounts.
 
-`mukeremshifa.com` is on Cloudflare nameservers (`kellen` / `annabel.ns.cloudflare.com`)
-but is **not a zone on account `2e88036de25704e438be00e66e65b862`** — the account
-the Workers are on. Its apex currently points at Vercel, which is unrelated and
-does not block a subdomain.
+The wrangler OAuth token now reaches both:
 
-The four `wrangler.jsonc` files declare their Custom Domains as planned and are
-otherwise ready; production deploys will attach them the moment the zone is on
-the same account. Nothing is half-attached: `ck-site` was uploaded once, failed
-at the route step, and was deleted again, so the account holds exactly the four
-staging Workers.
+| Account | Holds | workers.dev |
+|---|---|---|
+| `caaf93a371272a19ac9afc1a78d575e3` | the `mukeremshifa.com` zone (active, Free) — and no Workers | `mukeemoha` |
+| `2e88036de25704e438be00e66e65b862` | the four staging Workers — and no zone | `conversekit` |
+
+So the fix is to deploy onto the account that holds the zone, not to move the
+zone. All four `wrangler.jsonc` files now pin
+`"account_id": "caaf93a371272a19ac9afc1a78d575e3"` rather than leaving it to
+wrangler's account picker — with two accounts on one token, picking the wrong
+one is exactly how the domains failed to attach the first time.
+
+**One bug fell out of this.** `config/origins.js` had
+`WORKERS_DEV = 'mukeremshifa.workers.dev'`, which resolves nowhere: the
+subdomain is a per-account name claimed at signup, unrelated to any zone. Every
+staging build therefore baked an API host that did not exist, and nothing caught
+it — `check-landing.mjs` asserts that assets come from a host we *name*, not
+that the host *answers*. Now `mukeemoha.workers.dev`, matching the account the
+Workers are moving to.
 
 ### Phase 5 — CI/CD ✅
 
@@ -551,35 +563,34 @@ tables with RLS, 15 policies, 162 functions, 16 triggers, 33 indexes, zero anon
 grants. The only difference is Supabase's own `rls_auto_enable` event trigger,
 present on the newer project.
 
-Four things left, in order:
+Nothing is blocked any more. In order:
 
-1. **The zone and the Workers must be on one account.** This is the blocker, and
-   it does not have a DNS-shaped solution: a Worker route cannot cross accounts.
-   `mukeremshifa.com` is on account A; the Workers are on account
-   `2e88036de25704e438be00e66e65b862` (account B), which holds no zone at all.
-
-   Cloudflare for SaaS does **not** sidestep this. Custom Hostnames are a
-   zone-level feature — you enable Cloudflare for SaaS *on a zone*, designate a
-   fallback origin in that zone's DNS, and the Worker catches traffic through a
-   `*/*` route *on that zone*. So the SaaS path still requires a zone on account
-   B; it only changes *which* domain has to live there. Cheapest correct move is
-   to redeploy the Workers onto whichever account holds the zone.
-
-2. **Push the API Worker's secrets**, for both environments:
+1. **Push the secrets.** The zone account has never held these Workers, so both
+   secret stores are empty.
 
    ```bash
    npm run secrets:push                    # → ck-api,         conversekit-prod
    npm run secrets:push -- --env staging   # → ck-api-staging, conversekit-staging
    ```
 
-   `secrets.required` now makes a deploy *fail* on a missing secret rather than
-   shipping a Worker that 502s, so this has to happen before the next deploy.
+   `secrets.required` makes a deploy *fail* on a missing secret rather than
+   shipping a Worker that 502s, so this comes first.
 
-3. **Delete the Pages project.**
+2. **Deploy.** Creates all four Workers on the zone account and attaches the
+   four Custom Domains, writing the DNS records itself.
 
    ```bash
+   npm run deploy
+   ```
+
+3. **Tear down the old account's copies** once the new ones answer — four
+   Workers and the Pages project on `2e88036de25704e438be00e66e65b862`:
+
+   ```bash
+   for w in api app cdn site; do npx wrangler delete --name ck-$w-staging; done
    npx wrangler pages project delete conversekit-widget --yes
    ```
 
 4. **Add `CLOUDFLARE_API_TOKEN` to the repo secrets**, scoped to Workers Scripts
-   edit on whichever account ends up holding both.
+   edit on `caaf93a371272a19ac9afc1a78d575e3`. Then push the branch and open the
+   PR; merging deploys staging, and a `v*` tag cuts production.
