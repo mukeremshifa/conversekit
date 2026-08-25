@@ -43,6 +43,8 @@
     "db:status": "node scripts/migrate.mjs status",
     "db:migrate": "node scripts/migrate.mjs up",
     "db:reset": "node scripts/migrate.mjs reset",
+    "seed:demo": "node scripts/seed-demo-bot.mjs",
+    "check:demo": "node scripts/seed-demo-bot.mjs --check",
     "verify:isolation": "node scripts/verify-isolation.mjs",
     "verify:rls": "node scripts/verify-rls.mjs",
     "eval:rag": "node scripts/eval-rag.mjs",

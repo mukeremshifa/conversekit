@@ -2814,10 +2814,19 @@
      install path rather than a same-origin shortcut. The bot's allowed
      origins must include this page's origin exactly; the staging
      .workers.dev host is a different origin and is refused with a 403
-     unless it is listed too. -->
+     unless it is listed too.
+
+     The id is a token, NOT a literal. It used to be a literal, and it
+     was a uuid that had never existed in any database: /health answered
+     404, widget.js correctly unmounted itself, and this page shipped
+     for months with no chat on it and a "Try it live" button that could
+     only ever say "Chat unavailable". config/demo-bot.js now declares
+     the id, scripts/seed-demo-bot.mjs provisions the row, and
+     scripts/check-landing.mjs fails the build if the token is still
+     here unsubstituted. -->
     <script
       src="__CK_WIDGET_SRC__"
-      data-bot-id="b0700001-0000-4000-8000-000000000003"
+      data-bot-id="__CK_DEMO_BOT__"
       defer
     ></script>
   </body>

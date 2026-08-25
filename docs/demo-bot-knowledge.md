@@ -1,156 +1,124 @@
-# Demo bot — paste-ready knowledge base
+# The demo bot
 
-The landing page at `apps/site/assets/index.html` carries a live widget. It currently
-points at the Pearl Dental demo bot, which works but talks about dentistry on a
-page about ConverseKit.
+The landing page at [`apps/site/assets/index.html`](../apps/site/assets/index.html)
+carries a live widget — the same `<script>` tag a tenant pastes into their own site,
+served from the same CDN, talking to the same API. It is the product demonstrating
+itself, so when it is broken the page is worse than if it had no chat on it at all.
 
-This file exists so replacing it is copy-paste rather than a writing task.
+This file explains how that bot exists. **It is not where its content lives** — that
+is [`config/demo-bot.js`](../config/demo-bot.js), and editing it there and reseeding
+is the supported way to change what the bot knows.
 
-## Setup
+## How it used to work, and why that failed
 
-1. Create a bot in the dashboard. Name it **ConverseKit**.
-2. **Allowed origins** — this is the step that silently breaks everything if
-   missed. The bot must allow the page's origin exactly:
+The instructions here used to be a checklist: create a bot in the dashboard, paste
+seven blocks of prose into six different fields, copy the generated uuid into the
+landing page by hand, redeploy.
 
-   ```
-   https://conversekit.mukeremshifa.com
-   ```
+Every step of that was correct and the result still did not survive, because a bot
+created by hand exists only in the database. `npm run db:reset` erased it, nothing
+replayed it, and the page went on shipping a `data-bot-id` that matched no row in any
+database — in fact a uuid that had never matched one, since it was typed rather than
+copied. The widget handles that exactly as designed: a 404 from `/health` is
+definitive, so it unmounts rather than greeting a visitor whose questions it cannot
+answer. The visible symptom was a landing page with no chat on it and a "Try it live"
+button that could only ever say "Chat unavailable".
 
-   No trailing slash and no path — the API compares origins exactly, scheme and
-   port included, and rejects anything else with a 403.
-3. Set **primary color** to `#EEBA2B` so the widget matches the page.
-4. Paste the sections below into their homes. Since
-   [011](../supabase/004_knowledge.sql) those are three different places, and
-   the split is the point — see [knowledge.md](knowledge.md):
-   - **Business description**, **hours** and **contact** → Bot Configuration.
-     Small, and always in the prompt, so the bot knows them whatever it is asked.
-   - **Custom instructions** → Bot Configuration → Instructions.
-   - **FAQ** → Knowledge → FAQ, one item per `Q:` / `A:` pair below. Each is
-     indexed on its own.
-   - **Services / features** → Knowledge → Sources, as a `text` source. It is
-     prose, and prose is what the ordinary chunker is for.
-5. Copy the new bot's id into `apps/site/assets/index.html` — the single `data-bot-id`
-   on the last script tag, which is commented as the line to change.
-6. Redeploy: `npm run deploy:cdn` for the widget, `npm run deploy:site` for the landing page.
+So the bot is now declared in a file and provisioned by a script.
 
-Optionally add this file itself as a **source** (type: text) under Knowledge →
-Sources, which gives the bot retrieval over its own documentation.
+## The three pieces
 
----
+| | |
+|---|---|
+| [`config/demo-bot.js`](../config/demo-bot.js) | Its ids, its settings and its whole corpus. The only declaration. |
+| [`config/origins.js`](../config/origins.js) | Exports `DEMO_BOT_ID` as the `__CK_DEMO_BOT__` build token. |
+| [`scripts/seed-demo-bot.mjs`](../scripts/seed-demo-bot.mjs) | Creates the rows the first file describes. |
 
-## Business description
+The bot id is a **fixed uuid** rather than whatever the database generated, because it
+is baked into the landing page at build time. A generated id would mean the page could
+only be built after the database was seeded, and would have to be rebuilt after every
+reseed. A fixed one makes the two independent — either can run first, and a schema
+reset does not invalidate a deployed page.
 
-ConverseKit is a multi-tenant conversational AI platform. It gives any website a
-chat widget that answers visitor questions from that business's own knowledge
-base, and captures leads during the conversation.
+The landing page carries `data-bot-id="__CK_DEMO_BOT__"`, substituted at build time
+like every hostname on the page. That is what makes the id *checkable*:
+[`scripts/check-landing.mjs`](../scripts/check-landing.mjs) fails the build on any
+`__CK_*__` token that survived substitution, and separately asserts the widget tag
+carries a 36-character uuid. Neither check could have caught a hand-typed literal,
+which is why the broken one shipped.
 
-It installs with a single `<script>` tag and needs no build step on the client's
-side. One Cloudflare Worker serves the API and one Cloudflare Pages site serves
-the widget and the admin dashboard, together supporting an unlimited number of
-client bots. Each bot is a row in Postgres with its own branding, knowledge,
-allowed origins and AI provider settings.
+## Seeding it
 
-It is built on Cloudflare Workers with Hono, Supabase Postgres with pgvector for
-retrieval, and a pluggable provider layer that speaks to eleven AI vendors
-through one interface.
+```
+npm run seed:demo                 # provision or update
+npm run seed:demo -- --dry-run    # say what would change, write nothing
+npm run check:demo                # exit non-zero if it is not serving
+```
 
-## Services / features
+Two credentials in `.env.tools`, alongside the migration token — see
+[`.env.tools.example`](../.env.tools.example):
 
-- **Drop-in chat widget** — one script tag, self-styling from the bot's brand
-  colour, mobile-friendly, keyboard accessible.
-- **Answers from your documents** — paste text or markdown, or point it at a
-  URL. Longer material is chunked, embedded and searched at question time, and
-  the answer cites what it used.
-- **Lead capture** — the assistant collects a name, email or phone number when a
-  visitor shows intent, and files it as a lead you can export to CSV.
-- **Eleven AI vendors, one interface** — OpenAI, Anthropic Claude, Google
-  Gemini, Groq, OpenRouter, Mistral, Cloudflare Workers AI, DeepSeek, Together
-  AI, Ollama, LM Studio, plus any OpenAI-compatible endpoint. Switching is a
-  dropdown, per bot.
-- **Bring your own key** — each bot can carry its own vendor credentials, stored
-  write-only and redacted from every API response.
-- **Streaming replies** — token-by-token over SSE, with an automatic fallback to
-  a buffered endpoint if the stream fails.
-- **Multi-tenant isolation** — row-level security in Postgres keyed off
-  organization membership, so two organizations cannot see each other's bots,
-  leads or conversations.
-- **Origin lock** — each bot carries a list of allowed origins; requests from
-  anywhere else are refused before the model is called.
-- **Admin dashboard** — playground, bot settings, knowledge base, knowledge
-  sources with a chunk inspector, retrieval tuning, provider selection, leads
-  and conversation transcripts.
+```
+CK_DEMO_OWNER_EMAIL=you@example.com
+CK_DEMO_OWNER_PASSWORD=<a password you choose>
+```
 
-## Hours / availability
+The account is created on the first run and is the dashboard login for the demo bot
+afterwards. It is required rather than optional: the knowledge half of the seed goes
+through the admin API, and [`src/auth.ts`](../apps/api/src/auth.ts) refuses the
+service-role key as a bearer token by design — `role` must be `authenticated` — so
+there is no session-free path to it.
 
-The API runs on Cloudflare's edge network and is available continuously. There
-are no support hours; this is a self-serve product.
+The seed writes through **two transports on purpose**. Rows go in as `service_role`
+over PostgREST, because the demo bot needs ids the product's own create-bot route
+cannot assign. Knowledge goes through the admin API as the signed-in owner, because
+chunking, embedding and the FAQ document are the ingest pipeline's job — a seed that
+reimplemented them would be a second copy of the pipeline, free to drift from the
+first. It also means seeding exercises the same path a tenant does.
 
-## Contact
+It is idempotent. Rows match on the fixed ids, sources on title, FAQ items on question
+text; a source whose content has not changed is left alone rather than re-embedded.
+Deleting an FAQ entry from `config/demo-bot.js` deletes it from the bot on the next
+run, which is what makes that file a description of reality rather than a suggestion.
 
-Use the dashboard to manage bots. For anything else, reach the maintainer
-through the project repository.
+## After seeding
 
-## FAQ
+```
+npm run check:landing && npm run deploy:site
+```
 
-**How do I install it?**
-Create a bot in the dashboard, fill in what it should know, then paste the
-script tag with your bot id before the closing `</body>` tag of your site.
+Only needed when `DEMO_BOT_ID` itself changes, which should be never — the id is baked
+into the page, and nothing else the seed writes is.
 
-**Do I need to change my site's build setup?**
-No. It is one script tag. There is nothing to install, bundle or compile.
+## The two ways it silently breaks
 
-**What does it cost to run?**
-It can run at no cost. Gemini Flash Lite for chat and Cloudflare Workers AI
-for embeddings handle the whole loop — ingest, retrieve, answer — on free
-tiers, and that is the platform default.
+**The origin.** A bot's `allowed_origins` are compared exactly: scheme, host and port,
+no trailing slash, no path. A mismatch is a 403 the widget cannot explain and the
+visitor never sees. The seed writes `ORIGINS.site` from `config/origins.js` — the same
+switch that writes the hostnames into the page — so the two cannot disagree. This is
+also why `--env staging` insists on `CK_ENV=staging` being set: without it the staging
+bot would be told to allow the production site.
 
-**Which AI models can I use?**
-Eleven vendors are built in, plus any OpenAI-compatible endpoint including local
-servers like Ollama and LM Studio. Each bot picks its own vendor and model.
+**An empty corpus.** A bot with no chunks loads, greets, and then knows nothing, which
+looks like a working widget and reads as a broken product. `npm run check:demo` asserts
+`/health` answers, the site origin is allowed, and `chunk_count` is above zero — the
+three ways this can be provisioned and still not work.
 
-**Can I use my own API key?**
-Yes. Each bot can carry its own vendor credentials. Keys are write-only through
-the API — once stored they are never returned, and the dashboard shows only the
-last few characters.
+## Editing what it says
 
-**Why isn't my widget answering?**
-Almost always the origin. The bot's allowed origins must match the site's origin
-exactly, including scheme and port, with no trailing slash or path. The second
-common cause is an empty knowledge base — the bot needs something to say.
+Change [`config/demo-bot.js`](../config/demo-bot.js) and run `npm run seed:demo`. The
+content is split three ways for the reasons in [knowledge.md](knowledge.md):
 
-**How does it know about my business?**
-You provide it. Fill in the knowledge base fields, or add knowledge sources for
-anything longer. At question time the query is embedded and matched against your
-content by similarity, and the best passages are put into the prompt.
+- **`business_description`** and **`custom_instructions`** are always in the prompt, so
+  the bot knows them whatever retrieval returns. Both are capped — 600 and 2000
+  characters — because they ship on every single message.
+- **`DEMO_SOURCES`** is prose, chunked and embedded by the ordinary pipeline. It is
+  prose because that is what it is: continuous text where the useful passage for a
+  given question is a paragraph somewhere inside it.
+- **`DEMO_FAQ`** is question/answer rows, each indexed on its own, each eligible for the
+  near-exact-match shortcut that skips retrieval entirely.
 
-**What happens if retrieval fails?**
-The turn still gets answered. A bot with no corpus, or an embedding vendor
-having a bad minute, falls back to the plain knowledge-base prompt rather than
-failing the visitor's question.
-
-**Is my data separate from other customers'?**
-Yes. Isolation is enforced by row-level security policies in Postgres rather
-than by application code, and there is a test that authenticates as one
-organization and tries to read another's records directly.
-
-**Can I see what the bot is actually retrieving?**
-Yes. The dashboard shows the chunks each document produced, and lets you
-reindex a source after editing it.
-
-**Can I open the chat from my own button?**
-Yes. Once the widget has loaded it exposes `window.ConverseKit` with `open()`,
-`close()`, `toggle()` and `isOpen()`.
-
-## Custom instructions
-
-You are the assistant for ConverseKit itself. Visitors are usually developers or
-agency owners evaluating whether to use it.
-
-Be direct and concrete. Prefer specifics over marketing language — name the
-actual vendors, the actual limits, the actual failure modes. If someone asks
-whether it does something that is not in your knowledge base, say you do not
-know rather than guessing; this product's own pitch is that it admits ignorance
-instead of inventing answers, so doing otherwise would be a poor demonstration.
-
-Keep replies short. Two or three sentences is usually right; use a short list
-only when the answer genuinely is a list.
+Lead capture is deliberately **off**. This bot exists to demonstrate answering, and a
+landing-page widget that asks an evaluator for their phone number before they have
+finished reading the page is the fastest way to make the demo feel like a trap. The
+feature is described in the FAQ instead.

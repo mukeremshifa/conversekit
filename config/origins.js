@@ -15,7 +15,13 @@
 // Nothing else may hardcode a hostname. scripts/check-landing.mjs fails
 // the build on a `__CK_*__` token that survived substitution, and on any
 // asset loaded from a host these four do not name.
+//
+// One non-hostname rides along in TOKENS — the demo bot's id — because
+// the substitution pass is the mechanism that makes a value checkable,
+// and that id needed checking. See the note on TOKENS below.
 // ----------------------------------------------------------------
+import { DEMO_BOT_ID } from './demo-bot.js';
+
 const ZONE = process.env.CK_ZONE ?? 'conversekit.mukeremshifa.com';
 
 const PRODUCTION = {
@@ -126,6 +132,17 @@ export const installSrc = () => `${ORIGINS.cdn}/${WIDGET_MAJOR}/widget.js`;
  * Tokens substituted into buildless sources at build time. The values
  * are what a browser sees; the tokens are what the repo holds, so no
  * source file names a hostname.
+ *
+ * `__CK_DEMO_BOT__` is the one entry that is not a hostname, and it is
+ * here for the same reason the others are: the landing page carries a
+ * live widget, that widget needs a bot id, and an id written into the
+ * HTML by hand is an id nothing can check. It was wrong for exactly
+ * that reason — the page shipped a fabricated uuid that matched no row
+ * in any database, so /health answered 404 and widget.js unmounted
+ * itself on every visit. Routing it through here means
+ * scripts/check-landing.mjs fails the build on an unsubstituted token,
+ * and config/demo-bot.js stays the single declaration of which bot
+ * that is.
  */
 export const TOKENS = {
   __CK_SITE__: ORIGINS.site,
@@ -133,6 +150,7 @@ export const TOKENS = {
   __CK_CDN__: ORIGINS.cdn,
   __CK_API__: ORIGINS.api,
   __CK_WIDGET_SRC__: installSrc(),
+  __CK_DEMO_BOT__: DEMO_BOT_ID,
 };
 
 /** Replace every token in `text`. Unknown `__CK_*__` tokens are left
