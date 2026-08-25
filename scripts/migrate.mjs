@@ -87,7 +87,9 @@ if (envIdx !== -1 && (!targetEnv || targetEnv.startsWith('-'))) {
   process.exit(2);
 }
 // `--env staging` leaves a bare word in argv that is not the command.
-const positional = args.filter((a, i) => !a.startsWith('-') && i !== envIdx + 1);
+// Guarded on envIdx !== -1: without it, `envIdx + 1` is 0 and the filter
+// swallows the command itself.
+const positional = args.filter((a, i) => !a.startsWith('-') && !(envIdx !== -1 && i === envIdx + 1));
 const command = positional[0] ?? 'status';
 const dryRun = args.includes('--dry-run');
 
@@ -253,6 +255,13 @@ create table if not exists public.schema_migrations (
   checksum   text not null,
   applied_at timestamptz not null default now()
 );
+-- Stated rather than inherited. Supabase enables RLS on new public
+-- tables by default on projects created after roughly mid-2026, so
+-- leaving this implicit means two projects running the same migrations
+-- disagree about the ledger depending on when they were created — which
+-- is exactly the kind of drift a migration runner exists to prevent.
+-- No policy accompanies it: nothing but the runner should read this.
+alter table public.schema_migrations enable row level security;
 -- Tenants have no business reading the schema history. Guarded on the
 -- roles existing so the runner also works against a plain Postgres,
 -- where anon and authenticated are Supabase's inventions and absent.

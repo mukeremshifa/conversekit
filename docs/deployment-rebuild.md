@@ -543,46 +543,43 @@ Four changes made after the execution above, on review of the result.
 
 ### Still yours
 
-Five things, in order:
+**Done since:** Supabase is split across two projects. `conversekit-prod`
+(`jvmoiyyieprhtlyymhtg`, eu-west-2) is production and carries all six
+migrations; `conversekit-staging` (`zqgglnewdmmwjgjzxjvv`, eu-west-1) is the
+former single project, now staging. Both verified to the same shape — 10 app
+tables with RLS, 15 policies, 162 functions, 16 triggers, 33 indexes, zero anon
+grants. The only difference is Supabase's own `rls_auto_enable` event trigger,
+present on the newer project.
 
-1. **Put `mukeremshifa.com` on account `2e88036de25704e438be00e66e65b862`**, or
-   move the Workers to whichever account holds it. A Worker route cannot cross
-   accounts. Then `npm run deploy` attaches all four Custom Domains and creates
-   the DNS records — no manual record needed, and no manual record *wanted*
-   (see the TLS note above).
+Four things left, in order:
 
-2. **Create a second Supabase project for staging.** Staging currently shares
-   production's database, which means it is not staging: a test run writes real
-   rows, and `db:reset` would take production with it. Harmless only while the
-   database is empty.
+1. **The zone and the Workers must be on one account.** This is the blocker, and
+   it does not have a DNS-shaped solution: a Worker route cannot cross accounts.
+   `mukeremshifa.com` is on account A; the Workers are on account
+   `2e88036de25704e438be00e66e65b862` (account B), which holds no zone at all.
+
+   Cloudflare for SaaS does **not** sidestep this. Custom Hostnames are a
+   zone-level feature — you enable Cloudflare for SaaS *on a zone*, designate a
+   fallback origin in that zone's DNS, and the Worker catches traffic through a
+   `*/*` route *on that zone*. So the SaaS path still requires a zone on account
+   B; it only changes *which* domain has to live there. Cheapest correct move is
+   to redeploy the Workers onto whichever account holds the zone.
+
+2. **Push the API Worker's secrets**, for both environments:
 
    ```bash
-   # after creating the project in the Supabase dashboard
-   cp apps/api/.dev.vars.example apps/api/.dev.vars.staging
-   #   → fill in the three SUPABASE_ values from the NEW project
-   npm run db:reset -- --env staging --yes
+   npm run secrets:push                    # → ck-api,         conversekit-prod
+   npm run secrets:push -- --env staging   # → ck-api-staging, conversekit-staging
    ```
 
-   `secrets:push` refuses a staging file whose `SUPABASE_URL` matches
-   production's, so this cannot be half-done silently.
+   `secrets.required` now makes a deploy *fail* on a missing secret rather than
+   shipping a Worker that 502s, so this has to happen before the next deploy.
 
-3. **Push the API Worker's secrets.** This session was not permitted to.
-
-   ```bash
-   npm run secrets:push                    # → ck-api
-   npm run secrets:push -- --env staging   # → ck-api-staging
-   ```
-
-   Reads `apps/api/.dev.vars` and `apps/api/.dev.vars.staging` respectively.
-   Until this is done `/v1/bots/:id/health` answers 502; liveness at `/` already
-   works. Note that `secrets.required` now makes the next deploy fail rather
-   than succeed-and-502, so this has to happen before the next `npm run deploy`.
-
-4. **Delete the Pages project.**
+3. **Delete the Pages project.**
 
    ```bash
    npx wrangler pages project delete conversekit-widget --yes
    ```
 
-5. **Add `CLOUDFLARE_API_TOKEN` to the repo secrets**, scoped to Workers Scripts
-   edit on that account.
+4. **Add `CLOUDFLARE_API_TOKEN` to the repo secrets**, scoped to Workers Scripts
+   edit on whichever account ends up holding both.
