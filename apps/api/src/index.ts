@@ -1774,8 +1774,17 @@ app.delete('/v1/admin/documents/:docId', async (c) => {
  * Retrying rather than queueing because ingestFaq re-reads every item
  * when it starts: one later run subsumes any number of edits made
  * while it was blocked, so the work never needs to be done twice.
+ *
+ * The context is typed structurally rather than as `ExecutionContext`:
+ * Hono types `executionCtx` with its own narrower interface, so naming
+ * the workers-types global here turns every call site into an error the
+ * moment that global grows a member. waitUntil is all this needs.
  */
-function reindexFaq(c: { env: Env; executionCtx: ExecutionContext }, botId: string, bot: Bot): void {
+function reindexFaq(
+  c: { env: Env; executionCtx: { waitUntil(promise: Promise<unknown>): void } },
+  botId: string,
+  bot: Bot,
+): void {
   c.executionCtx.waitUntil((async () => {
     for (let attempt = 1; attempt <= FAQ_CLAIM_ATTEMPTS; attempt++) {
       try {
