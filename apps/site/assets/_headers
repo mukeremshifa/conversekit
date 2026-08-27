@@ -4,9 +4,9 @@
 # default Workers asset policy (revalidate against the ETag) is the
 # right one for a document. Only the assets under it are pinned.
 
-# Product shots. Content-hashed by scripts/shoot.mjs — the filename
-# changes whenever the bytes do — so a year of immutable caching can
-# never serve a stale image.
+# Product shots. Content-hashed — the filename changes whenever the
+# bytes do — so a year of immutable caching can never serve a stale
+# image.
 /shots/*
   Cache-Control: public, max-age=31536000, immutable
 

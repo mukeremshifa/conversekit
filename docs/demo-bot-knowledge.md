@@ -41,11 +41,10 @@ reseed. A fixed one makes the two independent — either can run first, and a sc
 reset does not invalidate a deployed page.
 
 The landing page carries `data-bot-id="__CK_DEMO_BOT__"`, substituted at build time
-like every hostname on the page. That is what makes the id *checkable*:
-``scripts/check-landing.mjs`` fails the build on any
-`__CK_*__` token that survived substitution, and separately asserts the widget tag
-carries a 36-character uuid. Neither check could have caught a hand-typed literal,
-which is why the broken one shipped.
+like every hostname on the page, which keeps `config/demo-bot.js` the single
+declaration of which bot it is. Nothing fails the build on a token that survived
+substitution, so after a build confirm no `__CK_` sequence reached `dist/` and that
+the widget tag carries a 36-character uuid.
 
 ## Seeding it
 

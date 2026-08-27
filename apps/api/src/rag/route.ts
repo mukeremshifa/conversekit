@@ -50,8 +50,7 @@ export interface RouteDecision {
  * MATCHED WHOLE-MESSAGE, NEVER AS A SUBSTRING. "thanks, but what are
  * your hours?" is a question, and a substring test would kill it — that
  * single mistake is the difference between this being a latency
- * optimisation and being a bot that got dumber. The test for it is
- * pinned in scripts/test-profile-units.mjs and must stay pinned.
+ * optimisation and being a bot that got dumber.
  *
  * Deliberately short. Every entry added here is a new way to be wrong,
  * and the upside of catching one more phrasing is one embedding call.
@@ -139,7 +138,7 @@ function normalise(query: string): string {
  * hours", which is not in the set and never will be. What it must never
  * become is a SUBSTRING test — that single change is the difference
  * between this being a latency win and being a bot that stopped
- * answering. scripts/test-profile-units.mjs pins exactly that case.
+ * answering.
  */
 function words(normalised: string): string {
   return normalised

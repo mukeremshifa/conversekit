@@ -79,8 +79,8 @@ fundamentally incompatible with real tenancy and is the thing to remove.
 
 **Done when:** two orgs cannot see each other's bots, leads, or conversations —
 proven by a test that authenticates as org A and queries org B's ids directly.
-That test is `npm run verify:isolation`; it must pass against a real Supabase
-project, since RLS policy behaviour is the thing under test and cannot be mocked.
+That test has to run against a real Supabase project, since RLS policy behaviour
+is the thing under test and cannot be mocked.
 
 **Deployment order matters** — `003_tenancy.sql` revokes the anon key's table
 access, so the service-role Worker must be deployed first or the live widget
@@ -168,8 +168,8 @@ reciprocal-rank fusion becomes a scoring change rather than a migration.
 
 **The cutover is per bot and reversible.** `bots.knowledge_migrated_at` is NULL
 until an ingest has actually succeeded, and while it is NULL the prompt is
-byte-identical to what shipped before — asserted as a string comparison in
-`scripts/test-knowledge-units.mjs`, the convention `test-lead-capture.mjs` set.
+byte-identical to what shipped before — a claim to settle by comparing the two
+rendered prompts as strings.
 
 Full reasoning, decisions and rejected alternatives:
 [knowledge-pipeline.md](knowledge-pipeline.md).
@@ -189,8 +189,8 @@ it.
 Phase 1 shipped: a model-relative similarity floor resolved from the embedder
 (`resolveSimilarityFloor` in `apps/api/src/providers/catalog.ts`), a code-point and
 script-aware short-query gate, citations aligned to the `[n]` markers the model
-actually sees, and `npm run eval:rag` — a golden-set harness whose off-topic
-queries are the assertion that a floor discriminates at all. No migration.
+actually sees, and a golden-set eval harness whose off-topic queries were the
+assertion that a floor discriminates at all. No migration.
 
 **Phase 2 is one theme: the pipeline stops lying about its own state, and starts
 telling the tenant the truth.** It is all one migration,
@@ -261,10 +261,10 @@ made `missedRetrieval` unreachable, which is B1 again with a different cause.
 Still open, and each has a written brief: conversational query rewriting and URL
 refresh, both deferred because they cost recurring calls that do not pay off at
 today's corpus size. Also still outstanding, and a run rather than a build:
-`npm run eval:rag --vendor=… --sweep=…` per vendor, so the floors for every
-non-bge embedder stop being the documented guess. **That run now gates enabling
-hybrid anywhere** — the harness's off-topic negatives are the only automated
-check that a retrieval change did not quietly stop rejecting.
+a floor sweep per vendor, so the floors for every non-bge embedder stop being the
+documented guess. **That run gates enabling hybrid anywhere** — off-topic
+negatives are the only check that a retrieval change did not quietly stop
+rejecting, and nothing in the repo runs them today.
 
 Full audit, measurements and remaining work: [rag-hardening.md](history/rag-hardening.md).
 Retention and the privacy surface `retrieval_log` adds: [tenancy.md](tenancy.md).
@@ -358,8 +358,8 @@ support conversation is guesswork.
 - ✅ **Markdown rendering** — replies now render bold, italic, code, links and
   lists. Deliberately escape-first: reply text is model output that may have
   ingested attacker-controlled documents through RAG, so nothing it produces can
-  become live HTML, and link protocols are allow-listed. Guarded by
-  `npm run test:widget` (13 XSS cases).
+  become live HTML, and link protocols are allow-listed. Covered by 13 XSS cases
+  while the widget suite existed.
 - Per-tenant suggestion chips (currently hardcoded in `widget.js`)
 - Conversation persistence across visits (`localStorage`, resumable thread)
 - Streaming cursor, stop-generation button
@@ -436,8 +436,9 @@ membership. `create_organization` (SECURITY DEFINER, owner derived from
 **Never graft a test user into a real organization.** A cleanup that deleted
 "this user's org" destroyed the live one, cascading away every bot, conversation
 and lead, because earlier scripts had added throwaway users to it so they could
-exercise a real bot. `scripts/lib/testenv.mjs` now
-gives each test its own user, org and bots, and tears down only ids it recorded.
+exercise a real bot. The rule that came out of it: anything provisioning test
+data gives each run its own user, org and bots, and tears down only ids it
+recorded.
 The Playground removed the reason anyone would graft membership again.
 
 **Migrations before the code that needs them.** A Worker writing
@@ -478,7 +479,7 @@ conversation. Session ids are now minted and HMAC-signed by the server
 ([apps/api/src/session.ts](../apps/api/src/session.ts)) and bound to a single bot. An unsigned id is
 deliberately not an error — it loads no history and the caller is handed a
 signed replacement, which closes the disclosure without breaking embedded
-widgets or the documented curl flow. Guarded by `npm run test:session`.
+widgets or the documented curl flow.
 
 **Sentinel values in security decisions.** Recorded because it already bit once:
 an early version of the BYOK redaction sent `••••1234` back to the client and

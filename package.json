@@ -9,29 +9,26 @@
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-
     "build": "npm run build:app && node scripts/build-assets.mjs",
     "build:app": "npm run build -w conversekit-app",
     "type-check": "npm run type-check -w conversekit-api && npm run type-check -w conversekit-app",
-
     "predeploy": "npm run type-check",
     "deploy": "npm run deploy:api && npm run deploy:cdn && npm run deploy:app && npm run deploy:site",
     "deploy:api": "npm run deploy -w conversekit-api",
     "deploy:cdn": "node scripts/build-assets.mjs cdn && npm run deploy -w conversekit-cdn",
     "deploy:app": "npm run build:app && npm run deploy -w conversekit-app",
     "deploy:site": "node scripts/build-assets.mjs site && npm run deploy -w conversekit-site",
-
     "db:status": "node scripts/migrate.mjs status",
     "db:migrate": "node scripts/migrate.mjs up",
     "db:reset": "node scripts/migrate.mjs reset",
-
     "secrets:push": "node scripts/secrets.mjs push",
     "secrets:bootstrap": "node scripts/secrets.mjs bootstrap",
     "secrets:list": "node scripts/secrets.mjs list",
-
-    "seed:demo": "node scripts/seed-demo-bot.mjs"
+    "seed:demo": "node scripts/seed-demo-bot.mjs",
+    "brand:gen": "node scripts/gen-brand-assets.mjs"
   },
   "devDependencies": {
-    "wrangler": "^4.18.0"
+    "@resvg/resvg-js": "^2.6.2",
+    "wrangler": "^4.126.0"
   }
 }

@@ -245,9 +245,8 @@ place of the current `## Business Information` block
 
 **A bot with `profile IS NULL` must produce the same system prompt it did
 before 015, byte for byte.** That is the whole mitigation for the largest risk
-in this change. Compare it as a string in `scripts/test-profile-units.mjs`
-rather than reasoning about it — the convention `scripts/test-lead-capture.mjs`
-set and `scripts/test-knowledge-units.mjs` follows.
+in this change. Compare the two rendered prompts as strings rather than reasoning
+about it — this is not a property a reading of the code can settle.
 
 ### Where it goes in the prompt
 
@@ -597,9 +596,8 @@ is not a reason to break someone's bookmark.
 
 ## Tests
 
-New `scripts/test-profile-units.mjs`, registered in `package.json` as
-`test:profile` and added to the `test` chain. No network, no database — bundle
-with esbuild and import, exactly as `test-knowledge-units.mjs` does.
+No network, no database — bundle the module with esbuild and import it, so every
+assertion below runs against pure functions.
 
 Pin these, because none of them can be caught by reading the code:
 
@@ -620,8 +618,8 @@ Pin these, because none of them can be caught by reading the code:
    day boundary, and a DST transition date.
 7. **The context budget.** The `rendered` cap truncates and reports.
 
-Extend `scripts/eval-rag.mjs` with profile-answerable questions (hours, address,
-phone, booking) asserting they are answered with `route: 'skip'` — the
+Add profile-answerable questions (hours, address, phone, booking) to whatever
+golden set exists, asserting they are answered with `route: 'skip'` — the
 ranking-assertion pattern from commit `43426f1`.
 
 ---

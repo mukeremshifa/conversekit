@@ -15,8 +15,8 @@
 //
 // DETERMINISM IS THE POINT. Every number below is either a literal or
 // derived from a seeded formula — no Math.random(), no `new Date()`.
-// Re-running `npm run shots:shoot` has to produce byte-identical
-// images, or the content hashes churn and every shoot is a diff.
+// A re-shoot has to produce byte-identical images, or the content
+// hashes churn and every shoot is a diff.
 // ----------------------------------------------------------------
 import type {
   Bot, Doc, FaqItem, FaqResponse, Lead, Me, Message, Org, Stats, Vendor,
@@ -25,22 +25,21 @@ import type {
 /**
  * The instant every shot is taken at.
  *
- * scripts/shoot.mjs freezes `Date.now()` to this value in every page it
- * drives, because three things read the wall clock and would otherwise
+ * The shot harness froze `Date.now()` to this value in every page it
+ * drove, because three things read the wall clock and would otherwise
  * change the pixels from one run to the next: the widget's profile card
  * bolds *today's* row of opening hours, `formatDate` renders in the
  * browser's zone, and the charts label their axis in the browser's
- * locale. The shoot also pins the timezone to the clinic's own
+ * locale. It also pinned the timezone to the clinic's own
  * (America/Los_Angeles) and the locale to en-US.
  *
  * It is Tuesday 08:20 in Ashfield — inside the clinic's morning
  * session, which is what makes the widget's hours card show an open
  * business rather than a closed one.
  *
- * KEEP IN STEP WITH `SHOT_NOW_ISO` in scripts/shoot.mjs. That script
- * asserts the two match once the page has loaded and fails the shoot if
- * they have drifted, so this is a checked duplication rather than a
- * hopeful one.
+ * Any future harness has to freeze the clock to this same instant, or
+ * the hours card and the chart axes stop matching the shots already
+ * deployed under /shots/.
  */
 export const SHOT_NOW_ISO = '2026-08-18T15:20:00.000Z';
 const NOW_MS = Date.parse(SHOT_NOW_ISO);

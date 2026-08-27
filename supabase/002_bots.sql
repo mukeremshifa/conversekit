@@ -68,8 +68,8 @@ create table if not exists bots (
   -- SQL: "Mon-Fri 9-5, closed bank holidays" is not machine-parseable
   -- and a half-right parse is worse than none.
   --
-  -- Do not drop these until src/prompt.ts, src/profile.ts and
-  -- scripts/test-profile-units.mjs stop reading them.
+  -- Do not drop these until src/prompt.ts and src/profile.ts stop
+  -- reading them.
   profile             jsonb,
   /* deprecated: superseded by profile.hours    */ hours               text,
   /* deprecated: superseded by profile.location */ location            text,

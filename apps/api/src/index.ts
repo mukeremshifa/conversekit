@@ -2247,9 +2247,7 @@ app.post('/v1/admin/bots/:id/retrieve-preview', async (c) => {
         id: ch.id,
         document_id: ch.document_id,
         // Carried by both RPCs since 012, so the preview and the chat
-        // path now name a source from exactly the same field. This is
-        // also what scripts/eval-rag.mjs asserts on, which makes the
-        // golden set an unchanged regression test for the join.
+        // path now name a source from exactly the same field.
         document_title: ch.document_title ?? null,
         ordinal: ch.ordinal,
         content: ch.content,

@@ -202,9 +202,8 @@ change*, not a schema change. That is the setup this whole brief is for.
 `bots.knowledge_migrated_at timestamptz`.
 
 While it is NULL, `buildSystemPrompt` emits `## Services` and `## Frequently
-Asked Questions` **exactly as it does today, byte for byte** — with a test
-asserting that directly, following the precedent
-`scripts/test-lead-capture.mjs` already sets for prompt contracts.
+Asked Questions` **exactly as it does today, byte for byte** — a prompt contract
+to assert by direct string comparison, never by reading the branch.
 
 The SQL migration creates the `documents` and `faq_items` rows at
 `status='pending'` and embeds nothing, because SQL cannot call an embedding
@@ -259,9 +258,8 @@ Pure Worker and validation work, shippable on its own and valuable on its own.
 | `context_chars` and `priority_boost` in `ragConfigFor` | [apps/api/src/rag/ingest.ts](../apps/api/src/rag/ingest.ts) |
 | `RagConfig` fields | [apps/api/src/types.ts](../apps/api/src/types.ts) |
 
-**Tests:** extend `scripts/test-config-units.mjs` for the two caps; new
-assertions in `scripts/test-rag-units.mjs` that the budget trims from the tail
-and never emits a partial chunk.
+**Tests:** assertions for the two caps, and for the budget trimming from the tail
+and never emitting a partial chunk.
 
 **Done when:** a 100KB `custom_instructions` write is stored truncated at 2000,
 and a 40-chunk retrieval renders under 6000 characters.
@@ -289,13 +287,12 @@ Everything in D2, D4 and D6 in one migration, in this order:
    that order was reversed.
 7. `match_chunks_lexical(...)`, granted the same way.
 
-**Tests:** extend `scripts/rls/rag-test.sql` for `faq_items` and both RPCs, then
-`npm run verify:rls`. Note the standing caveat in [knowledge.md](knowledge.md) —
-`verify:rls` **skips** pgvector files on a stock Postgres and says so; read the
-output for the skip rather than trusting the green.
+**Tests:** RLS coverage for `faq_items` and both RPCs. Note the standing caveat in
+[knowledge.md](knowledge.md) — a local Postgres without pgvector cannot apply the
+RAG files at all, so a green local run says nothing about them.
 
-**Done when:** `npm run db:migrate` applies cleanly, `verify:rls` passes, and
-org A cannot select org B's `faq_items`.
+**Done when:** `npm run db:migrate` applies cleanly and org A cannot select
+org B's `faq_items`.
 
 ### Stage 2 — FAQ items: chunker, CRUD, ingestion · medium
 
@@ -311,8 +308,7 @@ org A cannot select org B's `faq_items`.
 A write to any item re-ingests **that bot's FAQ document**, not the whole
 corpus. Editing one answer costs one embedding call.
 
-**Tests:** new `scripts/test-knowledge-units.mjs` — a short pair produces
-exactly one chunk; a 6000-char answer splits with the question present in every
+**Tests:** a short pair produces exactly one chunk; a 6000-char answer splits with the question present in every
 piece; items never merge across boundaries; a disabled item produces nothing; an
 empty question or answer is rejected rather than embedded.
 
@@ -352,8 +348,7 @@ not "a single item holding the whole text", which D2's 2000-character `CHECK`
 would have rejected. See **Status** above.
 
 **Tests:** a prompt test asserting byte-identical output for an unmigrated bot,
-compared as strings, exactly as `scripts/test-lead-capture.mjs` compares the
-lead block. Parser tests over the `002` seed FAQ, a blank-line-separated
+compared as strings. Parser tests over the `002` seed FAQ, a blank-line-separated
 variant, and unparseable prose.
 
 **Done when:** one real bot is migrated, answers its FAQ questions in the

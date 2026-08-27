@@ -271,9 +271,8 @@ Three things worth knowing:
 
 Before 011, `bots.services` and `bots.faq` were pasted into every system prompt.
 They still are, for any bot whose `knowledge_migrated_at` is NULL — and while it
-is NULL the prompt is byte-identical to what it was before, which
-`scripts/test-knowledge-units.mjs` asserts as a string comparison rather than by
-reading the code.
+is NULL the prompt is byte-identical to what it was before — a claim to settle by
+comparing the two rendered prompts as strings, never by reading the code.
 
 `POST /v1/admin/bots/:id/knowledge/migrate` moves them:
 
@@ -316,7 +315,6 @@ in [apps/api/src/rag/files.ts](../apps/api/src/rag/files.ts):
 Requires R2 enabled on the account and the bucket created:
 `wrangler r2 bucket create conversekit-documents`. Without the binding the
 upload route answers `501` and every other source type keeps working.
-Measurements behind these choices: `scripts/spike/FINDINGS.md`.
 
 ---
 
@@ -335,11 +333,10 @@ Measurements behind these choices: `scripts/spike/FINDINGS.md`.
 >   the policies isolate; local, no network
 > - `verify:isolation` — end-to-end against a real Supabase project and Worker
 
-**`verify:rls` skips `005_rag.sql`, `008_files.sql` and `011_knowledge.sql`
-where pgvector is not installed, and says so loudly.** A stock Postgres does not
-ship the extension. Those three are covered by `verify:isolation`, which runs
-against the real project where it exists. Never read a green `verify:rls` as
-having covered the RAG, file or knowledge schema — check the output for the
-skip.
+**The RLS suite skipped `005_rag.sql`, `008_files.sql` and `011_knowledge.sql`
+where pgvector was not installed, and said so loudly.** A stock Postgres does not
+ship the extension, so those three were only ever covered end to end against the
+real project. Anything that replaces that suite inherits the same gap: a green
+local run says nothing about the RAG, file or knowledge schema.
 
 ---

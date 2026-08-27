@@ -14,9 +14,9 @@ function joinAnd(parts: string[]): string {
  * THE CONTRACT THAT MATTERS HERE: a bot with no lead_config must
  * produce this section byte for byte as it was hardcoded before 010.
  * Every default below is chosen to satisfy that and nothing else —
- * phone optional, company off, inquiry optional, intent trigger — and
- * `scripts/test-lead-capture.mjs` compares the two strings directly
- * rather than trusting the reading.
+ * phone optional, company off, inquiry optional, intent trigger. Verify
+ * a change by comparing the two rendered prompts directly rather than
+ * by trusting a reading of the code.
  *
  * Returned empty when capture is switched off, which leaves the prompt
  * identical to a bot that never had the feature at all. That is the
@@ -154,9 +154,8 @@ export function buildSystemPrompt(
   // `profile IS NULL` it emits the `## Business Information` block that
   // was written out here inline until 015 — byte for byte, including
   // the `bot.address ?? bot.location` reconciliation. That is the whole
-  // mitigation for the biggest risk in this change, and
-  // scripts/test-profile-units.mjs compares the strings rather than
-  // trusting the reading.
+  // mitigation for the biggest risk in this change, and it is worth
+  // re-checking by comparing rendered prompts whenever this file moves.
   //
   // It stays ABOVE the retrieval firewall on purpose. The profile is
   // tenant-authored through a structured form, not scraped from a page,
@@ -173,9 +172,8 @@ export function buildSystemPrompt(
   // reproduces the pre-011 prompt byte for byte, and it is stamped only
   // after a successful ingest.
   //
-  // scripts/test-knowledge-units.mjs compares the two strings directly
-  // rather than trusting this reading — the same convention
-  // scripts/test-lead-capture.mjs set for the lead block.
+  // Byte-for-byte is a claim to check by rendering both prompts and
+  // comparing them, not one to take on a reading of this branch.
   //
   // The business facts above stay in the prompt on purpose, and 015
   // made that a tier rather than an accident. A bot should always know

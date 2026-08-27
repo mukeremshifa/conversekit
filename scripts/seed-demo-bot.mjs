@@ -25,10 +25,9 @@
  *
  * WHAT IT WILL NOT DO. It only ever writes the org and bot named by
  * those fixed ids, and the corpus underneath that one bot. It never
- * walks outward from the owner to whatever else they are a member of —
- * the same rule scripts/lib/testenv.mjs enforces, and for the same
- * reason: this project has already lost a database to a cleanup that
- * reasoned from a user to "their" org.
+ * walks outward from the owner to whatever else they are a member of,
+ * for a reason this project knows first-hand: it has already lost a
+ * database to a cleanup that reasoned from a user to "their" org.
  *
  * TWO TRANSPORTS, ON PURPOSE.
  *
@@ -566,7 +565,7 @@ const ok = await verify();
 console.log(
   ok
     ? `\nDemo bot is serving. Rebuild and redeploy the page to pick up the id:\n` +
-      `  npm run check:landing && npm run deploy:site\n`
+      `  npm run deploy:site\n`
     : '\nSeeded, but the bot is not serving — see the failures above.\n',
 );
 process.exit(ok && !failed ? 0 : 1);

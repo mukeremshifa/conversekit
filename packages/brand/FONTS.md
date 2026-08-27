@@ -25,8 +25,9 @@ the page. This is that subset, subsetted again to those ten glyphs:
 cut (200–800) — which is what still lets "Converse" render at 700 and "Kit" at
 400 out of the one file. Re-run this after bumping the package; do not copy the
 full file back in, or the landing page silently regains 38 KB it has no use
-for. `check-landing.mjs` fails the build if a Bricolage rule appears anywhere
-but the wordmark, which is the other half of keeping this true.
+for. Keeping the family confined to the wordmark is the other half of keeping
+this true — a Bricolage rule anywhere else asks this subset for glyphs it does
+not contain, and fails silently.
 
 The dashboard is unaffected either way: it imports the family through
 `@fontsource-variable/bricolage-grotesque` in `apps/app/src/index.css` and

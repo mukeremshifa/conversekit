@@ -310,9 +310,9 @@ is tested.
   scopes it, **including the 501 branch** when the error message matches
   `usage_log`, so a Worker deployed ahead of 017 names the missing migration
   instead of sending whoever is debugging it to look at RLS.
-- Extend `scripts/test-stats-units.mjs`, or add `test-usage-units.mjs` on the
-  same harness. The cases that matter: the reported/estimated split, a day
-  boundary, a vendor with no price, cost `null` versus zero, and the cap.
+- Unit assertions over the aggregation. The cases that matter: the
+  reported/estimated split, a day boundary, a vendor with no price, cost `null`
+  versus zero, and the cap.
 
 ### Phase 4 — Dashboard · ~1 day
 A **Usage** screen, not a tile bolted onto Overview: the interesting cut is by
@@ -413,7 +413,7 @@ think to come looking for it.
 
 ## 7. How to verify
 
-- `npm run type-check`, `npm run test` (with the new aggregate cases).
+- `npm run type-check`, plus assertions covering the new aggregate cases.
 - **The reconciliation, which is the real test:** a bot on a paid vendor with a
   usable console. Run a known number of turns and one ingest, wait for the
   vendor's own dashboard to catch up, and compare. Reported rows should match
@@ -421,9 +421,9 @@ think to come looking for it.
   this document as a measured number rather than left as "roughly".
 - The 501 path: query the route against a database without 017 and confirm the
   message names the migration.
-- Isolation: `npm run verify:isolation` still passes, and org A's usage rows are
-  invisible to org B. Add a `usage_log` case to `scripts/rls/` alongside the
-  existing retrieval test.
+- Isolation: org A's usage rows are invisible to org B, proven the way the
+  retrieval-log policies were — authenticate as one org and query the other's
+  ids directly.
 
 ---
 

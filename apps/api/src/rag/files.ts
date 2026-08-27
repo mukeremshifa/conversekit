@@ -6,8 +6,7 @@
 // which is a format the pipeline already understands. No PDF parser in
 // the bundle, no `unpdf`, no fight with the runtime.
 //
-// Three things the spike proved, each of which is a guard below
-// (scripts/spike/FINDINGS.md has the numbers):
+// Three things the spike proved, each of which is a guard below:
 //
 //   1. toMarkdown does not validate. A .zip and a .txt labelled as such
 //      came back verbatim as format "markdown", no error. The allow-list

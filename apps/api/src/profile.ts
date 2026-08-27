@@ -11,10 +11,9 @@
 // THE SAME SYSTEM PROMPT IT DID BEFORE 015, BYTE FOR BYTE. Every
 // existing bot on the platform is on that path until someone backfills
 // it, so if this file changes that output at all, every bot changes
-// behaviour on one deploy. scripts/test-profile-units.mjs compares the
-// two strings directly rather than trusting this reading — the
-// convention scripts/test-lead-capture.mjs set and
-// scripts/test-knowledge-units.mjs follows.
+// behaviour on one deploy. Nothing checks that automatically, so a
+// change here has to be verified by rendering both prompts and
+// comparing the strings — not by reasoning about the code.
 //
 // WHERE IT SITS IN THE PROMPT is deliberate too: ABOVE the retrieval
 // firewall, on the trusted side. The profile is tenant-authored through

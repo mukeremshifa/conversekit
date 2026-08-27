@@ -17,5 +17,5 @@
     "verbatimModuleSyntax": true,
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "vite.config.ts", "vite.shot.config.ts", "../../config/origins.d.ts"]
+  "include": ["src", "vite.config.ts", "../../config/origins.d.ts"]
 }

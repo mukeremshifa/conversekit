@@ -24,8 +24,8 @@ the safe order: the schema is ahead of the code, never behind it.
 | 6. Behaviour | `preflight()` in `apps/api/src/index.ts`, `apps/api/src/prompt.ts`, `countTrailingMisses` |
 | 7. Integrations | not started, and still a separate screen |
 
-Verified: 60 new unit assertions across `test:config` and `test:widget-theme`,
-on top of the existing suite (`npm test`, all passing). Both type-checks clean.
+Verified at the time: 60 new unit assertions across the config and widget-theme
+suites, on top of the rest of the script suite, all passing. Both type-checks clean.
 009 applied and the columns confirmed present with the right types. Every query
 shape the new code uses was then run against the live database through
 PostgREST — including the `in.()` title lookup for citations — because
@@ -218,7 +218,7 @@ Nothing user-visible. This is the spine every later phase hangs off.
 |---|---|
 | **Files** | `supabase/009_bot_configuration.sql` (new), `apps/api/src/types.ts`, `apps/api/src/config.ts` (new, validators), `apps/api/src/index.ts`, `apps/api/src/supabase.ts`, `apps/app/src/lib/api.ts` |
 | **Steps** | 1. Migration adding `widget_config jsonb` and `behavior_config jsonb`, both nullable, no default — additive and re-runnable, same shape as 004/005/006. 2. `WidgetConfig` / `BehaviorConfig` interfaces in `types.ts`, both fully optional, plus the two fields on `BotUpdatePayload`. 3. `validateWidgetConfig` / `validateBehaviorConfig` in a new `apps/api/src/config.ts`, modelled on `validateSuggestions` — return `{ ok, value }` or `{ ok, error }`, clamp numbers, reject unknown keys. 4. Wire both into `PUT /v1/admin/bots/:id` beside the existing origin and suggestion validators. 5. Extend the `/health` response with the widget-visible subset **only**. |
-| **Tests** | `scripts/test-config-units.mjs`, built the way `test-stats-units.mjs` builds `apps/api/src/stats.ts` with esbuild and asserts over a pure module. Add to the `test` script. Cover: clamping, unknown-key rejection, and that `null`/`undefined` round-trips to "widget defaults". |
+| **Tests** | Unit assertions over a pure module — bundle `apps/api/src/config.ts` with esbuild and call the validators directly. Cover: clamping, unknown-key rejection, and that `null`/`undefined` round-trips to "widget defaults". |
 | **Risk** | PostgREST 400s on a PATCH naming a column that does not exist, so a Worker deployed ahead of `009` breaks *saving*. Migration first, always — the sequencing note in [operations.md](operations.md) applies. Reads are safe: `select=*` just omits the column and every field is optional. |
 
 **Field list** (validators enforce these bounds):
@@ -242,7 +242,7 @@ Nothing user-visible. This is the spine every later phase hangs off.
 |---|---|
 | **Files** | `apps/api/src/index.ts` (two routes), `apps/api/src/logo.ts` (new), `apps/app/src/screens/BotConfiguration.tsx` |
 | **Steps** | 1. `POST /v1/admin/bots/:id/logo` — multipart, same `c.req.raw.formData()` shape as the document upload route ([apps/api/src/index.ts:729](../apps/api/src/index.ts#L729)), sniffed, 512 KB cap, key `logos/{orgId}/{botId}/{contentHash}.{ext}`, writes `widget_config.logo_key`, deletes the previous object. 2. `DELETE` on the same path. 3. `GET /v1/bots/:id/logo` — **public**, no auth, streams from R2 with the immutable cache headers, 404s when unset. 4. Dashboard: a small drop zone reusing the upload/progress plumbing already in `lib/api.ts` (`sendFile` reports progress; `uploadDocument` is the template). |
-| **Tests** | Sniffing and cap logic as unit assertions in `test-config-units.mjs`. Route behaviour against `wrangler dev` with R2 local — the pattern Phase 2B used. |
+| **Tests** | Sniffing and cap logic as unit assertions over `config.ts`. Route behaviour against `wrangler dev` with R2 local — the pattern Phase 2B used. |
 | **Risk** | Bytes are stored before the DB write in the document route, with orphan cleanup on failure; mirror that ordering exactly. Without a `DOCS` binding this must 501 like the document route, not throw. |
 
 ### Phase 3 — Widget rendering pass · ~1–1.5 days
@@ -254,7 +254,7 @@ typing toggle. Bump `WIDGET_VERSION`, one CHANGELOG entry, one Pages deploy.
 |---|---|
 | **Files** | `apps/cdn/assets/widget.js`, `apps/api/src/index.ts` (`/health` fields, if not already done in Phase 1) |
 | **Steps** | 1. `fetchConfig` learns the new fields, each behind an existence check. 2. **Position** — `#aicb-root` is `bottom:24px;right:24px` at [widget.js:163](../apps/cdn/assets/widget.js#L163); flipping also needs `#aicb-panel{right:0}` → `left:0`, its `transform-origin:bottom right`, `#aicb-badge{right:-1px}`, and the `#aicb-panel{right:-16px}` mobile rule. Do it with a `ck-left` class on the root and a paired CSS block — not by patching four inline styles. 3. **Logo** — replaces `ICON_BOT` in `#aicb-avatar` and the bubble icon; keep the SVG as the fallback when the image 404s. 4. **Greeting** — the hardcoded string in `init()` at [widget.js:604](../apps/cdn/assets/widget.js#L604) becomes the configured greeting or today's string; `setTimeout` before it, with the chips rendering after. 5. **Theme** — add a dark `--ck-*` block toggled by a `ck-dark` class; `auto` reads `prefers-color-scheme` **and** keeps listening, the way `lib/theme.ts` does. 6. **Typing** — one conditional around `classList.add('visible')`. |
-| **Tests** | Extend `scripts/test-widget-markdown.mjs`'s trick of lifting pure functions out of the IIFE: assert `inkVariant` against both surfaces, and assert the greeting falls back when unset. |
+| **Tests** | Lift the pure functions out of the widget's IIFE and assert over them: `inkVariant` against both surfaces, and the greeting falling back when unset. |
 | **Risk — read this one** | `inkVariant()` at [widget.js:140](../apps/cdn/assets/widget.js#L140) walks lightness *down* until it clears 4.5:1 **against white** (`ratio(luminance(candidate), 1)`). On a dark surface that is backwards — it will happily return near-black text on a near-black panel. Dark mode needs the mirrored search (lighten until it clears the dark surface's luminance), not a reused `inkVariant`. This is the one place in the widget where dark mode is more than a palette swap. |
 
 ### Phase 4 — Dashboard editors · ~1 day

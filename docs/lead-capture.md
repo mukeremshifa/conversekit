@@ -36,7 +36,7 @@ concern, and the deploy is being handled separately. The code is in, and a
 deployment without the two secrets behaves exactly as it did before — recipients
 stored, nothing sent, webhooks unaffected.
 
-Verified: `npm test` all passing, including 102 assertions in `test:leads`.
+Verified at the time: the script suite all passing, including 102 lead assertions.
 Both type-checks clean. Dashboard builds.
 
 **Not verified — nothing here has been exercised end to end.** Specifically
@@ -261,8 +261,8 @@ in 003 are table-level, so new columns are covered as they are added.
 ```
 
 **Absent `lead_config` must produce the current prompt byte for byte.** That
-is a test assertion, not an aspiration — `scripts/test-config-units.mjs`
-already bundles and calls `buildSystemPrompt`, so it is a direct comparison.
+is an assertion to make directly, not an aspiration — bundle and call
+`buildSystemPrompt` for both shapes and compare the two strings.
 
 Validation limits, following `LIMITS` in `apps/api/src/config.ts`:
 
@@ -284,8 +284,6 @@ Validation limits, following `LIMITS` in `apps/api/src/config.ts`:
 - `supabase/010_lead_capture.sql`
 - `apps/api/src/notify.ts` — ~90 lines: three body shapes, one guarded `fetch`
 - `apps/app/src/components/Transcript.tsx` — lifted from `Conversations.tsx`
-- `scripts/test-lead-capture.mjs` — bundles `config.ts`, `prompt.ts`,
-  `leads.ts`, `notify.ts`, matching the `test:rag` / `test:config` convention
 
 **Modified**
 - `apps/api/src/types.ts` — `LeadConfig`, `Bot.lead_config`, `BotUpdatePayload.lead_config`, `Lead` gains `tag` / `company` / `consent_given`
@@ -298,7 +296,6 @@ Validation limits, following `LIMITS` in `apps/api/src/config.ts`:
 - `apps/app/src/screens/BotConfiguration.tsx` — one `Section`, one `OWNED` entry
 - `apps/app/src/screens/Leads.tsx` — tag badge, transcript action, widened CSV
 - `apps/app/src/screens/Conversations.tsx` — use `Transcript.tsx`
-- `package.json` — `test:leads`, added to the `test` chain
 - `docs/api.md`, `CHANGELOG.md`
 
 `apps/api/src/lead-stream.ts` is untouched — it matches on `[[LEAD:` and `]]` and does

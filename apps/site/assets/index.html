@@ -93,8 +93,8 @@
    render at 700 and "Kit" at 400 out of one file.
 
    Adding a Bricolage rule anywhere else would silently ask this subset
-   for glyphs it does not contain, so check-landing.mjs fails the build
-   if one appears. */
+   for glyphs it does not contain, so keep the family confined to the
+   wordmark. */
       @font-face {
         font-family: "Bricolage";
         src: url(/fonts/bricolage-wordmark.woff2) format("woff2");
@@ -853,9 +853,10 @@
    three states, in the same order, as the palette at the top of this
    file.
 
-   The markup between the generated:shot markers is written by
-   scripts/gen-shots.mjs out of public/shots/manifest.json. Do not
-   hand-edit it: a re-shoot changes all fifty-six content hashes. */
+   The markup between the generated:shot markers was generated from a
+   shot manifest and is now maintained by hand. Every filename in it is
+   content-hashed, so each one has to match a file actually deployed
+   under /shots/. */
       .shot-d {
         display: none;
       }
@@ -1452,10 +1453,10 @@
          else, so each frame composites: no layout, no paint, and no
          contribution to CLS. Elements that move occupy their final box
          from first paint - only their appearance changes. That is the
-         acceptance rule as much as it is the technique, and
-         check-landing.mjs enforces it by reading every @keyframes block
-         and every reveal transition and failing on any property that is
-         not opacity or transform. */
+         acceptance rule as much as it is the technique: every @keyframes
+         block and every reveal transition below animates opacity or
+         transform and nothing else. Adding a third property here is what
+         breaks it. */
       @keyframes rise {
         from {
           opacity: 0;
@@ -1593,9 +1594,9 @@
   </head>
   <body>
     <!-- generated:sprite -->
-    <!-- Written by scripts/gen-vendor-sprite.mjs. Do not hand-edit:
-         the next run overwrites it. Add icons to the manifest in that
-         script instead, then re-run `npm run gen:sprite`. -->
+    <!-- Generated from a vendor-mark manifest, and now maintained by
+         hand. Each symbol id here is named by a <use> further down, so
+         removing one silently empties the chip that points at it. -->
     <svg
       xmlns="http://www.w3.org/2000/svg"
       style="position: absolute; width: 0; height: 0; overflow: hidden"
@@ -1749,7 +1750,7 @@
         <!-- Eleven vendors, one interface - shown rather than claimed. The
              chips are the sprite's colour cuts where the mark survives on
              both grounds and its mono cut where the mark is essentially
-             black; see the manifest in scripts/gen-vendor-sprite.mjs.
+             black; the two cuts are the symbol ids in the sprite above.
 
              Slot angles: 0deg points right and turns clockwise. The five
              on --ri survive to mobile, the six marked is-outer do not. No
@@ -2821,9 +2822,10 @@
      404, widget.js correctly unmounted itself, and this page shipped
      for months with no chat on it and a "Try it live" button that could
      only ever say "Chat unavailable". config/demo-bot.js now declares
-     the id, scripts/seed-demo-bot.mjs provisions the row, and
-     scripts/check-landing.mjs fails the build if the token is still
-     here unsubstituted. -->
+     the id and scripts/seed-demo-bot.mjs provisions the row, and
+     config/origins.js substitutes the token at build time. Nothing
+     fails the build if it does not, so after a build confirm the tag
+     below carries a uuid rather than a token. -->
     <script
       src="__CK_WIDGET_SRC__"
       data-bot-id="__CK_DEMO_BOT__"

@@ -261,9 +261,9 @@ const MODEL_FLOORS: Array<{ pattern: RegExp; floor: number }> = [
  * provider itself so it stays pure and testable without an Env.
  *
  * EVERY floor other than the bge one is currently the unmeasured
- * fallback. That is deliberate — `npm run eval:rag` is what produces
- * the rest, and a guessed number that looks like a measurement is
- * worse than an honest default. See docs/rag-hardening.md, M2.
+ * fallback. That is deliberate — only measurement against a golden set
+ * produces the rest, and a guessed number that looks like a measurement
+ * is worse than an honest default. See docs/history/rag-hardening.md, M2.
  */
 export function similarityFloorFor(embedder: { vendor: string; model: string }): number {
   return resolveSimilarityFloor(embedder).floor;
