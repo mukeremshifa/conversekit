@@ -622,6 +622,51 @@ export function SaveBar({ busy, dirty, onSave }: { busy: boolean; dirty: boolean
 
 /** A single headline number. The dashboard card used across Overview,
  *  Usage and Retrieval. */
+/**
+ * A number that counts to its value once, when it arrives.
+ *
+ * The reduced-motion guard in index.css cannot reach this. That guard
+ * flattens animations and transitions, and a value interpolated in
+ * state is neither, so the preference is read here directly and the
+ * final number renders immediately when it is set.
+ *
+ * Counting is only safe on a tabular figure — `Stat` sets
+ * `tabular-nums`, without which the digits change width every frame and
+ * the whole tile shivers. Kept to 700ms to sit with the rest of the
+ * system (`ck-wipe` is 550ms); slower stops reading as an arrival and
+ * starts reading as a progress bar.
+ */
+export function useCountUp(target: number | undefined, ms = 700) {
+  const [n, setN] = React.useState(target ?? 0);
+  React.useEffect(() => {
+    if (target === undefined) return undefined;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || ms <= 0) { setN(target); return undefined; }
+    let raf = 0;
+    // The start comes from the FIRST FRAME, not from `performance.now()`
+    // here. The two are different clocks: rAF hands its callback a
+    // timestamp from its own timeline, and mixing that with a reading
+    // taken at effect time makes the elapsed value wrong by however far
+    // apart they are. Normally that is a frame and shows as a small
+    // jump; under a driven rAF it was a quarter of a million
+    // milliseconds, and every figure on the Usage screen rendered as a
+    // large negative number.
+    let t0: number | null = null;
+    // Same shape as the cubic-bezier the CSS motion uses: quick out of
+    // the gate, long settle.
+    const ease = (u: number) => 1 - (1 - u) ** 3;
+    const step = (now: number) => {
+      if (t0 === null) t0 = now;
+      const u = Math.min(1, Math.max(0, (now - t0) / ms));
+      setN(target * ease(u));
+      if (u < 1) raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [target, ms]);
+  return n;
+}
+
 export function Stat({ label, value, hint, tone, icon: Icon }: {
   label: string;
   value: string;

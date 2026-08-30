@@ -31,7 +31,7 @@ import { ApiError, endpoints, type Bot, type UsageGroup, type UsageReport } from
 import {
   Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   ChartCardSkeleton, EmptyState, Muted, Skeleton, StatSkeleton,
-  Table, TableSkeleton, Td, Th,
+  Table, TableSkeleton, Td, Th, useCountUp,
 } from '@/components/ui';
 import { Header } from '@/screens/Providers';
 import {
@@ -194,9 +194,17 @@ function Loaded({ report, loading, onNavigate }: {
               : 'No published rate for this vendor'
           }
         />
+        {/* The three integer tiles count in when the report lands.
+            All three or none: one number animating beside two that do
+            not reads as a glitch rather than as an arrival. The cost
+            tile is deliberately out — it carries a '≈' and an em-dash
+            empty state, and a currency ticking up reads as a meter
+            running rather than as a figure being reported. */}
         <Stat icon={Sigma} label="Tokens" value={compactNumber(t.totalTokens)}
+              countTo={t.totalTokens} format={compactNumber}
               hint={`${compactNumber(t.inputTokens)} in · ${compactNumber(t.outputTokens)} out`} />
         <Stat icon={Cpu} label="Provider calls" value={t.calls.toLocaleString()}
+              countTo={t.calls} format={(n) => Math.round(n).toLocaleString()}
               hint="not the same as conversations" />
         {/* Promoted out of the hint on the tile beside it. Calls that
             failed were still billed, so this is money bought nothing —
@@ -208,6 +216,8 @@ function Loaded({ report, loading, onNavigate }: {
           icon={AlertTriangle}
           label="Failed calls"
           value={t.errorCalls.toLocaleString()}
+          countTo={t.errorCalls}
+          format={(n) => Math.round(n).toLocaleString()}
           tone={t.errorCalls > 0 ? 'bad' : undefined}
           hint={t.errorCalls > 0
             ? 'charged anyway — these bought nothing'
@@ -442,8 +452,10 @@ function GroupTable({ groups, showVendor, labels }: {
   );
 }
 
-function Stat({ label, value, hint, icon: Icon, tone }: {
+function Stat({ label, value, hint, icon: Icon, tone, countTo, format }: {
   label: string;
+  /** The settled figure. Also what renders without `countTo`, and what
+   *  a viewer who asked for reduced motion sees immediately. */
   value: string;
   hint?: string;
   icon: typeof Coins;
@@ -451,7 +463,13 @@ function Stat({ label, value, hint, icon: Icon, tone }: {
    *  and label always travel with it, so the colour is never the only
    *  thing saying something is wrong. */
   tone?: 'bad';
+  /** Count from zero to this when the report lands. Pass `format` with
+   *  it — the tile renders a formatted string, not a raw number. */
+  countTo?: number;
+  format?: (n: number) => string;
 }) {
+  const counted = useCountUp(countTo);
+  const shown = countTo !== undefined && format ? format(counted) : value;
   return (
     <Card>
       <CardContent className="pt-5">
@@ -459,8 +477,9 @@ function Stat({ label, value, hint, icon: Icon, tone }: {
           <Icon className={cn('h-3.5 w-3.5', tone === 'bad' ? 'text-danger' : 'text-faint')} />
           <span className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</span>
         </div>
-        <div className={cn('mt-2 font-display text-[28px] leading-none', tone === 'bad' && 'text-danger')}>
-          {value}
+        <div className={cn('mt-2 font-display text-[28px] leading-none tabular-nums',
+          tone === 'bad' && 'text-danger')}>
+          {shown}
         </div>
         {hint && <p className="mt-1.5 text-xs text-muted">{hint}</p>}
       </CardContent>

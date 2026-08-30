@@ -41,3 +41,6 @@ apps/*/assets/__*
 # does not match these — they end in .local, not .env.
 .env.local
 .env.*.local
+
+# Competition video working files — local only, not part of the product
+video/
