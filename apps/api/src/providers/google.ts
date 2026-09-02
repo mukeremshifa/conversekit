@@ -16,12 +16,45 @@ import type {
 import type { VendorPreset } from './catalog';
 import { errorFromResponse, errorFromThrown, ProviderError } from './errors';
 import { readSSE } from './sse';
+import { getAccessToken, type ServiceAccount } from './vertex-auth';
+
+/**
+ * Addressing for Vertex AI instead of the Developer API.
+ *
+ * The WIRE FORMAT EITHER SIDE IS IDENTICAL — same `contents`, same
+ * `systemInstruction`, same `generationConfig`, same response shape —
+ * which is the entire reason this is a branch inside the existing
+ * adapter rather than a second one. Only the URL and the credential
+ * differ, and duplicating the streaming loop to change two lines is how
+ * the two copies drift.
+ *
+ * WHY VERTEX EXISTS HERE AT ALL: generativelanguage.googleapis.com
+ * geolocates the caller's IP and refuses whole countries with 400
+ * FAILED_PRECONDITION, "User location is not supported for the API
+ * use". A Worker egresses from whichever colo it runs in, so that check
+ * is not something this side can satisfy — see the note in
+ * wrangler.jsonc. Vertex is Google's own documented answer for
+ * restricted regions: it authorises by IAM, not by where the call came
+ * from.
+ */
+export interface VertexTarget {
+  projectId: string;
+  /** A region such as 'us-central1', or 'global' — which is a real
+   *  location name here, not a sentinel, and the one to prefer unless
+   *  data residency says otherwise: it spans every region and so rides
+   *  out single-region capacity 429s. */
+  location: string;
+  serviceAccount: ServiceAccount;
+}
 
 interface Options {
   preset: VendorPreset;
   model: string;
   apiKey: string | null;
   baseUrl: string;
+  /** Present for the Vertex vendor, absent for the Developer API.
+   *  When set, apiKey/baseUrl are unused. */
+  vertex?: VertexTarget | null;
   maxTokens?: number;
   temperature?: number;
   dimensions?: number | null;
@@ -72,11 +105,30 @@ export class GoogleChatProvider implements ChatProvider {
 
   private url(method: string, sse: boolean): string {
     const q = sse ? '?alt=sse' : '';
-    return `${this.o.baseUrl}/models/${encodeURIComponent(this.model)}:${method}${q}`;
+    const v = this.o.vertex;
+    if (!v) return `${this.o.baseUrl}/models/${encodeURIComponent(this.model)}:${method}${q}`;
+
+    // 'global' is addressed on the BARE host with no region prefix,
+    // while every real region repeats itself in both the hostname and
+    // the path. Building the regional form for 'global' yields
+    // global-aiplatform.googleapis.com, which does not resolve.
+    const host = v.location === 'global'
+      ? 'https://aiplatform.googleapis.com'
+      : `https://${v.location}-aiplatform.googleapis.com`;
+
+    return `${host}/v1/projects/${v.projectId}/locations/${v.location}` +
+           `/publishers/google/models/${encodeURIComponent(this.model)}:${method}${q}`;
   }
 
-  private headers(): Record<string, string> {
+  // Async because Vertex's credential is a minted OAuth token, not a
+  // static key. Cached in vertex-auth.ts, so this is a map lookup on
+  // all but roughly one call an hour.
+  private async headers(): Promise<Record<string, string>> {
     const h: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (this.o.vertex) {
+      h.Authorization = `Bearer ${await getAccessToken(this.o.vertex.serviceAccount)}`;
+      return h;
+    }
     // Header auth rather than ?key= so the secret stays out of logs/URLs.
     if (this.o.apiKey) h['x-goog-api-key'] = this.o.apiKey;
     return h;
@@ -102,7 +154,7 @@ export class GoogleChatProvider implements ChatProvider {
     try {
       res = await fetch(this.url('generateContent', false), {
         method:  'POST',
-        headers: this.headers(),
+        headers: await this.headers(),
         body:    JSON.stringify(this.body(req)),
         signal:  req.signal,
       });
@@ -139,7 +191,7 @@ export class GoogleChatProvider implements ChatProvider {
     try {
       res = await fetch(this.url('streamGenerateContent', true), {
         method:  'POST',
-        headers: { ...this.headers(), Accept: 'text/event-stream' },
+        headers: { ...(await this.headers()), Accept: 'text/event-stream' },
         body:    JSON.stringify(this.body(req)),
         signal:  req.signal,
       });

@@ -16,7 +16,8 @@ import { VENDORS, getPreset, type VendorPreset } from './catalog';
 import { ProviderError } from './errors';
 import { OpenAICompatChatProvider, OpenAICompatEmbeddingProvider } from './openai-compat';
 import { AnthropicChatProvider } from './anthropic';
-import { GoogleChatProvider, GoogleEmbeddingProvider } from './google';
+import { GoogleChatProvider, GoogleEmbeddingProvider, type VertexTarget } from './google';
+import { parseServiceAccount } from './vertex-auth';
 import { WorkersAiChatProvider, WorkersAiEmbeddingProvider, type AiBinding } from './workers-ai';
 
 export * from './types';
@@ -60,6 +61,56 @@ function resolveBaseUrl(preset: VendorPreset, cfg: ProviderConfig): string {
     });
   }
   return base.replace(/\/+$/, '');
+}
+
+/**
+ * Build the Vertex target from the service-account key plus env.
+ *
+ * PROJECT ID COMES OUT OF THE KEY ITSELF. A service-account JSON always
+ * carries `project_id`, so making the operator restate it in a second
+ * place only creates somewhere for the two to disagree — GCP_PROJECT_ID
+ * exists solely for the case where the account is deliberately calling
+ * into a different project than the one it lives in.
+ *
+ * LOCATION DEFAULTS TO 'global', which is a real Vertex location and
+ * not a stand-in for "unset": it spans every region, so it rides out
+ * the single-region capacity 429s that a pinned region hits. Anyone
+ * with data-residency requirements sets GCP_LOCATION and gives that up
+ * knowingly.
+ */
+function resolveVertex(env: Env, preset: VendorPreset, cfg: ProviderConfig): VertexTarget {
+  const raw = cfg.apiKey ?? (env as unknown as Record<string, string | undefined>)[preset.keyEnv!];
+  if (!raw) {
+    throw new ProviderError({
+      kind:    'auth',
+      vendor:  preset.id,
+      message: `No credentials: set the ${preset.keyEnv} secret to the service-account JSON key`,
+    });
+  }
+
+  let serviceAccount;
+  try { serviceAccount = parseServiceAccount(raw); }
+  catch (err) {
+    // A malformed key is a CONFIG error surfaced at resolve time, which
+    // is what puts it in front of the operator on the provider-test
+    // button instead of in front of a visitor mid-conversation.
+    throw new ProviderError({
+      kind:    'auth',
+      vendor:  preset.id,
+      message: `${preset.keyEnv} is ${err instanceof Error ? err.message : 'unreadable'}`,
+    });
+  }
+
+  const projectId = env.GCP_PROJECT_ID ?? serviceAccount.project_id;
+  if (!projectId) {
+    throw new ProviderError({
+      kind:    'bad_request',
+      vendor:  preset.id,
+      message: 'No GCP project: the key has no project_id, so set GCP_PROJECT_ID',
+    });
+  }
+
+  return { projectId, location: env.GCP_LOCATION ?? 'global', serviceAccount };
 }
 
 function requireAi(env: Env, vendor: string): AiBinding {
@@ -129,6 +180,16 @@ export function resolveChatProvider(env: Env, override?: ProviderConfig | null):
         baseUrl: resolveBaseUrl(preset, cfg),
       });
 
+    // Same adapter, same wire format — only the addressing and the
+    // credential change. See VertexTarget in ./google.
+    case 'google-vertex':
+      return new GoogleChatProvider({
+        ...common,
+        apiKey:  null,
+        baseUrl: '',
+        vertex:  resolveVertex(env, preset, cfg),
+      });
+
     case 'openai-compat':
       return new OpenAICompatChatProvider({
         ...common,
@@ -195,6 +256,17 @@ export function resolveEmbeddingProvider(env: Env, override?: EmbeddingConfig | 
         kind:    'unsupported',
         vendor,
         message: 'Anthropic has no embeddings API — pick another vendor for RAG',
+      });
+
+    // Vertex DOES serve embeddings, but through `:predict` with a
+    // different request and response shape than batchEmbedContents —
+    // so this is "not written" rather than "not possible", and saying
+    // so beats a wrong adapter. Use workers-ai or `google` for RAG.
+    case 'google-vertex':
+      throw new ProviderError({
+        kind:    'unsupported',
+        vendor,
+        message: 'Vertex embeddings are not implemented — use workers-ai or google for RAG',
       });
   }
 }

@@ -41,6 +41,14 @@ export interface Env {
   AI_VENDOR?: string;
   AI_MODEL?: string;
   AI_BASE_URL?: string;
+
+  // ── Vertex AI ───────────────────────────────────────────────────
+  // GCP_SERVICE_ACCOUNT is the whole service-account JSON key, stored
+  // as one secret. The project id is read out of that key; the two vars
+  // below exist only to override it and the default 'global' location.
+  GCP_SERVICE_ACCOUNT?: string;
+  GCP_PROJECT_ID?: string;
+  GCP_LOCATION?: string;
   AI_MAX_TOKENS?: string;
   AI_TEMPERATURE?: string;
 

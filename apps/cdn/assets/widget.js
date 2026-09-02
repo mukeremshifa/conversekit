@@ -1,5 +1,5 @@
 /*!
- * ConverseKit Chat Widget v0.11.0
+ * ConverseKit Chat Widget v0.11.1
  * Drop-in AI chatbot for any website.
  * Usage: <script src="widget.js" data-bot-id="YOUR_BOT_ID" defer></script>
  *
@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  var WIDGET_VERSION = '0.11.0';
+  var WIDGET_VERSION = '0.11.1';
 
   /* Two copies of the tag would mount two panels and leave
      window.ConverseKit pointing at whichever booted last. */
@@ -1289,6 +1289,43 @@
       .catch(cb);
   }
 
+  /*
+   * The config request is started HERE, at script-execution time, and
+   * not inside init() below.
+   *
+   * Nothing in the opening turn paints before it lands — the greeting,
+   * the business card and the suggestion chips are all rendered from
+   * the payload in one go — so every millisecond between this file
+   * running and the request leaving is a millisecond of empty panel for
+   * anyone who clicks the launcher straight away.
+   *
+   * init() waits for DOMContentLoaded because it appends to body, which
+   * may not exist yet. This does not: it touches no DOM. Leaving the
+   * fetch inside init() put it behind DOMContentLoaded for no reason,
+   * and on a page carrying other deferred scripts that is behind all of
+   * THEM executing too.
+   *
+   * Two states rather than a Promise: this file is buildless ES5 and
+   * ships to whatever browsers a tenant's visitors bring. Whichever of
+   * the request and init() finishes second is the one that runs the
+   * callback, so neither order can drop it.
+   */
+  var configErr = null;      // the settled result, once there is one
+  var configDone = false;    // ...distinguishing "err was null" from "not yet"
+  var configWaiting = null;  // init() got here first; call it on arrival
+
+  fetchConfig(function (err) {
+    configErr = err;
+    configDone = true;
+    if (configWaiting) { var cb = configWaiting; configWaiting = null; cb(err); }
+  });
+
+  /** Hand `cb` the config outcome, now or when it arrives. */
+  function whenConfig(cb) {
+    if (configDone) cb(configErr);
+    else configWaiting = cb;
+  }
+
   function payload(msg) {
     var body = { botId: botId, message: msg };
     if (sessionId) body.sessionId = sessionId;
@@ -1431,7 +1468,7 @@
        delayed greeting to decide whether it is still wanted. */
     var hasSpoken = false;
 
-    fetchConfig(function (err) {
+    whenConfig(function (err) {
       /* A 404 is definitive: no bot has this id. A panel that greets and
          then fails on every message is worse than no panel, and the
          person who needs to know is whoever pasted the tag — so unmount

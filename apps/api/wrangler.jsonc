@@ -86,9 +86,31 @@
   // Platform defaults. A bot with no provider_config inherits these, so
   // new bots land on the free stack rather than a metered one. Per-tenant
   // config in bots.provider_config still overrides them.
+  //
+  // NOT GOOGLE, and this is not a preference. generativelanguage.
+  // googleapis.com geolocates the CALLER'S IP, and a Worker subrequest
+  // egresses from whichever colo the Worker happens to run in — which
+  // `placement: smart` above deliberately leaves unpinned. Google
+  // answered every chat call with 400 FAILED_PRECONDITION, "User
+  // location is not supported for the API use". The key was never the
+  // problem: the same key and the same models return 200 from an
+  // ordinary IP. There is no retry, region var, or code change on this
+  // side that fixes it — reaching Gemini from Workers means Vertex AI's
+  // region-pinned endpoints and service-account OAuth, not an API key.
+  //
+  // AI_VENDOR AND AI_MODEL MUST MOVE TOGETHER. mergeChatConfig resolves
+  // `cfg.model ?? env.AI_MODEL`, so a vendor swap that leaves a stale
+  // model name here sends e.g. a Gemini name to Groq and 400s again.
+  //
+  // qwen3.8-27b rather than Groq's headline gpt-oss models because both
+  // of those are reasoning models that spend their budget on hidden
+  // reasoning tokens: at the maxTokens:5 that /provider/test sends they
+  // return empty content, which openai-compat.ts throws on. That would
+  // make the dashboard's "Test provider" button fail against a provider
+  // that works. qwen answers "ok" in five tokens.
   "vars": {
-    "AI_VENDOR": "google",
-    "AI_MODEL": "gemini-3.5-flash-lite",
+    "AI_VENDOR": "groq",
+    "AI_MODEL": "qwen/qwen3.8-27b",
     "EMBEDDING_VENDOR": "workers-ai"
   },
 

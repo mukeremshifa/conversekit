@@ -8,7 +8,7 @@
 // The dashboard reads this list to render the provider picker.
 // ----------------------------------------------------------------
 
-export type AdapterKind = 'openai-compat' | 'anthropic' | 'google' | 'workers-ai';
+export type AdapterKind = 'openai-compat' | 'anthropic' | 'google' | 'google-vertex' | 'workers-ai';
 
 /** Rough cost signal for the dashboard — not a billing source of truth. */
 export type CostTier = 'paid' | 'free-tier' | 'local';
@@ -84,6 +84,43 @@ export const VENDORS: Record<string, VendorPreset> = {
     embedDimensions: 768,
   },
 
+  // Gemini again, reached through Google Cloud instead of AI Studio.
+  //
+  // NOT A DUPLICATE OF `google`, and the difference is the only reason
+  // Gemini is reachable from this platform at all: the Developer API
+  // above geolocates the CALLER and answers 400 FAILED_PRECONDITION
+  // ("User location is not supported for the API use") for whole
+  // countries, which a Worker cannot satisfy because it egresses from
+  // whichever colo it happens to run in. Vertex authorises by IAM.
+  // Google's own docs name it as the remedy for restricted regions.
+  //
+  // Costs real money against a GCP billing account rather than a free
+  // tier, hence `paid` — but that is the point for anyone spending
+  // Google Cloud credits, which the Developer API and every third-party
+  // reseller leave untouched.
+  //
+  // NO defaultEmbedModel ON PURPOSE. Vertex serves embeddings through
+  // `:predict` with a different request and response shape, not
+  // `batchEmbedContents`, so the adapter would be wrong rather than
+  // merely unwritten. Omitting it makes resolveEmbeddingProvider throw
+  // the same honest "pick another vendor for RAG" it already throws for
+  // Anthropic, instead of failing at call time. Embeddings stay on
+  // workers-ai; nothing about this vendor changes RAG.
+  'google-vertex': {
+    id: 'google-vertex',
+    label: 'Google Vertex AI (Gemini)',
+    kind: 'google-vertex',
+    // The whole service-account JSON key, not an API key.
+    keyEnv: 'GCP_SERVICE_ACCOUNT',
+    costTier: 'paid',
+    // UNVERIFIED — the one thing here that could not be checked against
+    // a live project. Vertex publishes its own model ids in Model
+    // Garden and they lag or lead the Developer API's independently;
+    // confirm this resolves before relying on it, or set an explicit
+    // model in provider_config.
+    defaultChatModel: 'gemini-2.5-flash',
+  },
+
   // ── Free tiers / fast+cheap ─────────────────────────────────────
   groq: {
     id: 'groq',
@@ -92,7 +129,20 @@ export const VENDORS: Record<string, VendorPreset> = {
     baseUrl: 'https://api.groq.com/openai/v1',
     keyEnv: 'GROQ_API_KEY',
     costTier: 'free-tier',
-    defaultChatModel: 'llama-3.3-70b-versatile',
+    // Was llama-3.3-70b-versatile until Groq decommissioned it — the
+    // account now lists no Llama chat model at all, and the old value
+    // 404s with `model_not_found`. This is also the PLATFORM default
+    // (AI_VENDOR/AI_MODEL in wrangler.jsonc), so it carries every bot
+    // whose provider_config is null.
+    //
+    // NOT gpt-oss-120b/20b, which are the obvious picks here and are
+    // both wrong: they are reasoning models that spend the budget on
+    // hidden reasoning tokens before emitting any, so at the
+    // maxTokens:5 that /v1/admin/bots/:id/provider/test sends they
+    // return finish_reason 'length' with content '' — and an empty
+    // completion is what openai-compat.ts raises on. The dashboard's
+    // "Test provider" button would report a broken provider that works.
+    defaultChatModel: 'qwen/qwen3.8-27b',
     supportsStreamUsage: true,
   },
 
@@ -398,6 +448,10 @@ const VENDOR_PRICES: Record<string, Price> = {
   openai:       usd(0.15, 0.60, 0.02),
   anthropic:    usd(3.00, 15.00),
   google:       usd(0.10, 0.40, 0.15),
+  // Same rate card as the Developer API — the MODEL_PRICES gemini
+  // patterns above catch these first anyway, since Vertex uses the same
+  // model names. This is only the floor for an id they do not match.
+  'google-vertex': usd(0.10, 0.40),
   groq:         usd(0.59, 0.79),
   deepseek:     usd(0.27, 1.10),
   mistral:      usd(0.20, 0.60, 0.10),

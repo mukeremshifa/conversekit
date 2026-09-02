@@ -105,6 +105,7 @@ import { buildStats, buildMissReport, buildUsage, usageTokens } from './stats';
 import { LeadStreamFilter } from './lead-stream';
 import { issueSessionId, verifySessionId } from './session';
 import { isOriginAllowed, validateOrigins, validateSuggestions } from './origin';
+import { readHealth, writeHealth, purgeHealth, HEALTH_CACHE_CONTROL } from './health-cache';
 import { chatLimiterFor, entitlementsFor, getEntitlements, vendorAllowed } from './entitlements';
 import type {
   Env, Bot, Document, ChatRequest, BotUpdatePayload, BotCreatePayload, LeadConfig,
@@ -233,12 +234,29 @@ app.all('/admin/*', (c) => c.json({
 // knowledge base and provider config can never leak through it.
 // ================================================================
 app.get('/v1/bots/:id/health', async (c) => {
+  const botId = c.req.param('id');
+
+  // Cache first. This is the widget's opening request and nothing in
+  // the panel paints before it answers, so the Supabase round trip
+  // below is the visitor's whole wait — see src/health-cache.ts for
+  // what is stored and why it is the payload rather than the row.
+  const cached = await readHealth(c.req.url, botId);
+  if (cached) return c.json(cached, 200, { 'cache-control': HEALTH_CACHE_CONTROL });
+
   let bot: Bot | null;
-  try { bot = await getBotForChat(serviceDb(c.env), c.req.param('id')); }
+  try { bot = await getBotForChat(serviceDb(c.env), botId); }
   catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 
+  // Neither of the two failures above is cached, and the 404 is the one
+  // that matters: widget.js UNMOUNTS ITSELF on a 404 (see fetchConfig),
+  // so a cached one would keep a freshly created bot dark for a minute
+  // on every page that had been loaded while the id was still unknown.
   if (!bot) return c.json({ error: 'Bot not found' }, 404);
-  return c.json({
+
+  // Built as a value rather than returned inline so the cache stores
+  // exactly the bytes the caller is handed, and can never drift from
+  // them by way of a field added to one and not the other.
+  const payload = {
     status:       'ok',
     botId:        bot.id,
     name:         bot.name,
@@ -274,7 +292,13 @@ app.get('/v1/bots/:id/health', async (c) => {
     // False hides the "Powered by ConverseKit" line; an older widget
     // that does not know the field simply keeps showing it.
     branding:     entitlementsFor(bot).branding,
-  });
+  };
+
+  // The visitor does not wait on our bookkeeping; they already have
+  // their answer. The next visitor to this colo is who this is for.
+  c.executionCtx.waitUntil(writeHealth(c.req.url, botId, payload));
+
+  return c.json(payload, 200, { 'cache-control': HEALTH_CACHE_CONTROL });
 });
 
 // ================================================================
@@ -1072,6 +1096,54 @@ app.get('/v1/admin/providers', (c) => {
       keyConfigured:     v.keyless || (!!v.keyEnv && !!(c.env as unknown as Record<string, string | undefined>)[v.keyEnv]),
     })),
   });
+});
+
+/**
+ * Sub-routes of a bot that cannot change one field of its /health
+ * payload: the knowledge base, the FAQ, and four POSTs that are reads
+ * wearing a verb — a chat preview, a retrieval probe, a credential
+ * check. /health's field list is fixed and names none of them.
+ *
+ * `preview` is the one that had to be excluded rather than merely
+ * ought to be: the dashboard sends it per MESSAGE, so a tenant sitting
+ * on the preview screen would evict their own colo's entry on every
+ * turn they took.
+ *
+ * A DENYLIST, not an allowlist, and that direction is the point.
+ * Forgetting to add a new read-shaped route here costs one cache miss.
+ * Forgetting to add a new WRITE route to an allowlist would serve a
+ * tenant their old settings for a minute with nothing to show why.
+ */
+const HEALTH_NEUTRAL =
+  /^(documents|faq|knowledge|preview|provider|retrieval|retrieve-preview)(\/|$)/;
+
+/*
+ * Any successful write to a bot drops its cached /health payload.
+ *
+ * ONE MIDDLEWARE, not a purgeHealth() call at each of the four write
+ * routes that need it, because the fifth one is the problem: a route
+ * added later that forgets the call leaves tenants looking at their old
+ * settings, which is the kind of bug nobody reports and nobody can
+ * reproduce on demand.
+ *
+ * The id is read off the PATH rather than through c.req.param, which
+ * inside a middleware resolves against the middleware's own pattern —
+ * and a wildcard pattern has no `:id` to give.
+ *
+ * After next(), and only on a 2xx. A write that 400'd, 403'd or 404'd
+ * changed nothing, and purging on it would spend the next visitor a
+ * Supabase round trip to rebuild an entry that was already correct.
+ */
+app.use('/v1/admin/bots/*', async (c, next) => {
+  await next();
+  if (c.req.method === 'GET' || c.req.method === 'OPTIONS') return;
+  if (c.res.status < 200 || c.res.status >= 300) return;
+
+  const segments = new URL(c.req.url).pathname.split('/');
+  const botId = segments[4];
+  if (!botId || HEALTH_NEUTRAL.test(segments.slice(5).join('/'))) return;
+
+  c.executionCtx.waitUntil(purgeHealth(c.req.url, botId));
 });
 
 app.get('/v1/admin/bots', async (c) => {
