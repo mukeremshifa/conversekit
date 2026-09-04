@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sub-processors — ConverseKit</title>
+    <meta
+      name="description"
+      content="Every third party that may process data on ConverseKit's behalf: infrastructure, and the AI providers each customer selects for their own bot."
+    />
+
+    <link rel="icon" href="/brand/favicon.ico" sizes="any" />
+    <link rel="icon" href="/brand/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />
+    <link rel="canonical" href="__CK_SITE__/subprocessors" />
+    <meta
+      name="theme-color"
+      content="#FCFCFD"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0A0A0C"
+      media="(prefers-color-scheme: dark)"
+    />
+    <meta name="color-scheme" content="light dark" />
+
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("ck_theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (e) {
+          /* storage unavailable - follow the OS */
+        }
+      })();
+    </script>
+
+    <link rel="stylesheet" href="/legal.css" />
+  </head>
+
+  <body>
+    <header class="nav">
+      <div class="wrap">
+        <div class="nav-in">
+          <a class="brand" href="/" aria-label="ConverseKit home">
+            <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <mask id="nav-mk">
+                <rect width="32" height="32" fill="#fff" />
+                <circle cx="23" cy="23" r="8.25" fill="#000" />
+              </mask>
+              <rect
+                x="3.25"
+                y="3.25"
+                width="25.5"
+                height="25.5"
+                rx="7.5"
+                stroke="currentColor"
+                stroke-width="2.5"
+                mask="url(#nav-mk)"
+              />
+              <circle cx="23" cy="23" r="5.25" fill="#EEBA2B" />
+            </svg>
+            <span class="wm">Converse<span>Kit</span></span>
+          </a>
+          <div class="nav-right">
+            <a class="nav-cta" href="__CK_APP__/">Dashboard</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="wrap">
+        <div class="doc-head">
+          <h1>Sub-processors</h1>
+          <p class="doc-meta">
+            <strong>Last updated:</strong> 4 September 2026
+          </p>
+
+          <p class="summary">
+            <strong>In short.</strong> Two companies always process data for
+            ConverseKit: Cloudflare hosts it and Supabase stores it. Beyond
+            those, <strong>the AI provider is chosen per bot by the customer
+            who runs it</strong> &mdash; so which of the providers below
+            receives a given conversation depends on that customer's
+            configuration, not on ours.
+          </p>
+        </div>
+
+        <article class="doc">
+          <h2 id="always">Infrastructure &mdash; always used</h2>
+          <p>
+            These process data for every ConverseKit deployment regardless of
+            configuration.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Purpose</th>
+                  <th>Data</th>
+                  <th>Location</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <a href="https://www.cloudflare.com/privacypolicy/" rel="noopener" target="_blank">Cloudflare</a>
+                  </td>
+                  <td>Hosting, CDN, rate limiting, widget delivery</td>
+                  <td>All traffic in transit; IP addresses for rate limiting</td>
+                  <td>Global edge</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://supabase.com/privacy" rel="noopener" target="_blank">Supabase</a>
+                  </td>
+                  <td>Database, authentication, file storage</td>
+                  <td>Transcripts, leads, accounts, knowledge base</td>
+                  <td>Regional (project-dependent)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2 id="ai">AI providers &mdash; selected per bot</h2>
+          <p>
+            Each ConverseKit customer chooses which AI provider answers their
+            visitors, and may change it at any time. Only the selected
+            provider receives conversation content: the visitor's message,
+            recent messages from that conversation, and any relevant passages
+            from the customer's own knowledge base.
+          </p>
+          <p>
+            <strong>If you are a visitor</strong> wanting to know which
+            provider received your message, ask the business whose website you
+            used &mdash; they hold that setting.
+            <strong>If you are a customer</strong>, your current provider is
+            shown in your dashboard, and you are responsible for choosing one
+            appropriate to your own obligations.
+          </p>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Provider</th>
+                  <th>Used for</th>
+                  <th>Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <a href="https://openai.com/policies/privacy-policy" rel="noopener" target="_blank">OpenAI</a>
+                  </td>
+                  <td>Chat, embeddings</td>
+                  <td>API tier; not used for training</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://www.anthropic.com/legal/privacy" rel="noopener" target="_blank">Anthropic</a>
+                  </td>
+                  <td>Chat</td>
+                  <td>API tier; not used for training</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://policies.google.com/privacy" rel="noopener" target="_blank">Google (Gemini API)</a>
+                  </td>
+                  <td>Chat</td>
+                  <td>Paid API tier; free tiers may be used for improvement &mdash; check your key's tier</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://cloud.google.com/terms/cloud-privacy-notice" rel="noopener" target="_blank">Google Cloud (Vertex AI)</a>
+                  </td>
+                  <td>Chat</td>
+                  <td>Enterprise terms; not used for training</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://groq.com/privacy-policy/" rel="noopener" target="_blank">Groq</a>
+                  </td>
+                  <td>Chat</td>
+                  <td>Fast inference of open models</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://openrouter.ai/privacy" rel="noopener" target="_blank">OpenRouter</a>
+                  </td>
+                  <td>Chat</td>
+                  <td><strong>A router:</strong> forwards to a further upstream provider that varies by model</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://www.deepseek.com/privacy" rel="noopener" target="_blank">DeepSeek</a>
+                  </td>
+                  <td>Chat</td>
+                  <td>Processing may occur in China</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://mistral.ai/terms/#privacy-policy" rel="noopener" target="_blank">Mistral</a>
+                  </td>
+                  <td>Chat</td>
+                  <td>EU-based</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://www.together.ai/privacy" rel="noopener" target="_blank">Together AI</a>
+                  </td>
+                  <td>Chat</td>
+                  <td>Hosted open models</td>
+                </tr>
+                <tr>
+                  <td>
+                    <a href="https://www.cloudflare.com/privacypolicy/" rel="noopener" target="_blank">Cloudflare Workers AI</a>
+                  </td>
+                  <td>Chat, embeddings</td>
+                  <td>Platform default for embeddings</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h2 id="self-hosted">Self-hosted and custom endpoints</h2>
+          <p>
+            Customers may point a bot at Ollama, LM Studio, or any
+            OpenAI-compatible endpoint they operate or select themselves. In
+            that case <strong>no third-party AI provider is involved on our
+            side, and the endpoint is outside our control entirely</strong>.
+            The customer configuring it is responsible for where that data
+            goes and for disclosing it in their own privacy notice.
+          </p>
+
+          <h2 id="customer">Destinations a customer configures</h2>
+          <p>
+            A customer can set a webhook so new leads are posted to a system
+            of their choosing &mdash; a CRM, a chat tool, an internal
+            endpoint. Those receive data at the customer's direction and are
+            not our sub-processors; the customer's own privacy policy governs
+            them.
+          </p>
+
+          <h2 id="training">On model training</h2>
+          <p>
+            We do not use customer content or visitor conversations to train
+            AI models, and we select API tiers where the provider's
+            contractual default is that they do not either. We cannot
+            independently audit any provider's internal practices, and free or
+            consumer tiers at some providers carry different terms from their
+            paid APIs &mdash; noted above where we are aware of it. If this
+            matters to your compliance position, choose a provider whose
+            enterprise terms you have reviewed.
+          </p>
+
+          <h2 id="changes">Changes to this list</h2>
+          <p>
+            We will update this page when we add or remove an infrastructure
+            sub-processor, and notify account holders by email at least 30
+            days before an addition takes effect, so there is time to object.
+            The AI provider list changes as we add vendor support; adding a
+            vendor to the catalogue does not send anyone's data to it, because
+            it only ever receives data once a customer selects it.
+          </p>
+
+          <hr />
+          <p>
+            See also <a href="/privacy">Privacy Policy</a> and
+            <a href="/terms">Terms of Service</a>. Questions:
+            <a href="mailto:mukeemoha@gmail.com">mukeemoha@gmail.com</a>.
+          </p>
+        </article>
+      </div>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <nav class="foot-legal" aria-label="Legal">
+          <a href="/">Home</a>
+          <a href="/privacy">Privacy Policy</a>
+          <a href="/terms">Terms of Service</a>
+          <a href="/subprocessors" aria-current="page">Sub-processors</a>
+          <a href="mailto:mukeemoha@gmail.com">Contact</a>
+        </nav>
+        <div class="foot-base">
+          <p>
+            Copyright &copy; ConverseKit <span id="foot-year">2026</span>.
+            Built by mukeremshifa.
+          </p>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      document.getElementById("foot-year").textContent =
+        new Date().getFullYear();
+    </script>
+  </body>
+</html>

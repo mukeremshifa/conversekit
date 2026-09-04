@@ -1,0 +1,409 @@
+/* ================================================================
+   legal.css — the chrome and prose styles for /privacy, /terms and
+   /subprocessors.
+
+   A SEPARATE FILE, unlike index.html which carries its own 1,400 lines
+   inline. The landing page is one document and inlining saves it a
+   round trip; these are three documents that share every token, and
+   three inline copies would mean a colour changed in one theme and not
+   the others. One request, cached across all three, is the better
+   trade here for exactly the reason the opposite is true there.
+
+   The tokens below are copied from index.html rather than imported,
+   because index.html has no stylesheet to import from. They are the
+   same values, including the contrast reasoning: #EEBA2B is 1.75:1 on
+   the light ground and can only ever be a fill, so --gold-strong
+   carries strokes and focus rings and --gold-ink carries small text.
+   If those change there, they change here.
+   ================================================================ */
+
+@font-face {
+  font-family: "Bricolage";
+  src: url(/fonts/bricolage-wordmark.woff2) format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument";
+  src: url(/fonts/instrument-sans-latin.woff2) format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+:root {
+  --bg: #fcfcfd;
+  --surface: #ffffff;
+  --sunk: #f4f4f6;
+  --fg: #0a0a0c;
+  --muted: #5b5b66;
+  --faint: #8a8a96;
+  --line: #e4e4e9;
+  --line-strong: #d2d2da;
+
+  --gold: #eeba2b;
+  --on-gold: #0a0a0c;
+  --gold-strong: #b98b0f;
+  --gold-ink: #936f0c;
+
+  --raised: #f4f4f6;
+  --shadow: 0 18px 44px -26px rgba(10, 10, 12, 0.24);
+  --gold-hover: color-mix(in srgb, var(--gold) 88%, var(--fg));
+
+  --mono:
+    ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo,
+    monospace;
+
+  /* Narrower than the landing page's 1120px. This is a reading
+     column, and 1120px of legal prose is a wall nobody finishes. */
+  --maxw: 820px;
+}
+
+/* Dark under both the media query and the attribute, so the OS and the
+   toggle can each win — same guard as index.html. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0a0c;
+    --surface: #141417;
+    --sunk: #08080a;
+    --fg: #f7f7f8;
+    --muted: #a1a1ac;
+    --faint: #71717b;
+    --line: #26262c;
+    --line-strong: #33333b;
+
+    --gold-strong: #eeba2b;
+    --gold-ink: #eeba2b;
+
+    --raised: #1b1b1f;
+    --shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0a0c;
+  --surface: #141417;
+  --sunk: #08080a;
+  --fg: #f7f7f8;
+  --muted: #a1a1ac;
+  --faint: #71717b;
+  --line: #26262c;
+  --line-strong: #33333b;
+
+  --gold-strong: #eeba2b;
+  --gold-ink: #eeba2b;
+
+  --raised: #1b1b1f;
+  --shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.9);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: "Instrument", system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.62;
+  font-weight: 460;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+a {
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--gold-strong);
+  outline-offset: 3px;
+  border-radius: 5px;
+}
+
+/* ── Nav ──
+   The landing page's floating pill, at this page's narrower measure.
+   Not sticky here: a legal page is read top to bottom rather than
+   navigated, and a sticky bar over a long document costs a line of
+   text on every screen of a phone for a link nobody is reaching for
+   mid-sentence. */
+header.nav {
+  padding: 14px 0 10px;
+}
+.nav-in {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  height: 58px;
+  padding: 0 8px 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  box-shadow: var(--shadow);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  text-decoration: none;
+}
+.brand svg {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  color: var(--fg);
+}
+.brand .wm {
+  font-family: "Bricolage", sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.03em;
+}
+.brand .wm span {
+  font-weight: 400;
+  color: var(--muted);
+}
+.nav-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.nav-cta {
+  display: inline-flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 11px;
+  background: var(--gold);
+  color: var(--on-gold);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+.nav-cta:hover {
+  background: var(--gold-hover);
+}
+
+/* ── Document head ── */
+.doc-head {
+  padding: 40px 0 8px;
+}
+.doc-head h1 {
+  margin: 0 0 12px;
+  font-family: "Bricolage", sans-serif;
+  font-size: clamp(30px, 5vw, 42px);
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+.doc-meta {
+  margin: 0;
+  font-size: 14px;
+  color: var(--faint);
+}
+.doc-meta strong {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* The one-paragraph plain-language summary above each document. A
+   legal page that opens in legal register loses the reader in the
+   first sentence; this says the same thing in one breath and is
+   marked as non-binding so it cannot be read as the terms themselves. */
+.summary {
+  margin: 24px 0 0;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--gold-strong);
+  border-radius: 12px;
+  background: var(--sunk);
+  color: var(--muted);
+  font-size: 15px;
+}
+.summary strong {
+  color: var(--fg);
+}
+
+/* ── Prose ── */
+.doc {
+  padding: 8px 0 72px;
+}
+.doc h2 {
+  margin: 44px 0 12px;
+  font-family: "Bricolage", sans-serif;
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  scroll-margin-top: 24px;
+}
+.doc h3 {
+  margin: 28px 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.doc p,
+.doc li {
+  color: var(--muted);
+}
+.doc p {
+  margin: 0 0 14px;
+}
+.doc strong {
+  color: var(--fg);
+  font-weight: 600;
+}
+.doc ul,
+.doc ol {
+  margin: 0 0 16px;
+  padding-left: 22px;
+}
+.doc li {
+  margin-bottom: 7px;
+}
+.doc a {
+  color: var(--gold-ink);
+  text-underline-offset: 2px;
+}
+.doc code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--raised);
+  color: var(--fg);
+}
+.doc hr {
+  margin: 40px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+/* Tables carry the retention windows and the sub-processor list, which
+   are the two things on these pages a reader actually scans for. They
+   scroll inside their own container so a long vendor row never makes
+   the page itself scroll sideways on a phone. */
+.table-scroll {
+  overflow-x: auto;
+  margin: 0 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.doc table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  font-size: 14.5px;
+}
+.doc th,
+.doc td {
+  padding: 11px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+.doc th {
+  background: var(--sunk);
+  color: var(--fg);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.doc tbody tr:last-child td {
+  border-bottom: 0;
+}
+.doc td {
+  color: var(--muted);
+}
+
+/* ── Table of contents ── */
+.toc {
+  margin: 28px 0 0;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.toc h2 {
+  margin: 0 0 10px;
+  font-family: "Instrument", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.toc ol {
+  margin: 0;
+  padding-left: 20px;
+  columns: 2;
+  column-gap: 28px;
+}
+.toc li {
+  margin-bottom: 5px;
+  font-size: 14.5px;
+}
+.toc a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.toc a:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+/* ── Footer ──
+   The landing page's footer, minus the six product links: from a legal
+   page the useful directions are the other legal pages and the way
+   back, not a jump to an anchor on a document you are not on. */
+footer {
+  padding: 56px 0 48px;
+  background: var(--sunk);
+}
+.foot-legal {
+  display: flex;
+  gap: 8px 22px;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+.foot-legal a {
+  color: var(--muted);
+  text-decoration: none;
+}
+.foot-legal a:hover {
+  color: var(--fg);
+}
+.foot-legal a[aria-current="page"] {
+  color: var(--fg);
+  font-weight: 600;
+}
+.foot-base {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 32px;
+  padding-top: 28px;
+  border-top: 1px solid var(--line);
+}
+.foot-base p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--faint);
+}
+
+@media (max-width: 640px) {
+  .toc ol {
+    columns: 1;
+  }
+  .nav-in {
+    padding: 0 8px 0 14px;
+  }
+}

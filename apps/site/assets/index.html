@@ -307,10 +307,15 @@
         flex: 1;
         justify-content: center;
       }
+      /* margin-left:auto, not the centred links' flex:1, is what holds
+         the actions against the right edge: below 860px the links are
+         gone and there is nothing left to take up the slack, so without
+         this the CTA drifts in from the pill's edge by the flex gap. */
       .nav-right {
         display: flex;
         align-items: center;
         gap: 10px;
+        margin-left: auto;
       }
       .brand {
         display: flex;
@@ -1164,6 +1169,147 @@
       .install {
         text-align: center;
       }
+      /* ── Pricing ──
+         Two panels rather than the three-up .pillars grid, because there
+         are two things to say and a third empty column would read as a
+         plan that failed to load. The live plan takes the wider column
+         and the accent border; the forthcoming one sits beside it in the
+         quieter treatment, which is the honest visual hierarchy when one
+         can be bought and the other cannot. */
+      #pricing {
+        background: var(--sunk);
+      }
+      .tiers {
+        display: grid;
+        grid-template-columns: 1.05fr 1fr;
+        gap: 24px;
+        align-items: start;
+      }
+      .tier {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--line);
+        border-radius: 15px;
+        background: var(--surface);
+        padding: 32px 30px 34px;
+      }
+      .tier-now {
+        border-color: var(--gold-strong);
+        box-shadow: var(--shadow);
+      }
+      .tier-head h4 {
+        margin: 0 0 10px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .tier-price {
+        margin: 0 0 4px;
+        font-family: "Bricolage", sans-serif;
+        font-size: 38px;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+        font-weight: 700;
+        color: var(--fg);
+      }
+      /* The "/month" rides the number at text size so the price reads as
+         one object rather than two competing figures. */
+      .tier-price span {
+        font-family: "Instrument", system-ui, sans-serif;
+        font-size: 15px;
+        font-weight: 460;
+        letter-spacing: 0;
+        color: var(--faint);
+      }
+      .tier-soon .tier-price {
+        font-size: 26px;
+        color: var(--muted);
+      }
+      .tier-note {
+        margin: 0 0 22px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--gold-ink);
+      }
+      .tier-soon .tier-note {
+        color: var(--faint);
+      }
+      .tier-list {
+        margin: 0 0 26px;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 10px;
+      }
+      .tier-list li {
+        position: relative;
+        padding-left: 26px;
+        font-size: 14.5px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+      /* A CSS check rather than an inline SVG per row: seven copies of
+         the same glyph in the markup is seven things to keep in step. */
+      .tier-list li::before {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 7px;
+        width: 9px;
+        height: 5px;
+        border-left: 2px solid var(--gold-strong);
+        border-bottom: 2px solid var(--gold-strong);
+        transform: rotate(-45deg);
+      }
+      .tier-blurb {
+        margin: 0 0 14px;
+        font-size: 14.5px;
+        line-height: 1.62;
+        color: var(--muted);
+      }
+      /* margin-top:auto pins both CTAs to the bottom of their panel, so
+         the two buttons line up even though the columns hold different
+         amounts of text. */
+      .tier-cta {
+        margin-top: auto;
+        align-self: flex-start;
+      }
+      .tier-fine {
+        margin: 12px 0 0;
+        font-size: 13px;
+        color: var(--faint);
+      }
+
+      /* ── Trust ── */
+      #trust .pillars {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      #trust .card p a {
+        color: var(--gold-ink);
+        text-underline-offset: 2px;
+        white-space: nowrap;
+      }
+      .trust-foot {
+        margin: 32px 0 0;
+        font-size: 14.5px;
+        color: var(--muted);
+      }
+      .trust-foot a {
+        color: var(--gold-ink);
+        text-underline-offset: 2px;
+      }
+
+      @media (max-width: 860px) {
+        .tiers {
+          grid-template-columns: 1fr;
+        }
+        #trust .pillars {
+          grid-template-columns: 1fr;
+        }
+      }
+
       .install .sec-head {
         max-width: 620px;
         margin: 0 auto 36px;
@@ -1381,6 +1527,24 @@
         margin: 0;
         font-size: 13px;
         color: var(--faint);
+      }
+      /* Between the copyright and the social icons, and allowed to wrap
+         onto its own line before either of them does - .foot-base is
+         already flex-wrap, so on a phone this becomes its own row rather
+         than squeezing the other two. */
+      .foot-legal {
+        display: flex;
+        gap: 6px 18px;
+        flex-wrap: wrap;
+        font-size: 13px;
+      }
+      .foot-legal a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+      .foot-legal a:hover {
+        color: var(--fg);
+        text-decoration: underline;
       }
       .foot-social {
         display: flex;
@@ -1732,14 +1896,25 @@
             <span class="wm">Converse<span>Kit</span></span>
           </a>
           <nav class="nav-links">
+            <!-- Five, not six. "Specs" (#tenancy) came out rather than
+                 Trust going in beside it: they answer the same question
+                 and Trust answers it in the buyer's words, with the
+                 retention numbers and the links to the policy pages.
+                 #tenancy is still on the page and still linked from the
+                 footer — it is the deeper read, not the first one. -->
             <a class="ghost" href="#why">Features</a>
             <a class="ghost" href="#how">How it works</a>
             <a class="ghost" href="#providers">Providers</a>
-            <a class="ghost" href="#tenancy">Specs</a>
-            <a class="ghost" href="#install">Install</a>
+            <a class="ghost" href="#pricing">Pricing</a>
+            <a class="ghost" href="#trust">Trust</a>
           </nav>
           <div class="nav-right">
-            <a class="nav-cta cta" href="__CK_APP__/">Dashboard</a>
+            <!-- The persistent CTA, so the page always has one way in
+                 regardless of how far down the visitor has scrolled.
+                 "Start free" rather than "Dashboard": returning users
+                 know where the dashboard is, and the sign-in screen is
+                 one toggle away from the signup form anyway. -->
+            <a class="nav-cta cta" href="__CK_APP__/?signup">Start free</a>
           </div>
         </div>
       </div>
@@ -1940,11 +2115,18 @@
             with one script tag &mdash; no plugin, no build step.
           </p>
 
+          <!-- "Try it live" stays first: the demo bot is the strongest
+               thing on the page and costs a visitor nothing. The second
+               action used to be "Open the dashboard", which speaks to
+               someone who already has an account — every visitor who did
+               not was offered no way in at all. -->
           <div class="hero-actions">
             <button class="btn btn-primary" id="try-it" type="button">
               Try it live
             </button>
-            <a class="btn btn-ghost" href="__CK_APP__/">Open the dashboard</a>
+            <a class="btn btn-ghost" href="__CK_APP__/?signup"
+              >Start free</a
+            >
           </div>
         </div>
       </section>
@@ -2559,9 +2741,188 @@
           </div>
 
           <div class="hero-actions" data-reveal="1">
-            <a class="btn btn-primary" href="__CK_APP__/">Create a bot</a>
+            <a class="btn btn-primary" href="__CK_APP__/?signup">Create a bot</a>
             <a class="btn btn-ghost" href="#how">How it works</a>
           </div>
+        </div>
+      </section>
+
+      <!-- ── Pricing ──
+           THE HONEST VERSION, and deliberately so. Three plans exist in
+           the database and in entitlements.ts, but there is no billing
+           integration: nothing here can take money yet. So this section
+           names the tier that is real and says the others are coming,
+           rather than printing three price cards whose buttons would go
+           to a checkout that does not exist.
+
+           An unpriced B2B page reads as abandoned, which is the problem
+           this fixes. A page with fake prices reads as a lie the first
+           time someone clicks, which is worse. The middle is saying
+           exactly where the product is.
+
+           The two differences named for the paid tiers are the two that
+           are actually implemented today — the rate limiter binding and
+           the branding flag. Everything else (RAG, the vendor list, the
+           storage ceiling) is identical across plans in entitlements.ts,
+           so nothing here claims otherwise. -->
+      <section id="pricing">
+        <div class="wrap">
+          <div class="sec-head" data-reveal>
+            <div class="kicker">
+              <span class="n">06</span>
+              <h2>Pricing</h2>
+            </div>
+            <h3>Free while it is early</h3>
+            <p class="lede">
+              Every feature on this page is available now at no cost, with
+              no card and no trial clock. Paid tiers are coming; until
+              they arrive, this is the whole price list.
+            </p>
+          </div>
+
+          <div class="tiers">
+            <div class="tier tier-now" data-reveal>
+              <div class="tier-head">
+                <h4>Free</h4>
+                <p class="tier-price">$0<span>/month</span></p>
+                <p class="tier-note">Available today</p>
+              </div>
+              <ul class="tier-list">
+                <li>Unlimited bots and conversations</li>
+                <li>Answers from your own documents</li>
+                <li>Every AI vendor, including your own keys</li>
+                <li>Lead capture and CSV export</li>
+                <li>100&nbsp;MB of knowledge per account</li>
+                <li>30 messages per minute</li>
+                <li>A small "Powered by ConverseKit" line</li>
+              </ul>
+              <a class="btn btn-primary tier-cta" href="__CK_APP__/?signup"
+                >Start free</a
+              >
+              <p class="tier-fine">No card required.</p>
+            </div>
+
+            <div class="tier tier-soon" data-reveal="1">
+              <div class="tier-head">
+                <h4>Pro &amp; Scale</h4>
+                <p class="tier-price">Not yet priced</p>
+                <p class="tier-note">In development</p>
+              </div>
+              <p class="tier-blurb">
+                When billing arrives, the paid tiers lift the rate limit
+                and drop the ConverseKit line from the widget. Everything
+                else on the free plan stays on the free plan &mdash; the
+                knowledge base, the vendor choice and the lead capture are
+                not going behind a paywall.
+              </p>
+              <p class="tier-blurb">
+                Running something that needs more than 30 messages a
+                minute today? Say so and we will raise it for you.
+              </p>
+              <a
+                class="btn btn-ghost tier-cta"
+                href="mailto:mukeemoha@gmail.com?subject=ConverseKit%20capacity"
+                >Get in touch</a
+              >
+              <p class="tier-fine">
+                We will publish prices here before anything is charged.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Trust ──
+           The material here was already true and already written down —
+           in docs/tenancy.md, and in the schema comments — but it sat
+           behind a nav item called "Specs" where nobody evaluating a
+           vendor would think to look. These are the four questions a
+           business actually asks before putting a chat widget on their
+           own site, and every answer links to the page that documents
+           it, because a claim a reader can check is worth more than a
+           claim they cannot. -->
+      <section id="trust">
+        <div class="wrap">
+          <div class="sec-head" data-reveal>
+            <div class="kicker">
+              <span class="n">07</span>
+              <h2>Trust</h2>
+            </div>
+            <h3>What happens to your visitors' data</h3>
+            <p class="lede">
+              You are putting this on your own site, in front of your own
+              customers. Here is what it does with what they type, in
+              plain terms.
+            </p>
+          </div>
+
+          <div class="pillars">
+            <div class="card" data-reveal>
+              <div class="ico">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <use href="#i-shield-check-duo" />
+                </svg>
+              </div>
+              <h4>Separated in the database</h4>
+              <p>
+                Isolation is enforced by row-level security keyed to
+                account membership &mdash; in Postgres, not in application
+                code a later change could quietly drop.
+              </p>
+            </div>
+
+            <div class="card" data-reveal="1">
+              <div class="ico">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <use href="#i-key-round" />
+                </svg>
+              </div>
+              <h4>Deleted on a schedule</h4>
+              <p>
+                Transcripts are removed after 180 days and search logs
+                after 90, automatically. You can also erase one visitor's
+                conversation and the contact record from it in a single
+                action.
+                <a href="/privacy#retention">Retention detail</a>
+              </p>
+            </div>
+
+            <div class="card" data-reveal="2">
+              <div class="ico">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <use href="#i-sliders-horizontal" />
+                </svg>
+              </div>
+              <h4>No cookies, no trackers</h4>
+              <p>
+                The widget sets no cookies and stores one session id that
+                your visitor's browser drops when the tab closes. No
+                analytics, no advertising, no consent banner needed.
+              </p>
+            </div>
+
+            <div class="card" data-reveal="3">
+              <div class="ico">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <use href="#i-settings-2-duo" />
+                </svg>
+              </div>
+              <h4>You pick who sees it</h4>
+              <p>
+                You choose which AI vendor answers, or point it at your
+                own endpoint. We never train on your content or your
+                visitors' conversations.
+                <a href="/subprocessors">Who processes what</a>
+              </p>
+            </div>
+          </div>
+
+          <p class="trust-foot" data-reveal="1">
+            Read the <a href="/privacy">Privacy Policy</a>, the
+            <a href="/terms">Terms</a>, or the
+            <a href="/subprocessors">sub-processor list</a>. Need a signed
+            DPA? <a href="mailto:mukeemoha@gmail.com">Ask</a>.
+          </p>
         </div>
       </section>
     </main>
@@ -2595,12 +2956,12 @@
               websites.
             </p>
           </div>
-          <!-- Six links and no group headings: the template's four
-               labelled columns exist to sort thirty of them, and a
-               heading over a column of three is furniture. Two columns
-               filling downward keeps the template's shape without
-               inventing categories. -->
+          <!-- No group headings: the template's four labelled columns
+               exist to sort thirty links, and a heading over a column of
+               four is furniture. Two columns filling downward keeps the
+               template's shape without inventing categories. -->
           <nav class="foot-links" aria-label="Footer">
+            <a href="#pricing">Pricing</a>
             <a href="#why">Features</a>
             <a href="#how">How it works</a>
             <a href="#providers">AI providers</a>
@@ -2615,6 +2976,17 @@
             Copyright &copy; ConverseKit <span id="foot-year">2026</span>. Built
             by mukeremshifa.
           </p>
+          <!-- Legal on the base rail rather than as a third column above:
+               the columns up there are product navigation for someone
+               still deciding, and these are for someone checking whether
+               the product is safe to adopt. Different question, and the
+               base rail is where a business evaluating a vendor already
+               looks for them. -->
+          <nav class="foot-legal" aria-label="Legal">
+            <a href="/privacy">Privacy</a>
+            <a href="/terms">Terms</a>
+            <a href="/subprocessors">Sub-processors</a>
+          </nav>
           <ul class="foot-social">
             <li>
               <a href="https://x.com/mukeemoha" rel="me noopener" target="_blank">

@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Privacy Policy — ConverseKit</title>
+    <meta
+      name="description"
+      content="How ConverseKit handles personal data: what the chat widget collects, who processes it, how long it is kept, and how to have it erased."
+    />
+
+    <link rel="icon" href="/brand/favicon.ico" sizes="any" />
+    <link rel="icon" href="/brand/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/brand/apple-touch-icon.png" />
+    <link rel="canonical" href="__CK_SITE__/privacy" />
+    <meta
+      name="theme-color"
+      content="#FCFCFD"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#0A0A0C"
+      media="(prefers-color-scheme: dark)"
+    />
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- Same key and same guard as index.html, so a theme chosen on the
+         landing page or in the dashboard holds here too. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("ck_theme");
+          if (t === "light" || t === "dark") {
+            document.documentElement.setAttribute("data-theme", t);
+          }
+        } catch (e) {
+          /* storage unavailable - follow the OS */
+        }
+      })();
+    </script>
+
+    <link rel="stylesheet" href="/legal.css" />
+  </head>
+
+  <body>
+    <header class="nav">
+      <div class="wrap">
+        <div class="nav-in">
+          <a class="brand" href="/" aria-label="ConverseKit home">
+            <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
+              <mask id="nav-mk">
+                <rect width="32" height="32" fill="#fff" />
+                <circle cx="23" cy="23" r="8.25" fill="#000" />
+              </mask>
+              <rect
+                x="3.25"
+                y="3.25"
+                width="25.5"
+                height="25.5"
+                rx="7.5"
+                stroke="currentColor"
+                stroke-width="2.5"
+                mask="url(#nav-mk)"
+              />
+              <circle cx="23" cy="23" r="5.25" fill="#EEBA2B" />
+            </svg>
+            <span class="wm">Converse<span>Kit</span></span>
+          </a>
+          <div class="nav-right">
+            <a class="nav-cta" href="__CK_APP__/">Dashboard</a>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="wrap">
+        <div class="doc-head">
+          <h1>Privacy Policy</h1>
+          <p class="doc-meta">
+            <strong>Last updated:</strong> 4 September 2026 &middot;
+            <strong>Effective:</strong> 4 September 2026
+          </p>
+
+          <p class="summary">
+            <strong>In short.</strong> ConverseKit is a chat widget that
+            businesses add to their own websites. If you are a visitor
+            talking to one of those chat widgets, the business running it
+            decides what happens to your data &mdash; we store it on their
+            behalf. We keep chat transcripts for 180 days, and we send what
+            you type to whichever AI provider that business has chosen so it
+            can write a reply. We do not sell your data, we do not use it to
+            train AI models, and we do not run advertising or analytics
+            trackers. This summary is not the policy; the sections below are.
+          </p>
+
+          <nav class="toc" aria-label="Contents">
+            <h2>Contents</h2>
+            <ol>
+              <li><a href="#roles">1. Who is responsible</a></li>
+              <li><a href="#collect">2. What we collect</a></li>
+              <li><a href="#why">3. Why, and on what basis</a></li>
+              <li><a href="#ai">4. AI providers</a></li>
+              <li><a href="#sharing">5. Who else sees it</a></li>
+              <li><a href="#retention">6. How long we keep it</a></li>
+              <li><a href="#rights">7. Your rights</a></li>
+              <li><a href="#storage">8. Browser storage</a></li>
+              <li><a href="#security">9. Security</a></li>
+              <li><a href="#transfers">10. International transfers</a></li>
+              <li><a href="#children">11. Children</a></li>
+              <li><a href="#changes">12. Changes</a></li>
+              <li><a href="#contact">13. Contact</a></li>
+            </ol>
+          </nav>
+        </div>
+
+        <article class="doc">
+          <h2 id="roles">1. Who is responsible for your data</h2>
+          <p>
+            ConverseKit is software that other businesses install on their
+            websites. That makes two different organisations responsible for
+            different things, and which one you need depends on who you are.
+          </p>
+          <p>
+            <strong>If you chatted with a ConverseKit widget on some
+            company's website</strong>, that company is the
+            <strong>data controller</strong>. They decided to collect your
+            information, they decide what to do with it, and they are who you
+            should contact first about it. ConverseKit is the
+            <strong>data processor</strong>: we store and transmit that data
+            under their instructions and do not use it for our own purposes.
+            We will still help &mdash; see
+            <a href="#rights">Your rights</a> &mdash; but if you ask us to
+            erase something we will normally act on the instruction of the
+            business whose widget you used.
+          </p>
+          <p>
+            <strong>If you have a ConverseKit account</strong>, we are the
+            controller for your own account data (section 2c).
+          </p>
+          <p>
+            ConverseKit is operated by Mukerem Shifa. Contact details are in
+            <a href="#contact">section 13</a>.
+          </p>
+
+          <h2 id="collect">2. What we collect</h2>
+
+          <h3>a. What you type into a chat widget</h3>
+          <p>
+            Every message you send to a ConverseKit chat widget, and every
+            reply it sends back, is stored as a transcript. If you volunteer
+            personal details in conversation &mdash; your name, your email
+            address, your phone number, what you are asking about &mdash;
+            those are stored too, both inside the transcript and, where the
+            business has switched on lead capture, as a separate contact
+            record they can export.
+          </p>
+          <p>
+            The widget has no form fields and asks for nothing up front. It
+            only ever holds what you chose to type, so please do not type
+            anything into a chat widget that you would not want the business
+            running it to read.
+          </p>
+
+          <h3>b. Technical data</h3>
+          <ul>
+            <li>
+              <strong>A session identifier.</strong> Issued and signed by our
+              server, valid for 7 days, and used to keep one conversation
+              together so the bot can follow what you said a moment ago. It
+              is not linked to any profile of you and does not follow you to
+              other websites.
+            </li>
+            <li>
+              <strong>Your IP address</strong>, used transiently for rate
+              limiting &mdash; stopping one source from flooding the service.
+              It is not written into the transcript or the contact record.
+            </li>
+            <li>
+              <strong>Your question, logged for search quality.</strong> When
+              the bot searches a business's documents to answer you, the
+              question is logged verbatim along with whether the search found
+              anything, so the business can see which questions their bot
+              cannot answer. This log is deleted after 90 days.
+            </li>
+            <li>
+              <strong>Usage counters.</strong> Token counts per AI call, for
+              billing. Numbers only &mdash; no message text.
+            </li>
+          </ul>
+
+          <h3>c. Account data (ConverseKit customers)</h3>
+          <p>
+            If you sign up, we store your email address, an authentication
+            record, your organisation name, and the configuration of the bots
+            you create &mdash; including any documents you upload as
+            knowledge for your bot to answer from.
+          </p>
+
+          <h3>d. What we do not collect</h3>
+          <p>
+            No advertising trackers, no analytics pixels, no third-party
+            cookies, no cross-site profiling, and no fingerprinting. We do not
+            sell personal data, and we do not share it for cross-context
+            behavioural advertising, under any definition of "sell" or
+            "share" including those in California law.
+          </p>
+
+          <h2 id="why">3. Why we process it, and on what legal basis</h2>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Purpose</th>
+                  <th>Legal basis (UK/EU GDPR)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Chat messages</td>
+                  <td>Answering your question; letting the business review what their bot said</td>
+                  <td>Legitimate interests of the business operating the widget</td>
+                </tr>
+                <tr>
+                  <td>Contact details you volunteer</td>
+                  <td>Letting the business respond to your enquiry</td>
+                  <td>Legitimate interests, or your consent where the business asks for it</td>
+                </tr>
+                <tr>
+                  <td>Session identifier</td>
+                  <td>Keeping one conversation together</td>
+                  <td>Strictly necessary for a service you requested</td>
+                </tr>
+                <tr>
+                  <td>IP address</td>
+                  <td>Rate limiting and abuse prevention</td>
+                  <td>Legitimate interests (service security)</td>
+                </tr>
+                <tr>
+                  <td>Search-quality log</td>
+                  <td>Showing a business which questions their bot fails</td>
+                  <td>Legitimate interests (service improvement)</td>
+                </tr>
+                <tr>
+                  <td>Account data</td>
+                  <td>Providing the service to a customer</td>
+                  <td>Performance of a contract</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            <strong>A note on consent, stated plainly.</strong> A business can
+            configure their bot to ask for your agreement before recording
+            your contact details, and we record that the bot was
+            <em>instructed</em> to ask. That flag is not proof that you
+            agreed: there is no checkbox in the widget, and we cannot verify
+            what the model actually said or how you replied. We do not present
+            it as consent, and neither should any business relying on it.
+          </p>
+
+          <h2 id="ai">4. AI providers</h2>
+          <p>
+            To answer you, your message &mdash; along with recent messages in
+            the same conversation and any relevant passages from the
+            business's own documents &mdash; is sent to an AI provider, which
+            generates the reply.
+          </p>
+          <p>
+            <strong>Which provider depends on the business whose widget you
+            are using.</strong> Each one chooses from a list that currently
+            includes OpenAI, Anthropic, Google (Gemini and Vertex AI), Groq,
+            OpenRouter, DeepSeek, Mistral, Together AI, Cloudflare Workers AI,
+            self-hosted options (Ollama, LM Studio), and any
+            OpenAI-compatible endpoint they configure themselves. Because the
+            choice is theirs, the business operating the widget is who can
+            tell you which provider received your message, and the current
+            list with links to each provider's own terms is at
+            <a href="/subprocessors">Sub-processors</a>.
+          </p>
+          <p>
+            We instruct providers not to train on this data and select API
+            tiers where that is the contractual default. We cannot
+            independently audit them, and where a business configures a custom
+            or self-hosted endpoint, that endpoint is outside our control
+            entirely.
+          </p>
+
+          <h2 id="sharing">5. Who else sees your data</h2>
+          <ul>
+            <li>
+              <strong>The business running the widget</strong> &mdash; they
+              can read every transcript and export the contact records.
+            </li>
+            <li>
+              <strong>Our infrastructure providers</strong> &mdash; Cloudflare
+              (hosting, and the network your request travels over) and
+              Supabase (the database). Listed with details at
+              <a href="/subprocessors">Sub-processors</a>.
+            </li>
+            <li>
+              <strong>The AI provider</strong> chosen by that business
+              (section 4).
+            </li>
+            <li>
+              <strong>Anywhere a business forwards their own leads.</strong>
+              A business can configure a webhook so new contact records are
+              posted to a system of their choosing. What happens there is
+              governed by their privacy policy, not this one.
+            </li>
+            <li>
+              <strong>If the law requires it</strong> &mdash; a valid legal
+              order, or to establish or defend legal claims.
+            </li>
+          </ul>
+
+          <h2 id="retention">6. How long we keep it</h2>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>What</th>
+                  <th>Kept for</th>
+                  <th>Why</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Chat transcripts</td>
+                  <td><strong>180 days</strong>, then deleted automatically</td>
+                  <td>Long enough for a business to look into a complaint about what their bot said</td>
+                </tr>
+                <tr>
+                  <td>Contact records (leads)</td>
+                  <td>Until erased or deleted by the business</td>
+                  <td>A business record the business is entitled to keep; not deleted on a timer</td>
+                </tr>
+                <tr>
+                  <td>Search-quality log</td>
+                  <td><strong>90 days</strong>, then deleted automatically</td>
+                  <td>Shorter, because it holds what you typed and needs no longer</td>
+                </tr>
+                <tr>
+                  <td>Usage counters</td>
+                  <td><strong>400 days</strong></td>
+                  <td>Billing history; contains no message text</td>
+                </tr>
+                <tr>
+                  <td>Account and bot configuration</td>
+                  <td>While the account is open</td>
+                  <td>Needed to provide the service</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p>
+            The 180-day and 90-day deletions are automatic and run daily. When
+            a business deletes a bot, everything that bot ever recorded goes
+            with it.
+          </p>
+          <p>
+            <strong>Backups.</strong> Deleted data may persist in our database
+            provider's encrypted backups for a short period after deletion
+            before those backups roll over. We do not restore backups to
+            recover data that was deliberately erased.
+          </p>
+
+          <h2 id="rights">7. Your rights</h2>
+          <p>
+            Depending on where you live, you may have the right to access a
+            copy of your data, correct it, have it erased, restrict or object
+            to how it is used, receive it in a portable format, and complain
+            to a regulator. Under GDPR these are Articles 15 to 22; California
+            residents have comparable rights under the CCPA/CPRA, including
+            the right not to be discriminated against for exercising them.
+          </p>
+          <p>
+            <strong>How to exercise them.</strong> Contact the business whose
+            chat widget you used &mdash; they are the controller and can act
+            on your request directly. If you cannot identify or reach them,
+            contact us at
+            <a href="mailto:mukeemoha@gmail.com">mukeemoha@gmail.com</a> and
+            we will help identify the right business or act on their
+            instruction.
+          </p>
+          <p>
+            <strong>Erasure works at the level of one conversation.</strong>
+            A business can erase a single visitor's session, which deletes
+            that conversation's transcript and the contact record captured
+            from it together, in one action. We built this specifically so
+            answering an erasure request does not require deleting anything
+            belonging to anyone else.
+          </p>
+          <p>
+            <strong>One honest limitation.</strong> The search-quality log
+            (section 2b) stores questions without a session identifier
+            attached, so it cannot be searched for one person's entries and is
+            not covered by that erasure action. It deletes itself after 90
+            days, which is sooner than transcripts. We would rather state this
+            than imply an erasure reaches further than it does.
+          </p>
+          <p>
+            We respond within 30 days. We do not charge for this, and we may
+            ask for enough information to locate your data &mdash; usually the
+            website you used and roughly when.
+          </p>
+
+          <h2 id="storage">8. Browser storage</h2>
+          <p>
+            <strong>The chat widget sets no cookies.</strong> It stores one
+            value, the session identifier described in section 2b, in your
+            browser's <code>sessionStorage</code> &mdash; which your browser
+            clears when you close the tab. It is strictly necessary to hold a
+            conversation together and is not used for tracking, so under the
+            EU ePrivacy Directive and the UK PECR it falls within the
+            strictly-necessary exemption and does not require a consent
+            banner.
+          </p>
+          <p>
+            Our own website and dashboard store your light/dark theme
+            preference locally in your browser. That never leaves your device.
+          </p>
+
+          <h2 id="security">9. Security</h2>
+          <p>
+            Data is encrypted in transit (TLS) and at rest. Each business's
+            data is isolated at the database level by row-level security keyed
+            to organisation membership, rather than by application code that a
+            future change could quietly drop. Each bot is locked to an
+            explicit list of websites it will answer from, and a request from
+            anywhere else is refused before any AI provider is called. Access
+            to production systems is limited to personnel who need it.
+          </p>
+          <p>
+            No system is perfectly secure. If a breach affects your personal
+            data we will notify the affected businesses and, where the law
+            requires, the relevant regulator and you.
+          </p>
+
+          <h2 id="transfers">10. International transfers</h2>
+          <p>
+            Our infrastructure runs on globally distributed networks, and the
+            AI providers listed in section 4 operate in various countries
+            including the United States. Your data may therefore be processed
+            outside the country you live in. Where data leaves the UK or EEA,
+            transfers rely on Standard Contractual Clauses or an adequacy
+            decision, as offered by the provider concerned.
+          </p>
+
+          <h2 id="children">11. Children</h2>
+          <p>
+            ConverseKit is a business tool and is not directed at children. We
+            do not knowingly collect personal data from anyone under 16. If
+            you believe a child has provided personal data through a chat
+            widget, contact us and we will delete it.
+          </p>
+
+          <h2 id="changes">12. Changes to this policy</h2>
+          <p>
+            We will update the date at the top when this policy changes. For
+            changes that materially affect how we handle personal data, we
+            will notify account holders by email before the change takes
+            effect.
+          </p>
+
+          <h2 id="contact">13. Contact</h2>
+          <p>
+            Privacy questions, data requests, or anything else about this
+            policy:
+            <a href="mailto:mukeemoha@gmail.com">mukeemoha@gmail.com</a>.
+          </p>
+          <p>
+            If you are in the UK or EEA and are unhappy with how we handled
+            your request, you have the right to complain to your local data
+            protection authority. In the UK that is the Information
+            Commissioner's Office at
+            <a href="https://ico.org.uk" rel="noopener" target="_blank">ico.org.uk</a>.
+          </p>
+
+          <hr />
+          <p>
+            See also <a href="/terms">Terms of Service</a> and
+            <a href="/subprocessors">Sub-processors</a>.
+          </p>
+        </article>
+      </div>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <nav class="foot-legal" aria-label="Legal">
+          <a href="/">Home</a>
+          <a href="/privacy" aria-current="page">Privacy Policy</a>
+          <a href="/terms">Terms of Service</a>
+          <a href="/subprocessors">Sub-processors</a>
+          <a href="mailto:mukeemoha@gmail.com">Contact</a>
+        </nav>
+        <div class="foot-base">
+          <p>
+            Copyright &copy; ConverseKit <span id="foot-year">2026</span>.
+            Built by mukeremshifa.
+          </p>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      document.getElementById("foot-year").textContent =
+        new Date().getFullYear();
+    </script>
+  </body>
+</html>

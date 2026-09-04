@@ -89,7 +89,18 @@ function resolveFile(urlPath) {
     const index = path.join(target, 'index.html');
     return fs.existsSync(index) ? index : null;
   }
-  return fs.existsSync(target) ? target : null;
+  if (fs.existsSync(target)) return target;
+
+  // Extensionless HTML, because that is what Workers assets does in
+  // production: /privacy serves privacy.html. Without this the legal
+  // pages 404 locally while working once deployed, which is the worst
+  // shape a difference between dev and production can take — every
+  // link in the footer points at the extensionless form.
+  if (!path.extname(clean)) {
+    const asHtml = `${target}.html`;
+    if (fs.existsSync(asHtml)) return asHtml;
+  }
+  return null;
 }
 
 const server = http.createServer((req, res) => {

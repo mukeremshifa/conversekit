@@ -4,8 +4,28 @@ import { signIn, signUp } from '@/lib/auth';
 import { Wordmark } from '@/components/Mark';
 import { Button, Card, CardContent, Field, Input } from '@/components/ui';
 
+/** `?signup` in the URL opens this screen in signup mode.
+ *
+ *  The landing page's "Start free" CTA points here, and sending someone
+ *  who just clicked that to a form headed "Sign in" — with the signup
+ *  toggle a line of small text below it — is the kind of seam that
+ *  quietly loses the people the CTA just persuaded. Read once at mount
+ *  rather than routed: this screen is what renders when there is no
+ *  session, so there is no router above it to own the query string.
+ *
+ *  Anything else, including a bare visit, still lands on sign in — the
+ *  common case is someone coming back. */
+function initialMode(): 'signin' | 'signup' {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    return q.has('signup') ? 'signup' : 'signin';
+  } catch {
+    return 'signin';
+  }
+}
+
 export function SignIn({ onAuthed }: { onAuthed: () => void }) {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup'>(initialMode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
