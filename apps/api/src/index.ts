@@ -44,6 +44,9 @@ import {
   getRetrievalLog,
   deleteMissedQuestion,
   pruneRetrievalLog,
+  pruneConversations,
+  eraseSession,
+  deleteLead,
   logUsage,
   getUsageLog,
   pruneUsageLog,
@@ -1437,6 +1440,65 @@ app.get('/v1/admin/bots/:id/leads', async (c) => {
   } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
 });
 
+// No bot id in the path, and no ownership check in this handler: the
+// delete runs as the tenant, and the RLS policy 007 adds is what
+// decides whether the row is theirs. A lead they do not own deletes
+// nothing and returns 404 — the same answer as one that never existed,
+// which is also the right answer to give someone probing for ids.
+app.delete('/v1/admin/leads/:leadId', async (c) => {
+  let removed;
+  try { removed = await deleteLead(c.get('db'), c.req.param('leadId')); }
+  catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+
+  if (!removed) return c.json({ error: 'Lead not found' }, 404);
+  return c.body(null, 204);
+});
+
+// ================================================================
+// POST /v1/admin/bots/:id/erase — GDPR Art. 17, for one visitor
+//
+// A tenant answering an erasure request needs to remove one person,
+// not one lead row: the transcript and the lead extracted from it are
+// the same disclosure, and deleting the lead alone leaves every word
+// the visitor typed sitting in `conversations`. The session id is the
+// handle that spans both, so it is what this takes.
+//
+// POST rather than DELETE, and a body rather than a path segment. A
+// session id is a signed opaque token, not a resource identifier the
+// dashboard lists — putting it in a URL would write it into every
+// access log the request passes through, which is a poor way to treat
+// the one value that identifies a specific human being.
+//
+// The bot is loaded through the USER db first. That call is the
+// authorization: getBotForAdmin runs under RLS, so a bot outside the
+// caller's org comes back null and stops here — before the
+// service-role RPC, which answers to no policy at all, is reached with
+// an id off a request body.
+// ================================================================
+app.post('/v1/admin/bots/:id/erase', async (c) => {
+  const botId = c.req.param('id');
+
+  let body: { session_id?: unknown };
+  try { body = await c.req.json(); }
+  catch { return c.json({ error: 'Invalid JSON body' }, 400); }
+
+  const sessionId = typeof body.session_id === 'string' ? body.session_id.trim() : '';
+  if (!sessionId) return c.json({ error: '`session_id` is required' }, 400);
+
+  const bot = await getBotForAdmin(c.get('db'), botId).catch(() => null);
+  if (!bot) return c.json({ error: 'Bot not found' }, 404);
+
+  try {
+    const erased = await eraseSession(serviceDb(c.env), botId, sessionId);
+    // Logged because an erasure is the one deletion on this platform
+    // someone may later have to prove happened. The session id is the
+    // subject of a request they already hold in writing; the transcript
+    // it names is gone.
+    console.log(`[erase] bot=${botId} session=${sessionId} messages=${erased.messages} leads=${erased.leads}`);
+    return c.json(erased);
+  } catch (err) { console.error(err); return c.json({ error: 'Database error' }, 502); }
+});
+
 // ================================================================
 // POST /v1/admin/bots/:id/preview
 //
@@ -2630,10 +2692,22 @@ app.get('/v1/admin/bots/:id/conversations', async (c) => {
 const RETRIEVAL_LOG_RETENTION_DAYS = 90;
 const USAGE_LOG_RETENTION_DAYS = 400;
 
-/** Must match the second entry in `triggers.crons` in wrangler.toml.
+// Transcripts. Longer than retrieval_log's 90 days because a tenant
+// looking into a complaint about what their bot said needs the
+// conversation to still exist, and shorter than usage_log's 400
+// because this is what visitors typed rather than billing history.
+// Clamped into [7, 365] inside prune_conversations regardless — see
+// 007_erasure.sql. Leads are NOT on a timer; they leave through the
+// erase route or the tenant deleting them.
+const CONVERSATION_RETENTION_DAYS = 180;
+
+/** Must match the second entry in `triggers.crons` in wrangler.jsonc.
  *  The branch below is a string comparison, so the two are one edit —
  *  change the schedule and this moves with it. */
 const USAGE_PRUNE_CRON = '41 3 * * *';
+
+/** Likewise the third entry. */
+const CONVERSATION_PRUNE_CRON = '5 4 * * *';
 
 const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) => {
   ctx.waitUntil((async () => {
@@ -2646,6 +2720,16 @@ const scheduled: ExportedHandlerScheduledHandler<Env> = async (event, env, ctx) 
         console.log(`[cron ${event.cron}] pruned ${deleted} usage_log row(s) older than ${USAGE_LOG_RETENTION_DAYS} days`);
       } catch (err) {
         console.error('[cron] usage_log prune failed:', err);
+      }
+      return;
+    }
+
+    if (event.cron === CONVERSATION_PRUNE_CRON) {
+      try {
+        const deleted = await pruneConversations(serviceDb(env), CONVERSATION_RETENTION_DAYS);
+        console.log(`[cron ${event.cron}] pruned ${deleted} conversation row(s) older than ${CONVERSATION_RETENTION_DAYS} days`);
+      } catch (err) {
+        console.error('[cron] conversations prune failed:', err);
       }
       return;
     }

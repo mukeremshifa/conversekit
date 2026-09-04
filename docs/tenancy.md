@@ -54,14 +54,74 @@ its window is so much longer.
 
 | Table | What it holds | Retention |
 |---|---|---|
-| `conversations` | The full transcript, both sides | Kept until the bot is deleted |
-| `leads` | Name, email, and whatever else the visitor volunteered | Kept until the bot is deleted |
+| `conversations` | The full transcript, both sides | **Pruned at 180 days** |
+| `leads` | Name, email, and whatever else the visitor volunteered | Kept until erased or deleted |
 | `retrieval_log` | The visitor's question, verbatim, plus what retrieval did with it | **Pruned at 90 days** |
 | `usage_log` | Token counts per provider call. Vendor, model, integers — no text, no key material | **Pruned at 400 days** |
 
 All four cascade on `ON DELETE CASCADE` from `bots`, so deleting a bot removes
-everything it ever recorded. There is no per-visitor erasure endpoint yet; the
-unit a tenant can act on is the bot.
+everything it ever recorded.
+
+### Per-visitor erasure
+
+The bot is no longer the smallest unit a tenant can act on. `007_erasure.sql`
+adds two things the bot-level cascade could not express:
+
+```
+POST   /v1/admin/bots/:id/erase   { "session_id": "..." }  -> { messages, leads }
+DELETE /v1/admin/leads/:leadId                             -> 204
+```
+
+The **session id is the unit of erasure**, because it is the only handle that
+spans both tables: the widget issues one signed id per visitor, and both the
+transcript rows and any lead extracted from that conversation carry it.
+Deleting the lead alone would leave every word the visitor typed in
+`conversations`, which is the failure mode this exists to prevent.
+
+The erase route loads the bot through the **user** client first, and that call
+*is* the authorization — `getBotForAdmin` runs under RLS, so a bot outside the
+caller's org returns null and the request stops before the service-role RPC is
+reached with an id off a request body. `erase_session` itself raises on a blank
+session id rather than reporting zero rows, so a malformed request cannot look
+like an erasure that simply found nothing.
+
+**`retrieval_log` is not touched by erasure.** It stores the query text but
+carries no `session_id` to match on, so there is nothing to erase *by*. Its own
+90-day window is shorter than the transcript window above and removes it sooner
+either way. This is stated rather than quietly skipped: an erasure that missed a
+table without saying so would be a false claim to the person who asked.
+
+### Why `leads` is not on a timer
+
+`conversations` gets a window; `leads` does not, and the asymmetry is
+deliberate. A transcript is a by-product of answering a question. A lead is the
+*output of the product* — the thing the tenant is paying for, and a record they
+are entitled to keep. A tenant who exported it to CSV last week has it outside
+this database anyway, so a timer here would delete their copy of a record while
+achieving nothing for the visitor.
+
+Leads leave by an act rather than by elapsed time: the erase route above, or a
+tenant deleting one from the dashboard under the RLS policy 007 adds. Tenants
+get `delete` on both tables and still no `update` — a tenant editing what a
+visitor said, or the email they gave, would destroy the record's value as
+evidence of what actually happened.
+
+### Why `conversations` is kept for 180 days
+
+Longer than `retrieval_log`'s 90 because a tenant looking into a complaint about
+what their bot told a customer needs the conversation to still exist, and a
+90-day window loses that faster than disputes surface. Shorter than
+`usage_log`'s 400 because this is what visitors typed, and the reasoning below
+about privacy commitments applies to it more strongly than to any other table
+here.
+
+`prune_conversations(p_days integer default 180)` clamps into `[7, 365]` inside
+the function body, for the same reason `prune_retrieval_log` does and with more
+at stake: the caller is a scheduled handler holding a service-role key, and the
+clamp is what stops a bug in that handler from truncating every transcript on
+the platform. It runs on its own cron expression (`5 4 * * *`) with its own
+branch and its own try/catch, so a Supabase hiccup during one prune cannot cost
+another its run.
 
 ### Why `usage_log` is kept for 400 days and not 90
 

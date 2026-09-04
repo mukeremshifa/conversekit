@@ -138,8 +138,23 @@ Rows are filtered by RLS, so these only ever return the caller's own orgs.
 | `POST` | `/v1/admin/bots/:id/logo` | Upload a logo (multipart `file`). PNG/JPEG/WebP, 512 KB |
 | `DELETE` | `/v1/admin/bots/:id/logo` | Remove the logo and delete the object |
 | `GET` | `/v1/admin/bots/:id/leads` | List captured leads |
+| `DELETE` | `/v1/admin/leads/:leadId` | Delete one lead (`204`). Not owned by the caller reads as `404` |
+| `POST` | `/v1/admin/bots/:id/erase` | Erase one visitor: `{ session_id }` → `{ messages, leads }` |
 | `GET` | `/v1/admin/bots/:id/conversations` | List recent conversation messages. `?session_id=` narrows to one transcript |
 | `POST` | `/v1/admin/bots/:id/profile/backfill` | Move the legacy `hours` / `address` / `contact*` columns into `bots.profile`. `?dry_run=1` reports the plan without writing |
+
+`POST /v1/admin/bots/:id/erase` is the GDPR Art. 17 path, and it takes a
+**session id rather than a lead id** because that is the only handle spanning
+both tables a visitor's data lands in — deleting the lead alone would leave the
+transcript. It returns what it removed, split per table, since "0 leads, 12
+messages" and "1 lead, 11 messages" are different answers to give the person who
+asked. `retrieval_log` is deliberately not included; it has no `session_id` to
+match on and its own 90-day window is shorter anyway. See
+[tenancy.md](tenancy.md#per-visitor-erasure).
+
+It is a `POST` with a body rather than a `DELETE` with a path segment on
+purpose: a session id is a signed opaque token identifying one human being, and
+a URL writes it into every access log the request passes through.
 
 `PUT /v1/admin/bots/:id` accepts `profile` alongside the four config objects.
 It is **replaced wholesale with nothing carried forward** — unlike

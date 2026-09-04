@@ -1,6 +1,6 @@
 # supabase/
 
-The schema, as six files that apply in order to an empty database.
+The schema, as seven files that apply in order to an empty database.
 
 ```
 001_tenancy.sql        extensions, organizations, memberships, the RLS
@@ -16,6 +16,8 @@ The schema, as six files that apply in order to an empty database.
 005_retrieval.sql      match_faq_items, match_chunks,
                        match_chunks_lexical, retrieval_log
 006_usage.sql          usage_log and its retention function
+007_erasure.sql        prune_conversations, erase_session, and the
+                       tenant delete policies 003 left out
 ```
 
 Apply them with `npm run db:migrate`, never by hand. Every migration

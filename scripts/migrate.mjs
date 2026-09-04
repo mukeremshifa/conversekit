@@ -84,8 +84,8 @@ const varsFile = join(ROOT, 'apps', 'api', '.dev.vars');
 const env = { ...loadEnvFile(varsFile), ...loadEnvFile(join(ROOT, '.env.tools')), ...process.env };
 const { SUPABASE_URL, SUPABASE_ACCESS_TOKEN, SUPABASE_DB_URL } = env;
 
-if (!['status', 'up', 'migrate', 'reset'].includes(command)) {
-  console.error(`Unknown command '${command}'. Use: status | up | reset   [--dry-run]`);
+if (!['status', 'up', 'migrate', 'reset', 'rebaseline'].includes(command)) {
+  console.error(`Unknown command '${command}'. Use: status | up | reset | rebaseline   [--dry-run]`);
   process.exit(2);
 }
 
@@ -350,12 +350,72 @@ async function main() {
     return;
   }
 
+  // ---------------------------------------------------------------
+  // rebaseline — the escape hatch for a COMMENT-ONLY edit
+  //
+  // The refusal below is right almost always: a changed file means
+  // Postgres has the old version and the difference has to be written
+  // as a new migration. But there is one case where it is right about
+  // the checksum and wrong about the consequence — an edit that changed
+  // no SQL at all. Rewording a comment in an applied file leaves the
+  // database already identical to what that file would produce, and
+  // yet the stale checksum blocks EVERY later migration behind it.
+  //
+  // Without this the only supported ways out are `reset` (destroys the
+  // database) or a hand-written UPDATE in the SQL editor — which is the
+  // exact "paste it in and hope" this runner exists to end.
+  //
+  // NARROW ON PURPOSE. It updates the ledger and runs no DDL, it names
+  // one version rather than fixing everything at once, and it requires
+  // --yes, because "the schema really is unchanged" is a judgement
+  // about a diff that only a person can make. Verify with:
+  //
+  //   git diff <commit-that-applied-it> HEAD -- supabase/<file>.sql
+  //
+  // If that diff touches anything but comments, this is the wrong tool
+  // and a new migration is the right one.
+  // ---------------------------------------------------------------
+  if (command === 'rebaseline') {
+    const version = args.find((a) => !a.startsWith('-') && a !== command);
+    if (!version) {
+      console.log('Which migration? Name the version, without the .sql:\n');
+      for (const m of changed) console.log(`  npm run db:rebaseline -- ${m.version} --yes`);
+      if (!changed.length) console.log('  (nothing is currently changed-after-the-fact)');
+      console.log('');
+      process.exit(1);
+    }
+
+    const m = migrations.find((x) => x.version === version);
+    if (!m)            { console.error(`No such migration: ${version}\n`); process.exit(1); }
+    if (!done.has(version)) { console.error(`${version} was never applied — just run it.\n`); process.exit(1); }
+    if (done.get(version) === m.checksum) {
+      console.log(`${version} already matches (${m.checksum}). Nothing to do.\n`);
+      return;
+    }
+
+    console.log(`${version}: ledger ${done.get(version)} → file ${m.checksum}`);
+    console.log('\nThis records the CURRENT file as applied and runs no SQL from it.');
+    console.log('Only correct if the edit changed comments alone — check with:');
+    console.log(`  git diff <applying-commit> HEAD -- supabase/${m.file}\n`);
+
+    if (dryRun)              { console.log('--dry-run: ledger untouched.\n'); return; }
+    if (!args.includes('--yes')) { console.log('Re-run with --yes to record it.\n'); process.exit(1); }
+
+    await run(record(m));
+    console.log('  recorded.\n');
+    return;
+  }
+
   // up / migrate
   if (changed.length) {
     console.log('Refusing to run: these files changed after they were applied.\n');
     for (const m of changed) console.log(`  ${m.file}`);
     console.log('\nThe database has the old version. Add a new migration with the');
     console.log('difference instead of editing one that has already run.\n');
+    console.log('If the edit changed COMMENTS ONLY, the database already matches and');
+    console.log('the checksum is merely stale. Re-record it instead:\n');
+    for (const m of changed) console.log(`  npm run db:rebaseline -- ${m.version} --yes`);
+    console.log('');
     process.exit(1);
   }
 

@@ -140,12 +140,17 @@
   // pass — see the note above it for why a shared "daily maintenance"
   // function is the thing this arrangement exists to avoid.
   //
-  //   17 3  retrieval_log, pruned at 90 days
-  //   41 3  usage_log,     pruned at 400 days
+  //   17 3  retrieval_log,  pruned at 90 days
+  //   41 3  usage_log,      pruned at 400 days
+  //   05 4  conversations,  pruned at 180 days
   //
-  // Both off the hour on purpose: every cron on every platform fires at
-  // :00, and these compete for the same Supabase connection pool as real
-  // traffic. Twenty-four minutes apart so the second is not waiting on
-  // the first's connections either.
-  "triggers": { "crons": ["17 3 * * *", "41 3 * * *"] }
+  // All three off the hour on purpose: every cron on every platform
+  // fires at :00, and these compete for the same Supabase connection
+  // pool as real traffic. Spaced roughly twenty minutes apart so none
+  // is waiting on the previous one's connections either.
+  //
+  // conversations is last and in the next hour because it is the
+  // largest delete of the three by row count, and nothing else here
+  // depends on it having run.
+  "triggers": { "crons": ["17 3 * * *", "41 3 * * *", "5 4 * * *"] }
 }

@@ -1204,6 +1204,73 @@ export async function pruneUsageLog(db: ServiceDb, days: number): Promise<number
   return Number(deleted) || 0;
 }
 
+/**
+ * Delete conversation rows older than `days`, returning how many went.
+ *
+ * Clamped INSIDE the function into [7, 365] — see 007_erasure.sql. The
+ * same bounds as prune_retrieval_log, because a transcript and the
+ * query that produced it are the same event seen twice and there is no
+ * reason for one to outlive the other.
+ *
+ * Leads are not pruned by this or anything else on a timer: a lead is
+ * the product's output and the tenant's record. Leads leave through
+ * `eraseSession` or a tenant deleting one.
+ */
+export async function pruneConversations(db: ServiceDb, days: number): Promise<number> {
+  const deleted = await pgFetch<number | string>(db, '/rpc/prune_conversations',
+    { method: 'POST', body: JSON.stringify({ p_days: days }) }
+  );
+  return Number(deleted) || 0;
+}
+
+/** What one erasure removed, split by table — see `eraseSession`. */
+export interface ErasureResult {
+  messages: number;
+  leads: number;
+}
+
+/**
+ * GDPR Art. 17 for one visitor: drop that session's transcript and any
+ * lead captured from it.
+ *
+ * ServiceDb rather than UserDb, and the bot ownership check is the
+ * CALLER's job — the route does it before getting here. The RPC is
+ * security definer because erasure has to succeed even for a session
+ * whose rows a tenant policy would filter, and that authority is
+ * exactly why it must not be reachable with a bot id straight off a
+ * request.
+ *
+ * The RPC raises on a blank session id rather than reporting zero, so
+ * a malformed request fails loudly instead of looking like an erasure
+ * that found nothing.
+ */
+export async function eraseSession(
+  db: ServiceDb,
+  botId: string,
+  sessionId: string,
+): Promise<ErasureResult> {
+  const out = await pgFetch<Partial<ErasureResult> | null>(db, '/rpc/erase_session',
+    { method: 'POST', body: JSON.stringify({ p_bot_id: botId, p_session_id: sessionId }) }
+  );
+  return { messages: Number(out?.messages) || 0, leads: Number(out?.leads) || 0 };
+}
+
+/**
+ * Delete one lead as the tenant, under the RLS policy 007 adds.
+ *
+ * UserDb on purpose: a tenant may delete exactly what they may read,
+ * and the policy is what enforces it. Returns the row so the route can
+ * answer 404 for an id the caller does not own — which is what RLS
+ * turns "someone else's lead" into.
+ */
+export async function deleteLead(db: UserDb, leadId: string): Promise<Lead | null> {
+  const rows = await pgFetch<Lead[]>(db,
+    `/leads?id=eq.${encodeURIComponent(leadId)}`,
+    { method: 'DELETE' }
+  );
+  return rows[0] ?? null;
+}
+
 /** Same ceiling reasoning as RETRIEVAL_LOG_CAP: past it the report
  *  would silently under-report, so it is surfaced rather than hidden.
  *  Move to an RPC when a bot regularly hits it — not before. */

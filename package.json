@@ -21,10 +21,12 @@
     "db:status": "node scripts/migrate.mjs status",
     "db:migrate": "node scripts/migrate.mjs up",
     "db:reset": "node scripts/migrate.mjs reset",
+    "db:rebaseline": "node scripts/migrate.mjs rebaseline",
     "secrets:push": "node scripts/secrets.mjs push",
     "secrets:bootstrap": "node scripts/secrets.mjs bootstrap",
     "secrets:list": "node scripts/secrets.mjs list",
     "seed:demo": "node scripts/seed-demo-bot.mjs",
+    "seed:club": "node scripts/seed-coding-club.mjs",
     "brand:gen": "node scripts/gen-brand-assets.mjs"
   },
   "devDependencies": {
