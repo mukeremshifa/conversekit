@@ -67,9 +67,10 @@ export const CLUB_BOT = {
   business_description:
     'The AURAK Coding Club is the student coding and technology club at the American ' +
     'University of Ras Al Khaimah in the UAE. It welcomes students of every major and ' +
-    'skill level, from complete beginners to experienced programmers. It runs weekly Tech ' +
-    'Talk newsletters, biweekly Dev Discussions meet-ups, Review Rounds exam-prep videos, ' +
-    'coding competitions and typeathons, field trips to tech events, and collaborations ' +
+    'skill level, from beginners to experienced programmers. Its flagship activity is Dev ' +
+    'Discussions — deep-dive sessions on a computer science topic, held in G-201 and live ' +
+    'streamed on Google Meet. It also runs weekly Tech Talk newsletters, Review Rounds ' +
+    'exam-prep videos, competitions and typeathons, trips to tech events, and collaborations ' +
     'with other AURAK clubs. It has twice won the university’s Most Active Student Club Award.',
 
   custom_instructions:
@@ -89,7 +90,7 @@ export const CLUB_BOT = {
   // The chips a visitor sees before typing. Four: a fifth wraps.
   // These are what a student at a stand actually walks up and asks.
   suggestions: [
-    'What does the club actually do?',
+    'What is a Dev Discussion?',
     'How do I join?',
     'What are Tech Titans?',
     'Do I need to know how to code?',
@@ -104,7 +105,7 @@ export const CLUB_BOT = {
     location: {
       notes:
         'American University of Ras Al Khaimah, Ras Al Khaimah, United Arab Emirates. ' +
-        'Dev Discussions are held in G’s AutoCAD lab and live streamed on Google Meet.',
+        'Dev Discussions are held in G-201, the AutoCAD lab, and live streamed on Google Meet.',
     },
     contact: {
       email: 'codingclub2024@aurak.ac.ae',
@@ -192,9 +193,12 @@ export const CLUB_FAQ = [
   {
     question: 'What is a Dev Discussion?',
     answer:
-      'A biweekly in-person meet-up covering extracurricular computer science topics, held ' +
-      'in G’s AutoCAD lab and live streamed on Google Meet. Members can also showcase their ' +
-      'own projects at one, which is worth a x16 multiplier on the Tech Titans leaderboard.',
+      'Dev Discussions are the club’s flagship activity — in-person deep-dive sessions on ' +
+      'one computer science topic, held in G-201 (the AutoCAD lab) and live streamed on ' +
+      'Google Meet. Past topics include cryptography, Vim, Sonic Pi live-coding music, ' +
+      'Unreal Engine and TeX internals. Each mixes a taught breakdown with a live demo, a ' +
+      'Mentimeter quiz and often a typeathon — bring a laptop. Attending is worth a x4 ' +
+      'multiplier on the Tech Titans leaderboard, and showcasing your own project is x16.',
   },
   {
     question: 'What is Tech Talk?',
