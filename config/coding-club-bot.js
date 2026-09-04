@@ -44,6 +44,13 @@ export const CLUB_ORG_NAME = 'AURAK Coding Club';
  * is not listed fails with a 403 the page cannot explain.
  */
 export const CLUB_ORIGINS = [
+  // Where the event page actually lives. It is a personal GitHub Pages
+  // account rather than the club org's, and this list is the reason
+  // that matters: a seed run that dropped this origin would 403 every
+  // request from the live page, with no error the page could explain.
+  'https://mukeremshifa.github.io',
+  // The club org's Pages origin. Kept so the page can move onto the
+  // org later without a reseed.
   'https://aurak-coding-club.github.io',
   'http://localhost:8080',
   'http://localhost:5500',
