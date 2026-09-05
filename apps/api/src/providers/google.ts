@@ -58,6 +58,8 @@ interface Options {
   maxTokens?: number;
   temperature?: number;
   dimensions?: number | null;
+  /** 0 disables the model's hidden reasoning. See ProviderConfig. */
+  thinkingBudget?: number;
 }
 
 function mapFinish(reason: string | null | undefined): FinishReason {
@@ -141,6 +143,15 @@ export class GoogleChatProvider implements ChatProvider {
 
     const temperature = req.temperature ?? this.o.temperature;
     if (temperature !== undefined) generationConfig.temperature = temperature;
+
+    // Sent only when the tenant asked for it: an absent thinkingConfig
+    // is the model's documented default, and that is what every bot
+    // configured before this existed must keep getting. `0` is a
+    // meaningful value here — it turns reasoning off — so this tests
+    // for undefined rather than for falsiness.
+    if (this.o.thinkingBudget !== undefined) {
+      generationConfig.thinkingConfig = { thinkingBudget: this.o.thinkingBudget };
+    }
 
     const body: Record<string, unknown> = { contents: toContents(req.messages) };
     if (req.system) body.systemInstruction = { parts: [{ text: req.system }] };

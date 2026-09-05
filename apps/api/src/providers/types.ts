@@ -95,6 +95,26 @@ export interface ProviderConfig {
   baseUrl?: string;
   maxTokens?: number;
   temperature?: number;
+  /**
+   * Google only. Token budget for the model's hidden reasoning, passed
+   * through as `generationConfig.thinkingConfig.thinkingBudget`.
+   *
+   * 0 DISABLES THINKING, and on a budget-capped chat turn that is
+   * usually what you want. Gemini 2.5/3.5 Flash are thinking models:
+   * they spend the OUTPUT budget on reasoning before emitting any text,
+   * so a low `maxTokens` returns an empty completion with
+   * `finishReason: MAX_TOKENS` — which google.ts reports as a
+   * bad_request, and which reads as a broken vendor rather than as the
+   * setting it is. Measured: 284 thought tokens before 12 tokens of
+   * answer.
+   *
+   * Undefined leaves it to the model, which is the documented default
+   * and what every existing bot already gets. This is opt-in for the
+   * same reason `retrieval_mode` is: a platform that switched somebody
+   * else's reasoning off on a deploy they did not ask for would be
+   * changing their product.
+   */
+  thinkingBudget?: number;
 }
 
 export interface EmbeddingConfig extends ProviderConfig {

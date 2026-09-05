@@ -141,6 +141,11 @@ function mergeChatConfig(env: Env, override?: ProviderConfig | null): Required<P
     baseUrl:     cfg.baseUrl     ?? env.AI_BASE_URL,
     maxTokens:   cfg.maxTokens   ?? num(env.AI_MAX_TOKENS),
     temperature: cfg.temperature ?? num(env.AI_TEMPERATURE),
+    // No env fallback on purpose. The other fields here have one because
+    // they describe the platform's default vendor; this one describes a
+    // quirk of two Google models, and a platform-wide switch would apply
+    // it to vendors it means nothing to.
+    thinkingBudget: cfg.thinkingBudget,
   };
 }
 
@@ -178,6 +183,7 @@ export function resolveChatProvider(env: Env, override?: ProviderConfig | null):
         ...common,
         apiKey:  resolveKey(env, preset, cfg),
         baseUrl: resolveBaseUrl(preset, cfg),
+        thinkingBudget: cfg.thinkingBudget,
       });
 
     // Same adapter, same wire format — only the addressing and the
@@ -188,6 +194,7 @@ export function resolveChatProvider(env: Env, override?: ProviderConfig | null):
         apiKey:  null,
         baseUrl: '',
         vertex:  resolveVertex(env, preset, cfg),
+        thinkingBudget: cfg.thinkingBudget,
       });
 
     case 'openai-compat':
